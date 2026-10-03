@@ -11,7 +11,7 @@ The initial app must let the owner:
 - Record parts and quantities in storage.
 - Reserve parts for a project, pick them, and record their use or return.
 - Track orders and receive all or some of their items.
-- Create and edit projects and their bills of materials (BOMs).
+- Create and edit projects and their bills of materials (BOMs), with optional named component groups.
 - Parse order lists and project BOMs with an LLM, then review the result.
 - Match project requirements to inventory and show shortages without counting the same supply twice.
 - Filter parts by category and attributes, including combinations such as M3 screws.
@@ -86,6 +86,12 @@ Each receipt submission has a unique operation ID. Repeated clicks or a repeated
 
 Create a project with a name, notes, optional link, and status: planned, active, paused, complete, or cancelled. Add or import requirements with quantities, units, reference designators, and optional notes.
 
+Projects can optionally group related BOM rows into named **components**, such as Power supply, Controller, or Enclosure. A component belongs to its project and has a name, optional notes, and display order. Each BOM row can belong to a component in the same project or remain ungrouped. A project without components keeps a flat BOM. Here, optional means that grouping is optional; placing a requirement in a component does not exclude it from the build.
+
+Provide component create, rename, reorder, and remove actions, plus controls to move BOM rows between components or to the ungrouped section. Removing a component moves its rows to the ungrouped section. Keep row IDs and all reservations, incoming commitments, picked stock, and recorded use intact. Grouping does not create a catalog part or an extra stock requirement.
+
+Show components as BOM sections and allow component filters on coverage views and pick lists. Project totals include every BOM row once, including ungrouped rows. Component summaries use the same row quantities and retain part/unit distinctions; do not sum unlike parts or units into a misleading quantity. Viewing one component does not release stock or incoming supply committed to another component.
+
 For each requirement, show the original description, constraints, selected parts, used quantity, picked quantity, reserved quantity, committed incoming quantity, and uncovered quantity. A requirement can use several approved parts and stock locations.
 
 Provide actions to find candidates, approve a substitute, reserve, release, pick, record use, and return unused parts. A pick list shows locations and quantities. Changing a BOM quantity or part constraint must identify allocations that no longer fit. Resolve those allocations before saving the change; never silently remove physical picked stock.
@@ -118,6 +124,8 @@ Show unallocated available stock as a candidate supply. Commit it before treatin
 
 A combined shopping list includes uncovered requirements from planned, active, and paused projects, with controls to select which projects participate. Group identical part requirements. Keep ambiguous requirements separate and show the project breakdown. Selecting one project alone must not make stock reserved elsewhere appear available.
 
+Keep component names in shopping-list breakdowns. Identical parts in different components can share a purchase suggestion, but each requirement keeps its own allocation. Component filters do not change reservations or project demand.
+
 Example: storage contains 20 M3 × 8 mm screws. Project A reserves 8, leaving 12 available. Project B needs 15 and reserves 12. Its remaining need is 3. An order for 10 has 3 explicitly committed to B and 7 unallocated. B shows 12 reserved, 3 ordered, and 0 needed-not-ordered. Receiving those 3 transfers that incoming commitment into a storage reservation. Picking B's 15 moves them to its project location; it does not consume them.
 
 ### Categories and filters
@@ -141,25 +149,26 @@ Keep raw text beside normalized values. Normalize equivalent forms such as `4k7`
 
 Use relational tables for identities, quantities, and links. Use category attribute definitions and structured attribute values for variable technical specifications. This avoids a column for every possible part feature while retaining typed comparisons.
 
-| Table                        | Main data and role                                                                                                            |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `parts`                      | Name, category, base unit and conversion scale, manufacturer, part number, notes, archive state                               |
-| `categories`                 | Name and parent category                                                                                                      |
-| `attribute_definitions`      | Key, value type, canonical unit, applicable categories, normalization rule                                                    |
-| `part_attributes`            | Part, attribute key, typed value, raw value; unique per part/key                                                              |
-| `part_aliases`               | Alternate names for a part                                                                                                    |
-| `supplier_parts`             | Supplier, SKU, part, product URL, purchase unit, pack conversion                                                              |
-| `locations`                  | Storage or project holding location; project link for holding locations                                                       |
-| `stock_movements`            | Part, quantity, source/destination location, movement type, date, reason, receipt/BOM links, operation ID                     |
-| `projects`                   | Name, status, notes, links                                                                                                    |
-| `bom_lines`                  | Project, source description, required quantity/unit, exact part or typed constraints, reference designators, notes            |
-| `bom_part_choices`           | Approved part candidates for a BOM line, substitute flag, approval note                                                       |
-| `reservations`               | BOM line, selected part, storage location, active reserved quantity                                                           |
-| `orders`                     | Supplier, reference, placed/shipped state, dates, delivery review state, tracking link, notes                                 |
-| `order_lines`                | Order, reviewed part, purchase quantity, pack conversion, base quantity, cancelled/damaged quantities, optional cost/currency |
-| `receipts` / `receipt_lines` | Receipt date, operation ID, order lines, accepted quantities, destinations, review notes                                      |
-| `incoming_commitments`       | BOM line, order line, committed outstanding quantity, assignment sequence                                                     |
-| `imports` / `import_lines`   | Source, import kind, schema/prompt/model versions, parse state, proposals, owner edits, commit state                          |
+| Table                        | Main data and role                                                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parts`                      | Name, category, base unit and conversion scale, manufacturer, part number, notes, archive state                                                            |
+| `categories`                 | Name and parent category                                                                                                                                   |
+| `attribute_definitions`      | Key, value type, canonical unit, applicable categories, normalization rule                                                                                 |
+| `part_attributes`            | Part, attribute key, typed value, raw value; unique per part/key                                                                                           |
+| `part_aliases`               | Alternate names for a part                                                                                                                                 |
+| `supplier_parts`             | Supplier, SKU, part, product URL, purchase unit, pack conversion                                                                                           |
+| `locations`                  | Storage or project holding location; project link for holding locations                                                                                    |
+| `stock_movements`            | Part, quantity, source/destination location, movement type, date, reason, receipt/BOM links, operation ID                                                  |
+| `projects`                   | Name, status, notes, links                                                                                                                                 |
+| `project_components`         | Project, name, optional notes, display order                                                                                                               |
+| `bom_lines`                  | Project, optional component in the same project, source description, required quantity/unit, exact part or typed constraints, reference designators, notes |
+| `bom_part_choices`           | Approved part candidates for a BOM line, substitute flag, approval note                                                                                    |
+| `reservations`               | BOM line, selected part, storage location, active reserved quantity                                                                                        |
+| `orders`                     | Supplier, reference, placed/shipped state, dates, delivery review state, tracking link, notes                                                              |
+| `order_lines`                | Order, reviewed part, purchase quantity, pack conversion, base quantity, cancelled/damaged quantities, optional cost/currency                              |
+| `receipts` / `receipt_lines` | Receipt date, operation ID, order lines, accepted quantities, destinations, review notes                                                                   |
+| `incoming_commitments`       | BOM line, order line, committed outstanding quantity, assignment sequence                                                                                  |
+| `imports` / `import_lines`   | Source, import kind, schema/prompt/model versions, parse state, proposals, owner edits, commit state                                                       |
 
 Derive stock balances from movements. An opening balance or receipt has an external source. A pick or return transfers between locations. Use, loss, and supplier return have an external destination with different movement types. Link project use to its BOM line. Preserve that link when crediting used quantities.
 
@@ -184,6 +193,8 @@ source → draft import → GPT-6 Luna extraction → schema validation
 ```
 
 Each proposed line should include source row or excerpt, description, quantity, purchase/base unit, pack conversion if known, category, attributes, supplied identifiers, and unresolved fields. Use null for absent information. Mark fields as source-stated, normalized, or inferred so the review screen can distinguish them. Reject invalid units and quantities before commit.
+
+For project BOMs, preserve explicit component headings or source columns as proposed groups. Let the owner create, rename, assign, or clear groups during review. Rows without an explicit group remain ungrouped unless the owner assigns them. Commit reviewed components and their BOM rows together; keep source evidence for group assignments. Order lines do not require project component groups.
 
 Give the model category definitions and extraction instructions. Treat pasted document text as data. Do not give the parser tools that can alter inventory. Keep API keys in server-only environment variables. The review screen must state that parsing sends the submitted source to OpenAI; core inventory operations remain local.
 
@@ -234,9 +245,11 @@ Prove that a part and opening stock persist after app restart; location transfer
 
 ### Stage 2: Projects, reservations, and picking
 
-Add BOM editing, deterministic matching, approved substitutes, reservations, picking, use, returns, and project status changes.
+Add BOM editing, optional named component groups, deterministic matching, approved substitutes, reservations, picking, use, returns, and project status changes.
 
 Prove the shared-stock example above up to reservation. Verify that two projects cannot reserve the same stock, a partial pick updates both storage and reservation, use credits the correct requirement, and a return restores storage. Verify that cancelling a project releases commitments and preserves physical picked stock until resolved.
+
+Verify that flat and grouped BOMs use the same quantity rules. Moving a row or removing its component preserves the row and its allocations. Identical parts in different components compete for the same available stock, and project totals count each row once.
 
 ### Stage 3: Orders, receipts, and shortages
 
@@ -249,6 +262,8 @@ Prove the full shared-stock example. Verify that a pack of 100 adds 100 pieces, 
 Add source drafts, text/CSV parsing, structured output, review/edit screens, catalog candidate matching, and import commit.
 
 Prove that both an order list and a project BOM can be parsed, corrected, and committed. Fixture cases must include missing screw dimensions, a resistor with alternate value notation, a pack quantity, and a conflicting exact identifier. Verify that failed parsing and repeated import commit do not change stock or create duplicate records. A live check confirms the configured model and SDK path.
+
+Include a BOM source with named sections and ungrouped rows. Verify that group assignments can be corrected before commit, and a flat source does not acquire invented components.
 
 ### Stage 5: Local use and recovery
 
@@ -276,5 +291,7 @@ These are recommendations based on the intended workflows, not claims that every
 | Order costs and project cost estimates           | Track spending                                             | Optional; store currency and avoid implicit conversion |
 | Kits and assortment contents                     | Track mixed boxes of hardware                              | Optional; requires explicit component quantities       |
 | Reusable tools and loan tracking                 | Track equipment that is not consumed                       | Optional; a separate workflow from consumable stock    |
+
+The label feature has a standalone follow-up scanner plan (tim plan 19, depending on plan 12). A phone camera detects multiple visible QR labels, shows what they identify, and highlights direct part labels or container labels with recorded physical stock of a selected part. Keep decoding on the phone, preserve current-label outlines separately from prior finds, and leave stock changes to explicit inventory actions. Reuse the existing Caddy HTTPS hosting.
 
 Decisions to confirm when the related work starts: whether initial sources need PDF/image support, which fractional units the actual inventory uses, and whether reusable tools belong in this app. These choices do not prevent the initial text/CSV and consumable-stock implementation.
