@@ -8,14 +8,14 @@
     "#lib/*": "./src/lib/*"
   },
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "bun --bun --env-file .env vite dev",
+    "build": "bun --bun --env-file .env vite build",
+    "preview": "bun --bun --env-file .env vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test:unit": "vitest",
-    "test": "npm run test:unit -- --run",
+    "test:unit": "bun --bun vitest",
+    "test": "pnpm run test:unit -- --run",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
