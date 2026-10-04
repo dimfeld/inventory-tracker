@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { CommitmentAssignment } from "#lib/commitments.ts";
 import { getLocation } from "#lib/server/db/locations.ts";
 import { insertMovement } from "#lib/server/db/movements.ts";
 import {
@@ -15,6 +16,7 @@ import {
   type ReceiptLine,
 } from "#lib/server/db/orders.ts";
 import { formatQuantity } from "#lib/units.ts";
+import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
 
 export interface ReceiptLineInput {
@@ -28,6 +30,11 @@ export interface ReceiptLineInput {
   notes: string | null;
   /** After this receipt, cancel whatever is still outstanding on the line. */
   cancelRemainder?: boolean;
+  /**
+   * The owner's assignment of accepted stock to the line's incoming commitments. Null or absent
+   * assigns it in commitment sequence order.
+   */
+  assignments?: CommitmentAssignment[] | null;
 }
 
 export interface ReceiptInput {
@@ -64,6 +71,8 @@ export interface ReceivedStock {
   locationId: number;
   quantity: number;
   movementId: number;
+  /** The owner's assignment to incoming commitments, or null for sequence order. */
+  assignments: CommitmentAssignment[] | null;
 }
 
 /**
@@ -73,7 +82,8 @@ export interface ReceivedStock {
  * line with accepted stock, after it records the stock movement and updates the order line's
  * totals. An implementation can write through `db` in the same transaction, for example to turn
  * incoming project commitments on the order line into storage reservations at the destination.
- * Throwing an InventoryError rejects the receipt and rolls back every write.
+ * Throwing an InventoryError rejects the receipt and rolls back every write. After the hook,
+ * the service reduces commitments that no longer fit the line's outstanding supply.
  */
 export interface ReceiptHooks {
   onLineReceived(db: Database, stock: ReceivedStock): void;
@@ -92,7 +102,8 @@ export type ReceiptService = ReturnType<typeof createReceiptService>;
 
 /**
  * Order receipts. Each receipt runs in one SQLite transaction that writes the receipt, adds
- * accepted stock to storage, and updates the order lines' outstanding supply.
+ * accepted stock to storage, updates the order lines' outstanding supply, and reduces incoming
+ * commitments that damaged or cancelled supply no longer covers.
  */
 export function createReceiptService(db: Database, options: ReceiptServiceOptions = {}) {
   const hooks = options.hooks ?? noReceiptHooks;
@@ -211,8 +222,10 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
             locationId: lineInput.locationId!,
             quantity: lineInput.acceptedQuantity,
             movementId: movement.id,
+            assignments: lineInput.assignments ?? null,
           });
         }
+        fitOrderLineCommitments(db, line.id);
       }
 
       return {

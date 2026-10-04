@@ -1,4 +1,5 @@
-import { optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
+import type { CommitmentAssignment } from "#lib/commitments.ts";
+import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 import { today } from "./stock";
 
 export interface OrderInput {
@@ -34,6 +35,8 @@ export interface ReceiptLineFormInput {
   locationId: number | null;
   notes: string | null;
   cancelRemainder: boolean;
+  /** The owner's assignment to incoming commitments, or null for sequence order. */
+  assignments: CommitmentAssignment[] | null;
 }
 
 export interface ReceiveAllFormInput {
@@ -129,6 +132,25 @@ export function parseOrderLineForm(form: FormData): ParseResult<OrderLineInput> 
   }));
 }
 
+/**
+ * The owner's assignment of accepted stock to commitments: paired `assign_commitment` and
+ * `assign_quantity` fields, used only when `custom_assignment` is checked.
+ */
+function assignments(form: FormData, errors: FieldErrors): CommitmentAssignment[] | null {
+  if (text(form, "custom_assignment") !== "on") return null;
+  const ids = allText(form, "assign_commitment");
+  const quantities = allText(form, "assign_quantity");
+  return ids.map((id, index) => {
+    const quantity = quantities[index] || "0";
+    if (!WHOLE.test(quantity)) errors.assign_quantity = "Assigned quantities must be whole numbers";
+    const commitmentId = parseId(id);
+    if (commitmentId === null || Number.isNaN(commitmentId)) {
+      errors.assign_commitment = "Missing commitment; reload the page";
+    }
+    return { commitmentId: commitmentId ?? 0, quantity: Number(quantity) };
+  });
+}
+
 /** One line of the receipt review. Quantities are in the part's base unit. */
 export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFormInput> {
   const errors: FieldErrors = {};
@@ -139,6 +161,7 @@ export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFor
   const damagedQuantity = wholeNumber(form, "damaged", errors, "Damaged quantity");
   const locationId = parseId(text(form, "location_id"));
   if (Number.isNaN(locationId)) errors.location_id = "Choose a location";
+  const assigned = assignments(form, errors);
   return result(errors, () => ({
     operationId,
     receivedOn,
@@ -148,6 +171,7 @@ export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFor
     locationId,
     notes: optionalText(form, "notes"),
     cancelRemainder: text(form, "cancel_remainder") === "on",
+    assignments: assigned,
   }));
 }
 

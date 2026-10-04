@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { listLineCommitments, type CommitmentDetail } from "#lib/server/db/commitments.ts";
 import { listChoices, type BomLine } from "#lib/server/db/projects.ts";
 import { listLineReservations, listLineStock } from "#lib/server/db/reservations.ts";
 import { assertUnit, UNITS, type Unit } from "#lib/units.ts";
@@ -10,7 +11,10 @@ export interface LineReservation {
   quantity: number;
 }
 
-/** Stock of one part allocated to one BOM line. Quantities are in `baseUnit`. */
+/**
+ * Stock and incoming supply of one part allocated to one BOM line. Quantities are in
+ * `baseUnit`. `ordered` is outstanding order supply committed to the line; it is not stock.
+ */
 export interface PartAllocation {
   partId: number;
   partName: string;
@@ -18,13 +22,18 @@ export interface PartAllocation {
   used: number;
   picked: number;
   reserved: number;
+  ordered: number;
   reservations: LineReservation[];
+  commitments: CommitmentDetail[];
 }
 
 /**
  * Quantity states of a requirement, all in `unit`. Each quantity counts once:
- * uncovered = max(required - used - picked - reserved, 0). `excess` is the amount by which the
- * allocations exceed the requirement, such as picked stock after the requirement was reduced.
+ * uncovered = max(required - used - picked - reserved, 0) is the remaining need, and
+ * neededNotOrdered = max(uncovered - ordered, 0) is what no stock or committed order covers.
+ * `excess` is the amount by which used, picked, and reserved stock exceed the requirement, such
+ * as picked stock after the requirement was reduced. Commitments are kept within the remaining
+ * need, so they have no excess.
  */
 export interface LineCoverage {
   unit: string;
@@ -33,11 +42,13 @@ export interface LineCoverage {
   picked: number;
   reserved: number;
   uncovered: number;
+  ordered: number;
+  neededNotOrdered: number;
   excess: number;
   parts: PartAllocation[];
 }
 
-/** Reservations, picked stock, and use of the lines, by line ID. */
+/** Reservations, picked stock, use, and incoming commitments of the lines, by line ID. */
 export function loadAllocations(db: Database, lineIds: number[]): Map<number, PartAllocation[]> {
   const result = new Map<number, Map<number, PartAllocation>>();
   const entry = (lineId: number, part: { partId: number; partName: string; baseUnit: string }) => {
@@ -52,7 +63,9 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
         used: 0,
         picked: 0,
         reserved: 0,
+        ordered: 0,
         reservations: [],
+        commitments: [],
       };
       parts.set(part.partId, allocation);
     }
@@ -75,6 +88,11 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
       quantity: reservation.quantity,
     });
   }
+  for (const commitment of listLineCommitments(db, lineIds)) {
+    const allocation = entry(commitment.bomLineId, commitment);
+    allocation.ordered += commitment.quantity;
+    allocation.commitments.push(commitment);
+  }
   return new Map([...result].map(([lineId, parts]) => [lineId, [...parts.values()]]));
 }
 
@@ -91,7 +109,7 @@ function finestUnit(units: Unit[]): Unit {
 }
 
 /** Convert an integer quantity to a unit that is the same size or finer. */
-function convert(quantity: number, from: Unit, to: Unit): number {
+export function convert(quantity: number, from: Unit, to: Unit): number {
   return (quantity * UNITS[from].size) / UNITS[to].size;
 }
 
@@ -105,21 +123,25 @@ export function lineCoverage(
 ): LineCoverage {
   const lineUnit = assertUnit(line.unit);
   const unit = finestUnit([lineUnit, ...parts.map((p) => assertUnit(p.baseUnit))]);
-  const sum = (key: "used" | "picked" | "reserved") =>
+  const sum = (key: "used" | "picked" | "reserved" | "ordered") =>
     parts.reduce((total, p) => total + convert(p[key], assertUnit(p.baseUnit), unit), 0);
 
   const required = convert(line.quantity, lineUnit, unit);
   const used = sum("used");
   const picked = sum("picked");
   const reserved = sum("reserved");
+  const ordered = sum("ordered");
   const allocated = used + picked + reserved;
+  const uncovered = Math.max(required - allocated, 0);
   return {
     unit,
     required,
     used,
     picked,
     reserved,
-    uncovered: Math.max(required - allocated, 0),
+    uncovered,
+    ordered,
+    neededNotOrdered: Math.max(uncovered - ordered, 0),
     excess: Math.max(allocated - required, 0),
     parts,
   };

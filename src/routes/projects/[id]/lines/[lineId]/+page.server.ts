@@ -1,11 +1,12 @@
 import { error, fail } from "@sveltejs/kit";
+import { parseAssignForm, parseReleaseForm } from "#lib/schemas/commitment.ts";
 import { parseId, text } from "#lib/schemas/result.ts";
 import { parseChoiceForm } from "#lib/schemas/project.ts";
 import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { inventory } from "#lib/server/inventory/index.ts";
 import { allocationAction } from "#lib/server/projects/allocation-actions.ts";
-import { allocations, projects } from "#lib/server/projects/index.ts";
+import { allocations, commitments, projects } from "#lib/server/projects/index.ts";
 import { SOURCE_LABELS } from "#lib/server/projects/matching.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
@@ -24,6 +25,7 @@ export const load: PageServerLoad = ({ params }) => {
     candidates: candidates.map((c) => ({ ...c, sourceLabel: SOURCE_LABELS[c.source] })),
     parts: projects().bomFormOptions().parts,
     stock: allocations().getLineStock(projectId, lineId),
+    incoming: commitments().listIncomingOptions(projectId, lineId),
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission of the same form is rejected.
@@ -37,6 +39,32 @@ export const actions: Actions = {
   pick: allocationAction("pick"),
   use: allocationAction("use"),
   return: allocationAction("return"),
+
+  assignIncoming: async ({ request, params }) => {
+    const parsed = parseAssignForm(await request.formData());
+    if (!parsed.success) return fail(400, { action: "incoming", errors: parsed.errors });
+    return runAction("incoming", () => {
+      commitments().assign({
+        ...parsed.data,
+        projectId: Number(params.id),
+        lineId: Number(params.lineId),
+      });
+      return { action: "incoming", success: "Incoming supply committed to this row." };
+    });
+  },
+
+  releaseIncoming: async ({ request, params }) => {
+    const parsed = parseReleaseForm(await request.formData());
+    if (!parsed.success) return fail(400, { action: "incoming", errors: parsed.errors });
+    return runAction("incoming", () => {
+      commitments().release({
+        ...parsed.data,
+        projectId: Number(params.id),
+        lineId: Number(params.lineId),
+      });
+      return { action: "incoming", success: "Commitment released." };
+    });
+  },
 
   approve: async ({ request, params }) => {
     const parsed = parseChoiceForm(await request.formData());

@@ -31,7 +31,16 @@
     return null;
   });
 
+  const incomingFeedback = $derived.by(() => {
+    if (form?.action !== 'incoming') return null;
+    if ('success' in form) return { ok: true, text: form.success };
+    if ('message' in form) return { ok: false, text: form.message };
+    if ('errors' in form) return { ok: false, text: Object.values(form.errors ?? {}).join('. ') };
+    return null;
+  });
+
   const coverage = $derived(data.stock.coverage);
+  const lineCommitments = $derived(coverage.parts.flatMap((p) => p.commitments));
   const allocationOf = (partId: number) => coverage.parts.find((p) => p.partId === partId);
   const reservedHere = (partId: number, locationId: number) =>
     allocationOf(partId)?.reservations.find((r) => r.locationId === locationId)?.quantity ?? 0;
@@ -144,7 +153,12 @@
     <dt class="text-gray-600">Used</dt><dd>{formatQuantity(coverage.used, coverage.unit)}</dd>
     <dt class="text-gray-600">Picked</dt><dd>{formatQuantity(coverage.picked, coverage.unit)}</dd>
     <dt class="text-gray-600">Reserved</dt><dd>{formatQuantity(coverage.reserved, coverage.unit)}</dd>
-    <dt class="text-gray-600">Uncovered</dt><dd>{formatQuantity(coverage.uncovered, coverage.unit)}</dd>
+    <dt class="text-gray-600">Remaining</dt><dd>{formatQuantity(coverage.uncovered, coverage.unit)}</dd>
+    <dt class="text-gray-600">Ordered (committed)</dt><dd>{formatQuantity(coverage.ordered, coverage.unit)}</dd>
+    <dt class="text-gray-600">Needed, not ordered</dt>
+    <dd class={coverage.neededNotOrdered > 0 ? 'font-semibold text-amber-700' : ''}>
+      {formatQuantity(coverage.neededNotOrdered, coverage.unit)}
+    </dd>
     {#if coverage.excess > 0}
       <dt class="text-red-700">Excess</dt>
       <dd class="text-red-700">
@@ -230,6 +244,94 @@
       {/if}
     </article>
   {/each}
+</section>
+
+<section class="mb-6">
+  <h2 class="mb-1 font-semibold">Incoming supply</h2>
+  <p class="mb-2 text-sm text-gray-600">
+    An order covers this row only after you commit part of it here. When the stock arrives, the
+    committed quantity becomes a reservation.
+  </p>
+  {#if incomingFeedback}<p class="mb-2 {incomingFeedback.ok ? 'text-green-700' : 'text-red-700'}">{incomingFeedback.text}</p>{/if}
+  {#if lineCommitments.length > 0}
+    <table class="mb-3 w-full text-left text-sm">
+      <thead class="border-b text-gray-600">
+        <tr><th class="py-1">Order</th><th>Part</th><th>Expected</th><th class="text-right">Committed</th><th></th></tr>
+      </thead>
+      <tbody>
+        {#each lineCommitments as commitment (commitment.id)}
+          <tr class="border-b border-gray-100">
+            <td class="py-1">
+              <a href="/orders/{commitment.orderId}" class="text-blue-700 hover:underline">
+                {commitment.supplier} {commitment.reference ?? ''}
+              </a>
+            </td>
+            <td>{commitment.partName}</td>
+            <td>{commitment.expectedOn ?? '—'}</td>
+            <td class="text-right">{formatQuantity(commitment.quantity, commitment.baseUnit)}</td>
+            <td class="pl-3">
+              <form method="POST" action="?/releaseIncoming" use:enhance class="flex items-end gap-1">
+                <input type="hidden" name="commitment_id" value={commitment.id} />
+                <input
+                  name="quantity"
+                  required
+                  inputmode="numeric"
+                  value={commitment.quantity}
+                  aria-label="Quantity ({commitment.baseUnit})"
+                  class="w-16 rounded border border-gray-300 px-1"
+                />
+                <button class="btn-secondary">Release</button>
+              </form>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+  {#if data.incoming.length === 0}
+    <p class="text-sm text-gray-600">No placed or shipped order has outstanding supply of an approved part.</p>
+  {:else}
+    <table class="w-full text-left text-sm">
+      <thead class="border-b text-gray-600">
+        <tr>
+          <th class="py-1">Order</th><th>Part</th><th>Expected</th>
+          <th class="text-right">Outstanding</th><th class="text-right">Uncommitted</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each data.incoming as option (option.orderLineId)}
+          <tr class="border-b border-gray-100">
+            <td class="py-1">
+              <a href="/orders/{option.orderId}" class="text-blue-700 hover:underline">
+                {option.supplier} {option.reference ?? ''}
+              </a>
+              <span class="text-gray-500">{option.status}</span>
+            </td>
+            <td>{option.partName}</td>
+            <td>{option.expectedOn ?? '—'}</td>
+            <td class="text-right">{formatQuantity(option.outstanding, option.baseUnit)}</td>
+            <td class="text-right">{formatQuantity(option.uncommitted, option.baseUnit)}</td>
+            <td class="pl-3">
+              {#if option.uncommitted > 0 && coverage.neededNotOrdered > 0}
+                <form method="POST" action="?/assignIncoming" use:enhance class="flex items-end gap-1">
+                  <input type="hidden" name="order_line_id" value={option.orderLineId} />
+                  <input
+                    name="quantity"
+                    required
+                    inputmode="numeric"
+                    aria-label="Quantity ({option.baseUnit})"
+                    class="w-16 rounded border border-gray-300 px-1"
+                  />
+                  <span class="text-gray-600">{option.baseUnit}</span>
+                  <button class="btn-secondary">Commit</button>
+                </form>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
 </section>
 
 <section class="mb-6">

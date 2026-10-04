@@ -1,9 +1,16 @@
 import type { Database } from "bun:sqlite";
 import type { ProjectStatus } from "#lib/projects.ts";
+import {
+  deleteLineCommitments,
+  deleteProjectCommitments,
+  listLineCommitments,
+  setCommitmentQuantity,
+} from "#lib/server/db/commitments.ts";
 import { listBomLines, type BomLine, type BomConstraint } from "#lib/server/db/projects.ts";
 import { countLineMovements, deleteProjectReservations } from "#lib/server/db/reservations.ts";
 import { InventoryError } from "#lib/server/inventory/errors.ts";
 import { formatQuantity } from "#lib/units.ts";
+import { fitLineCommitments, releaseUnfitCommitments } from "./commitments";
 import { allowedPartIds, lineCoverage, loadAllocations, type PartAllocation } from "./coverage";
 import { unitsCompatible } from "./matching";
 
@@ -29,31 +36,34 @@ export interface StatusChange {
 export interface StatusChangeResult {
   /** Number of storage reservations released by the change. */
   releasedReservations: number;
+  /** Number of incoming commitments released by the change. */
+  releasedCommitments: number;
 }
 
 /**
  * Boundary for allocation rules on BOM edits and project status changes.
  *
- * The project service calls `assertChangeAllowed` inside its write transaction: after it writes
+ * The project service calls `applyChange` inside its write transaction: after it writes
  * an update (so `after` is the stored state), and before it deletes a line or a choice.
  * Reservations, picked stock, recorded use, and
  * incoming commitments of the line can then be compared with the new requirement. An
- * implementation throws an InventoryError that names the allocations that no longer fit; the
- * transaction then rolls back with no partial writes. Moving a line between components is not
- * a change here, because it keeps the line and its allocations.
+ * implementation may release incoming commitments that no longer fit, or throw an
+ * InventoryError that names the allocations that no longer fit; the transaction then rolls back
+ * with no partial writes. Moving a line between components is not a change here, because it
+ * keeps the line and its allocations.
  *
  * `applyStatusChange` runs in the same transaction as a status update. It may release
  * allocations or throw to reject the new status.
  */
 export interface BomAllocationGuard {
-  assertChangeAllowed(db: Database, change: BomChange): void;
+  applyChange(db: Database, change: BomChange): void;
   applyStatusChange(db: Database, change: StatusChange): StatusChangeResult;
 }
 
 /** Guard for a project without allocations. */
 export const noBomAllocations: BomAllocationGuard = {
-  assertChangeAllowed() {},
-  applyStatusChange: () => ({ releasedReservations: 0 }),
+  applyChange() {},
+  applyStatusChange: () => ({ releasedReservations: 0, releasedCommitments: 0 }),
 };
 
 function describeAllocation(allocation: PartAllocation, include: { used: boolean }): string {
@@ -109,22 +119,30 @@ function updateProblems(db: Database, line: BomLine): string[] {
  * - An update may not leave reservations or picked stock on a part the row no longer accepts,
  *   allocations in a unit that cannot convert to the row's unit, or reservations beyond the
  *   new quantity. Picked and used stock beyond a reduced quantity stays as a visible excess.
- * - A row with reservations or any stock history cannot be deleted.
+ *   Incoming commitments of parts the row no longer accepts, and commitments beyond the new
+ *   remaining need, are released.
+ * - A row with reservations or any stock history cannot be deleted. Deleting a row releases
+ *   its incoming commitments.
  * - Approval of a part cannot be withdrawn while that part is reserved or picked for the row.
- * - Cancelling a project releases its storage reservations; picked stock stays until it is
- *   used or returned. Completing a project is rejected while picked stock remains, and
- *   releases any remaining reservations.
+ *   Withdrawing it releases the row's incoming commitments of that part.
+ * - Cancelling a project releases its storage reservations and incoming commitments; picked
+ *   stock stays until it is used or returned. Completing a project is rejected while picked
+ *   stock remains, and releases any remaining reservations and commitments.
  */
 export const bomAllocationGuard: BomAllocationGuard = {
-  assertChangeAllowed(db, change) {
+  applyChange(db, change) {
     switch (change.kind) {
       case "update": {
-        const problems = updateProblems(db, change.after.line);
+        const { line } = change.after;
+        releaseUnfitCommitments(db, line);
+        const problems = updateProblems(db, line);
         if (problems.length > 0) reject(problems, "Release or return these allocations");
+        fitLineCommitments(db, line);
         return;
       }
       case "delete": {
         const { line } = change.before;
+        deleteLineCommitments(db, line.id);
         const allocations = loadAllocations(db, [line.id]).get(line.id) ?? [];
         if (allocations.length > 0) {
           reject(
@@ -141,6 +159,9 @@ export const bomAllocationGuard: BomAllocationGuard = {
       }
       case "remove_choice": {
         if (change.line.partId === change.partId) return;
+        for (const commitment of listLineCommitments(db, [change.line.id])) {
+          if (commitment.partId === change.partId) setCommitmentQuantity(db, commitment.id, 0);
+        }
         const allocation = (loadAllocations(db, [change.line.id]).get(change.line.id) ?? []).find(
           (a) => a.partId === change.partId
         );
@@ -166,8 +187,11 @@ export const bomAllocationGuard: BomAllocationGuard = {
       }
     }
     if (to === "complete" || to === "cancelled") {
-      return { releasedReservations: deleteProjectReservations(db, projectId) };
+      return {
+        releasedReservations: deleteProjectReservations(db, projectId),
+        releasedCommitments: deleteProjectCommitments(db, projectId),
+      };
     }
-    return { releasedReservations: 0 };
+    return { releasedReservations: 0, releasedCommitments: 0 };
   },
 };

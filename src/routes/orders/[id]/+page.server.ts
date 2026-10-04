@@ -18,6 +18,13 @@ function lineId(form: FormData): number | null {
   return id === null || Number.isNaN(id) ? null : id;
 }
 
+/** Text about project commitments that a line change reduced. */
+function commitmentNote(reduced: number): string {
+  return reduced > 0
+    ? ` Reduced ${reduced} project commitment(s); those requirements now show the shortage.`
+    : "";
+}
+
 /** An action that changes the order's state on the date in `date`. */
 function stateAction(run: (orderId: number, date: string) => void, success: string) {
   return async ({ request, params }: { request: Request; params: { id: string } }) => {
@@ -64,8 +71,8 @@ export const actions: Actions = {
     if (id === null) return fail(400, { action: "line", message: "Choose a line" });
     if (!parsed.success) return fail(400, { action: "line", errors: parsed.errors });
     return runAction("line", () => {
-      inventory().orders.updateLine(Number(params.id), id, parsed.data);
-      return { action: "line", success: "Line corrected." };
+      const reduced = inventory().orders.updateLine(Number(params.id), id, parsed.data);
+      return { action: "line", success: `Line corrected.${commitmentNote(reduced)}` };
     });
   },
 
@@ -73,8 +80,8 @@ export const actions: Actions = {
     const id = lineId(await request.formData());
     if (id === null) return fail(400, { action: "line", message: "Choose a line" });
     return runAction("line", () => {
-      inventory().orders.removeLine(Number(params.id), id);
-      return { action: "line", success: "Line removed." };
+      const reduced = inventory().orders.removeLine(Number(params.id), id);
+      return { action: "line", success: `Line removed.${commitmentNote(reduced)}` };
     });
   },
 
@@ -82,8 +89,11 @@ export const actions: Actions = {
     const id = lineId(await request.formData());
     if (id === null) return fail(400, { action: "line", message: "Choose a line" });
     return runAction("line", () => {
-      inventory().orders.cancelRemainder(Number(params.id), id);
-      return { action: "line", success: "Outstanding quantity cancelled." };
+      const reduced = inventory().orders.cancelRemainder(Number(params.id), id);
+      return {
+        action: "line",
+        success: `Outstanding quantity cancelled.${commitmentNote(reduced)}`,
+      };
     });
   },
 };

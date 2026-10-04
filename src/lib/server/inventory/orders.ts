@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { getPart } from "#lib/server/db/catalog.ts";
+import {
+  deleteOrderLineCommitments,
+  listOrderLineCommitments,
+} from "#lib/server/db/commitments.ts";
 import { searchParts } from "#lib/server/db/part-search.ts";
 import {
   addToLineTotals,
@@ -23,6 +27,7 @@ import {
 import { packConversion } from "#lib/orders.ts";
 import type { OrderInput, OrderLineInput } from "#lib/schemas/order.ts";
 import { formatQuantity } from "#lib/units.ts";
+import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
 
 /** Placed and shipped outstanding supply of one part, in its base unit. */
@@ -47,7 +52,9 @@ export type OrderService = ReturnType<typeof createOrderService>;
 
 /**
  * Purchase orders: manual entry, purchase and delivery state, line corrections, and outstanding
- * supply. Nothing here changes stock; only the receipt service adds stock.
+ * supply. Nothing here changes stock; only the receipt service adds stock. Corrections and
+ * cancellations that lower a line's outstanding supply reduce its incoming project
+ * commitments in the same transaction and return how many were reduced.
  */
 export function createOrderService(db: Database) {
   function inTransaction<T>(fn: () => T): T {
@@ -109,9 +116,14 @@ export function createOrderService(db: Database) {
         ),
         (line) => line.receiptId
       );
+      const lines = listOrderLines(db, id);
       return {
         order,
-        lines: listOrderLines(db, id),
+        lines,
+        commitments: listOrderLineCommitments(
+          db,
+          lines.map((line) => line.id)
+        ),
         receipts: receipts.map((receipt) => ({
           ...receipt,
           lines: receiptLines.get(receipt.id) ?? [],
@@ -195,10 +207,11 @@ export function createOrderService(db: Database) {
 
     /**
      * Correct a line. The ordered quantity cannot go below what already arrived or was
-     * cancelled, and the part cannot change after any of it arrived.
+     * cancelled, and the part cannot change after any of it arrived. A part change releases
+     * the line's commitments, which were for the old part.
      */
-    updateLine(orderId: number, lineId: number, input: OrderLineInput): void {
-      inTransaction(() => {
+    updateLine(orderId: number, lineId: number, input: OrderLineInput): number {
+      return inTransaction(() => {
         const line = requireLine(orderId, lineId);
         const quantity = checkLine(input);
         const arrived = line.receivedQuantity + line.damagedQuantity;
@@ -213,30 +226,36 @@ export function createOrderService(db: Database) {
           );
         }
         updateOrderLine(db, lineId, input);
+        return input.partId === line.partId
+          ? fitOrderLineCommitments(db, lineId)
+          : deleteOrderLineCommitments(db, lineId);
       });
     },
 
     /** Remove a line that nothing has arrived for. Otherwise cancel its remainder. */
-    removeLine(orderId: number, lineId: number): void {
-      inTransaction(() => {
+    removeLine(orderId: number, lineId: number): number {
+      return inTransaction(() => {
         const line = requireLine(orderId, lineId);
         if (line.receivedQuantity + line.damagedQuantity > 0) {
           throw new InventoryError(
             "Part of this line has arrived, so it stays on the order. Cancel its remainder instead."
           );
         }
+        const released = deleteOrderLineCommitments(db, lineId);
         deleteOrderLine(db, lineId);
+        return released;
       });
     },
 
     /** Cancel the outstanding supply of a line. Received and damaged amounts stay. */
-    cancelRemainder(orderId: number, lineId: number): void {
-      inTransaction(() => {
+    cancelRemainder(orderId: number, lineId: number): number {
+      return inTransaction(() => {
         const line = requireLine(orderId, lineId);
         if (line.outstanding === 0) {
           throw new InventoryError("This line has no outstanding quantity to cancel");
         }
         addToLineTotals(db, lineId, { received: 0, damaged: 0, cancelled: line.outstanding });
+        return fitOrderLineCommitments(db, lineId);
       });
     },
 

@@ -10,6 +10,7 @@
 
   const order = $derived(data.order);
   const outstandingLines = $derived(data.lines.filter((l) => l.outstanding > 0));
+  const commitmentsByLine = $derived(Map.groupBy(data.commitments, (c) => c.orderLineId));
 
   function feedback(action: string) {
     if (form?.action !== action) return null;
@@ -118,6 +119,14 @@
               {#if line.supplierSku}<div class="text-xs text-gray-600">SKU {line.supplierSku}</div>{/if}
               {#if line.unitPrice}<div class="text-xs text-gray-600">{line.unitPrice} {line.currency} per {line.purchaseUnit}</div>{/if}
               {#if line.notes}<div class="text-xs text-gray-600">{line.notes}</div>{/if}
+              {#each commitmentsByLine.get(line.id) ?? [] as commitment (commitment.id)}
+                <div class="text-xs">
+                  Committed {formatQuantity(commitment.quantity, commitment.baseUnit)} to
+                  <a href="/projects/{commitment.projectId}/lines/{commitment.bomLineId}" class="text-blue-700 hover:underline">
+                    {commitment.projectName} · {commitment.lineDescription}
+                  </a>
+                </div>
+              {/each}
             </td>
             <td>{describePackConversion(line)}</td>
             <td class="text-right">{formatQuantity(line.receivedQuantity, line.baseUnit)}</td>

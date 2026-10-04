@@ -13,6 +13,7 @@ export const load: PageServerLoad = ({ params }) => {
   return {
     order: details.order,
     lines: details.lines.filter((line) => line.outstanding > 0),
+    commitments: details.commitments,
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission returns the receipt it already created.

@@ -103,11 +103,11 @@ describe("projects and BOM lines", () => {
     let reject = false;
     const { catalog, projects } = createTestProjects({
       allocations: {
-        assertChangeAllowed(_db, change) {
+        applyChange(_db, change) {
           changes.push(change);
           if (reject) throw new InventoryError("2 pcs are already picked for this line");
         },
-        applyStatusChange: () => ({ releasedReservations: 0 }),
+        applyStatusChange: () => ({ releasedReservations: 0, releasedCommitments: 0 }),
       },
     });
     const screw = catalog.createPart(partInput());

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { OPEN_PROJECT_STATUSES } from "#lib/projects.ts";
 import { getPart, type Part } from "#lib/server/db/catalog.ts";
 import {
   getHoldingLocation,
@@ -49,6 +50,7 @@ import {
   loadAllocations,
   type LineCoverage,
 } from "./coverage";
+import { fitLineCommitments } from "./commitments";
 import { unitsCompatible } from "./matching";
 import type { ComponentFilter } from "./projects";
 
@@ -102,9 +104,6 @@ export interface PickListStop {
   locationName: string;
   items: PickListItem[];
 }
-
-/** Statuses in which a project may reserve storage stock. */
-const OPEN_STATUSES = new Set(["planned", "active", "paused"]);
 
 export type AllocationService = ReturnType<typeof createAllocationService>;
 
@@ -178,7 +177,10 @@ export function createAllocationService(db: Database) {
     return coverageOf(line).parts.find((p) => p.partId === partId)?.picked ?? 0;
   }
 
-  /** Check every reservation rule and add `quantity` to the line's reservation. */
+  /**
+   * Check every reservation rule and add `quantity` to the line's reservation. Incoming
+   * commitments that the reservation makes unnecessary are released.
+   */
   function reserveQuantity(
     project: Project,
     line: BomLine,
@@ -186,7 +188,7 @@ export function createAllocationService(db: Database) {
     location: Location,
     quantity: number
   ) {
-    if (!OPEN_STATUSES.has(project.status)) {
+    if (!OPEN_PROJECT_STATUSES.includes(project.status)) {
       throw new InventoryError(`${project.name} is ${project.status}; it cannot reserve stock`);
     }
     if (!allowedPartIds(db, line).has(part.id)) {
@@ -229,6 +231,7 @@ export function createAllocationService(db: Database) {
       locationId: location.id,
       quantity,
     });
+    fitLineCommitments(db, line);
   }
 
   /** Take `quantity` from the line's reservation of a part at a location. */

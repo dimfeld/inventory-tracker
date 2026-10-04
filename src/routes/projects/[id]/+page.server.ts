@@ -24,9 +24,14 @@ export const actions: Actions = {
     const parsed = parseProjectForm(await request.formData());
     if (!parsed.success) return fail(400, { action: "update", errors: parsed.errors });
     return runAction("update", () => {
-      const { releasedReservations } = projects().updateProject(Number(params.id), parsed.data);
-      const released =
-        releasedReservations > 0 ? ` Released ${releasedReservations} reservation(s).` : "";
+      const { releasedReservations, releasedCommitments } = projects().updateProject(
+        Number(params.id),
+        parsed.data
+      );
+      const released = [
+        releasedReservations > 0 ? ` Released ${releasedReservations} reservation(s).` : "",
+        releasedCommitments > 0 ? ` Released ${releasedCommitments} incoming commitment(s).` : "",
+      ].join("");
       return { action: "update", success: `Project saved.${released}` };
     });
   },

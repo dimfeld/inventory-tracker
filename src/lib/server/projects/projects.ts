@@ -240,13 +240,15 @@ export function createProjectService(db: Database, options: ProjectServiceOption
 
     /**
      * Save a project. A status change applies its allocation rules in the same transaction,
-     * such as releasing reservations on cancellation.
+     * such as releasing reservations and incoming commitments on cancellation.
      */
     updateProject(id: number, input: ProjectInput): StatusChangeResult {
       return inTransaction(() => {
         const project = requireProject(id);
         updateProject(db, id, projectFields(input));
-        if (project.status === input.status) return { releasedReservations: 0 };
+        if (project.status === input.status) {
+          return { releasedReservations: 0, releasedCommitments: 0 };
+        }
         return allocations.applyStatusChange(db, {
           projectId: id,
           from: project.status,
@@ -348,7 +350,7 @@ export function createProjectService(db: Database, options: ProjectServiceOption
         const before = lineState(requireLine(projectId, lineId));
         updateBomLine(db, lineId, lineFields(projectId, input, before.line));
         replaceConstraints(db, lineId, typedConstraints(input.constraints));
-        allocations.assertChangeAllowed(db, {
+        allocations.applyChange(db, {
           kind: "update",
           before,
           after: lineState(getBomLine(db, lineId)!),
@@ -359,7 +361,7 @@ export function createProjectService(db: Database, options: ProjectServiceOption
     deleteBomLine(projectId: number, lineId: number): void {
       inTransaction(() => {
         const before = lineState(requireLine(projectId, lineId));
-        allocations.assertChangeAllowed(db, { kind: "delete", before });
+        allocations.applyChange(db, { kind: "delete", before });
         deleteBomLine(db, lineId);
       });
     },
@@ -413,7 +415,7 @@ export function createProjectService(db: Database, options: ProjectServiceOption
         const line = requireLine(projectId, lineId);
         const choice = listChoices(db, [lineId]).find((c) => c.id === choiceId);
         if (!choice) throw new NotFoundError(`Approval ${choiceId} does not exist for this line`);
-        allocations.assertChangeAllowed(db, { kind: "remove_choice", line, partId: choice.partId });
+        allocations.applyChange(db, { kind: "remove_choice", line, partId: choice.partId });
         deleteChoice(db, choiceId);
       });
     },

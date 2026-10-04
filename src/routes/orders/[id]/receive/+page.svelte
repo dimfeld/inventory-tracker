@@ -58,6 +58,11 @@
             {/each}
           </select>
         </label>
+        {#if data.commitments.length > 0}
+          <p class="text-gray-700">
+            Committed quantities are reserved for their project rows at this destination.
+          </p>
+        {/if}
         <ul class="list-inside list-disc">
           {#each data.lines as line (line.id)}
             <li>
@@ -77,7 +82,13 @@
     <h2 class="mb-2 font-semibold">Review each line</h2>
     <div class="space-y-3">
       {#each data.lines as line (line.id)}
-        <ReceiptLineForm {line} locations={data.storageLocations} operationId={data.operationId} today={data.today} />
+        <ReceiptLineForm
+          {line}
+          commitments={data.commitments.filter((c) => c.orderLineId === line.id)}
+          locations={data.storageLocations}
+          operationId={data.operationId}
+          today={data.today}
+        />
       {/each}
     </div>
   {/key}

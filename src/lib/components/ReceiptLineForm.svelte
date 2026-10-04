@@ -1,11 +1,16 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { assignInSequence } from '#lib/commitments.ts';
   import { describePackConversion } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
 
-  /** Review of one order line: usable and damaged amounts, destination, and a live preview. */
+  /**
+   * Review of one order line: usable and damaged amounts, destination, assignment of usable
+   * stock to the line's project commitments, and a live preview.
+   */
   let {
     line,
+    commitments,
     locations,
     operationId,
     today,
@@ -19,6 +24,8 @@
       packQuantity: number;
       outstanding: number;
     };
+    /** The line's commitments in sequence order. */
+    commitments: { id: number; projectName: string; lineDescription: string; quantity: number }[];
     locations: { id: number; name: string }[];
     operationId: string;
     today: string;
@@ -31,8 +38,21 @@
   // svelte-ignore state_referenced_locally
   let locationId = $state(String(locations[0]?.id ?? ''));
   let cancelRemainder = $state(false);
+  let customAssignment = $state(false);
+  // Owner-entered quantities by commitment ID, used when the assignment is changed.
+  let custom = $state<Record<number, string>>({});
 
   const whole = (value: string) => (/^\d+$/.test(value.trim()) ? Number(value) : null);
+  const committedTotal = $derived(commitments.reduce((sum, c) => sum + c.quantity, 0));
+  const sequenceAssignment = $derived(
+    new Map(assignInSequence(commitments, whole(accepted) ?? 0).map((a) => [a.commitmentId, a.quantity]))
+  );
+  const assignedTo = (id: number) =>
+    customAssignment ? whole(custom[id] ?? '0') : (sequenceAssignment.get(id) ?? 0);
+
+  function changeAssignment() {
+    custom = Object.fromEntries(commitments.map((c) => [c.id, String(sequenceAssignment.get(c.id) ?? 0)]));
+  }
   const preview = $derived.by(() => {
     const usable = whole(accepted);
     const bad = whole(damaged || '0');
@@ -46,12 +66,28 @@
     }
     const location = locations.find((l) => String(l.id) === locationId);
     if (usable > 0 && !location) return { ok: false, text: 'Choose a destination.' };
+    let assigned = 0;
+    for (const commitment of commitments) {
+      const quantity = assignedTo(commitment.id);
+      if (quantity === null) return { ok: false, text: 'Enter whole assigned amounts.' };
+      if (quantity > commitment.quantity) {
+        return {
+          ok: false,
+          text: `${commitment.projectName} has only ${formatQuantity(commitment.quantity, line.baseUnit)} committed.`,
+        };
+      }
+      assigned += quantity;
+    }
+    if (assigned > usable) {
+      return { ok: false, text: 'You assigned more to projects than is usable.' };
+    }
     const remainder = line.outstanding - usable - bad;
     const parts = [
       usable > 0
         ? `Adds ${formatQuantity(usable, line.baseUnit)} to ${location!.name}`
         : 'Adds no usable stock',
     ];
+    if (assigned > 0) parts.push(`${formatQuantity(assigned, line.baseUnit)} of it reserved for projects`);
     if (bad > 0) parts.push(`${formatQuantity(bad, line.baseUnit)} damaged, not added`);
     if (remainder > 0) {
       parts.push(
@@ -88,6 +124,53 @@
       </select>
     </label>
   </div>
+  {#if commitments.length > 0}
+    <fieldset class="rounded border border-gray-200 p-2">
+      <legend class="px-1">
+        Project commitments ({formatQuantity(committedTotal, line.baseUnit)} of the outstanding supply)
+      </legend>
+      <p class="mb-1 text-gray-600">
+        Usable stock is reserved for these rows in this order. Commitments that are not filled stay on
+        the outstanding supply. If supply is lost, the last commitments are reduced first.
+      </p>
+      <table class="mb-1 text-left">
+        <thead class="text-gray-600">
+          <tr><th class="pr-4">Project row</th><th class="pr-4 text-right">Committed</th><th class="text-right">Reserve now</th></tr>
+        </thead>
+        <tbody>
+          {#each commitments as commitment (commitment.id)}
+            <tr>
+              <td class="pr-4">{commitment.projectName} · {commitment.lineDescription}</td>
+              <td class="pr-4 text-right">{formatQuantity(commitment.quantity, line.baseUnit)}</td>
+              <td class="text-right">
+                {#if customAssignment}
+                  <input type="hidden" name="assign_commitment" value={commitment.id} />
+                  <input
+                    name="assign_quantity"
+                    inputmode="numeric"
+                    aria-label="Reserve for {commitment.projectName}"
+                    bind:value={custom[commitment.id]}
+                    class="w-20 rounded border border-gray-300 px-1 text-right"
+                  />
+                {:else}
+                  {formatQuantity(sequenceAssignment.get(commitment.id) ?? 0, line.baseUnit)}
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <label class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          name="custom_assignment"
+          bind:checked={customAssignment}
+          onchange={() => customAssignment && changeAssignment()}
+        />
+        Change the assignment
+      </label>
+    </fieldset>
+  {/if}
   <label class="block">
     <span>Review notes</span>
     <input name="notes" class="input" />

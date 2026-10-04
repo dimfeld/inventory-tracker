@@ -2,6 +2,9 @@ export const PROJECT_STATUSES = ["planned", "active", "paused", "complete", "can
 
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
+/** Statuses in which a project may hold reservations and incoming commitments. */
+export const OPEN_PROJECT_STATUSES: readonly ProjectStatus[] = ["planned", "active", "paused"];
+
 export function isProjectStatus(value: string): value is ProjectStatus {
   return (PROJECT_STATUSES as readonly string[]).includes(value);
 }

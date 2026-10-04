@@ -59,15 +59,17 @@
   <div>Used {fmt(coverage.used)}</div>
   <div>Picked {fmt(coverage.picked)}</div>
   <div>Reserved {fmt(coverage.reserved)}</div>
-  <div class={coverage.uncovered > 0 ? 'font-semibold text-amber-700' : 'text-gray-600'}>
-    Uncovered {fmt(coverage.uncovered)}
+  <div>Ordered {fmt(coverage.ordered)}</div>
+  <div class={coverage.neededNotOrdered > 0 ? 'font-semibold text-amber-700' : 'text-gray-600'}>
+    Needed, not ordered {fmt(coverage.neededNotOrdered)}
   </div>
   {#if coverage.excess > 0}<div class="text-red-700">Excess {fmt(coverage.excess)}</div>{/if}
   {#each coverage.parts as part (part.partId)}
     <div class="text-xs text-gray-600">
-      {part.partName}{#if part.reservations.length > 0}: {part.reservations
-          .map((r) => `${formatQuantity(r.quantity, part.baseUnit)} at ${r.locationName}`)
-          .join(', ')}{/if}
+      {part.partName}{#if part.reservations.length + part.commitments.length > 0}: {[
+          ...part.reservations.map((r) => `${formatQuantity(r.quantity, part.baseUnit)} at ${r.locationName}`),
+          ...part.commitments.map((c) => `${formatQuantity(c.quantity, part.baseUnit)} ordered from ${c.supplier}`),
+        ].join(', ')}{/if}
     </div>
   {/each}
 {/snippet}
@@ -96,7 +98,8 @@
       <input name="name" required value={project.name} class="input" />
     </label>
     <p class="text-sm text-gray-600">
-      Cancelling releases reservations; picked stock stays until you use or return it. A project
+      Cancelling releases reservations and incoming commitments; picked stock stays until you use or
+      return it. A project
       with picked stock cannot be completed.
     </p>
     <label class="block">
@@ -197,9 +200,10 @@
       {/each}
     </nav>
   {/if}
+  <a href="/shopping?select=1&project={project.id}" class="btn-secondary ml-auto">Shopping list</a>
   <a
     href="{base}/pick{data.filter === null ? '' : `?component=${data.filter}`}"
-    class="btn-secondary ml-auto"
+    class="btn-secondary"
   >
     Pick list
   </a>
