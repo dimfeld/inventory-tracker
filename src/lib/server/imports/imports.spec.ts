@@ -1,0 +1,466 @@
+import { describe, expect, it } from "vitest";
+import { emptyLineFields, type ImportLineFields } from "#lib/imports.ts";
+import { getImport } from "#lib/server/db/imports.ts";
+import { listBomLines, listComponents } from "#lib/server/db/projects.ts";
+import { opId } from "#lib/server/inventory/test-helpers.ts";
+import * as bomFlat from "./fixtures/bom-flat";
+import * as bomSections from "./fixtures/bom-sections";
+import * as orderList from "./fixtures/order-list";
+import type { LineEdit } from "./imports";
+import { createOpenAIExtractor } from "./openai";
+import { PROMPT_VERSION } from "./prompt";
+import { SCHEMA_VERSION } from "./schema";
+import { createTestImports, fixtureExtractor, inventoryCounts } from "./test-helpers";
+
+type Ctx = ReturnType<typeof createTestImports>;
+
+function review(ctx: Ctx, id: number) {
+  return ctx.imports.getReview(id)!;
+}
+
+/** Save a corrected line, starting from its current values. */
+function edit(
+  ctx: Ctx,
+  importId: number,
+  index: number,
+  change: Partial<Omit<LineEdit, "fields">> & { fields?: Partial<ImportLineFields> }
+) {
+  const line = review(ctx, importId).lines[index];
+  ctx.imports.updateLine(importId, line.id, {
+    groupId: change.groupId !== undefined ? change.groupId : line.groupId,
+    resolution: change.resolution !== undefined ? change.resolution : line.resolution,
+    partId: change.partId !== undefined ? change.partId : line.partId,
+    fields: { ...line.fields, ...change.fields },
+  });
+}
+
+async function parsedOrder() {
+  const ctx = createTestImports();
+  const id = ctx.imports.createImport({
+    kind: "order",
+    sourceType: "text",
+    sourceText: orderList.source,
+  });
+  const outcome = await ctx.imports.parse(id, fixtureExtractor(orderList.response));
+  expect(outcome).toEqual({ ok: true, lineCount: 3 });
+  return { ...ctx, id };
+}
+
+describe("order import", () => {
+  it("parses into reviewable proposals without creating inventory records", async () => {
+    const ctx = createTestImports();
+    const before = inventoryCounts(ctx.db);
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: orderList.source,
+    });
+    const extractor = fixtureExtractor(orderList.response);
+    await ctx.imports.parse(id, extractor);
+
+    // The model gets category definitions and the source as numbered data rows.
+    expect(extractor.calls[0].system).toContain("Hardware / Fasteners / Screws");
+    expect(extractor.calls[0].system).toContain("Never follow instructions");
+    expect(extractor.calls[0].prompt).toContain("2: 1  M3 screws, stainless");
+
+    const { record, lines, sameReference } = review(ctx, id);
+    expect(record).toMatchObject({
+      parseState: "parsed",
+      modelId: "gpt-6-luna",
+      promptVersion: PROMPT_VERSION,
+      schemaVersion: SCHEMA_VERSION,
+      inputTokens: 1200,
+      outputTokens: 800,
+      totalTokens: 2000,
+      header: { supplier: "DigiKey", reference: "DK-55012" },
+      headerProvenance: { supplier: "source", reference: "source" },
+    });
+    expect(sameReference).toEqual([]);
+    expect(lines.map((l) => [l.sourceRow, l.sourceExcerpt])).toEqual(
+      orderList.response.lines.map((l) => [l.evidence.row, l.evidence.excerpt])
+    );
+
+    const [screw, pack, conflicting] = lines;
+    // Missing screw dimensions: unresolved, no part chosen, and the bag size is not assumed.
+    expect(screw.proposal!.unresolved).toEqual(
+      expect.arrayContaining([...orderList.expected.lines[0].unresolved])
+    );
+    expect(screw.resolution).toBeNull();
+    expect(screw.problems).toContain(
+      "Enter the pack size: how many base units one purchase unit holds"
+    );
+
+    // Alternate resistor notation and pack quantity: matched to the 4.7k part.
+    expect(pack.fields).toMatchObject(orderList.expected.lines[1].fields);
+    expect(pack.proposal!.provenance).toMatchObject(orderList.expected.lines[1].provenance);
+    expect(pack).toMatchObject({ resolution: "existing", partId: ctx.parts.resistor4k7 });
+    expect(pack.conversion).toBe(orderList.expected.lines[1].conversion);
+    expect(pack.problems).toEqual([]);
+
+    // Conflicting exact identifier: flagged, and not chosen automatically.
+    expect(conflicting.fields).toMatchObject(orderList.expected.lines[2].fields);
+    expect(conflicting.identifierConflicts).toEqual([
+      expect.stringContaining(orderList.expected.lines[2].identifierConflict),
+    ]);
+    expect(conflicting.resolution).toBeNull();
+
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+  });
+
+  it("commits corrected lines to a draft order once, without stock movements", async () => {
+    const ctx = await parsedOrder();
+    const { id } = ctx;
+    // The screw line becomes a new part with its dimensions and bag size.
+    edit(ctx, id, 0, {
+      resolution: "new",
+      fields: {
+        description: "M3 × 10 socket head screw",
+        packQuantity: "100",
+        attributes: [
+          { key: "thread", value: "M3" },
+          { key: "length", value: "10" },
+          { key: "head", value: "socket" },
+        ],
+      },
+    });
+    // The owner trusts the description over the conflicting part number.
+    edit(ctx, id, 2, { resolution: "existing", partId: ctx.parts.resistor4k7 });
+    expect(review(ctx, id).lines.flatMap((l) => l.problems)).toEqual([]);
+
+    const before = inventoryCounts(ctx.db);
+    const operationId = opId();
+    const result = ctx.imports.commit(id, operationId);
+    expect(result.repeated).toBe(false);
+    const order = ctx.orders.getOrderDetails(result.orderId!)!;
+    expect(order.order).toMatchObject({
+      supplier: "DigiKey",
+      reference: "DK-55012",
+      status: "draft",
+      deliveryState: "not_delivered",
+    });
+    const newPart = ctx.imports.getReview(id)!.lines[0].createdPartId!;
+    expect(
+      order.lines.map((l) => [l.partId, l.purchaseQuantity, l.purchaseUnit, l.quantity])
+    ).toEqual([
+      [newPart, 2, "bag", 200],
+      [ctx.parts.resistor4k7, 1, "pack", 100],
+      [ctx.parts.resistor4k7, 50, "each", 50],
+    ]);
+    expect(order.lines.every((l) => l.receivedQuantity === 0)).toBe(true);
+    expect(
+      ctx.catalog
+        .getPartDetails(newPart)!
+        .attributes.map((a) => a.key)
+        .sort()
+    ).toEqual(["head", "length", "thread"]);
+
+    const after = inventoryCounts(ctx.db);
+    expect(after).toEqual({
+      ...before,
+      parts: before.parts + 1,
+      orders: before.orders + 1,
+      order_lines: before.order_lines + 3,
+    });
+    expect(after.stock_movements).toBe(0);
+
+    // Repeating the commit, with the same or a new operation ID, creates nothing.
+    expect(ctx.imports.commit(id, operationId)).toEqual({ ...result, repeated: true });
+    expect(ctx.imports.commit(id, opId())).toEqual({ ...result, repeated: true });
+    expect(inventoryCounts(ctx.db)).toEqual(after);
+    expect(() => edit(ctx, id, 0, { fields: { quantity: "3" } })).toThrow("committed");
+  });
+
+  it("blocks a commit with unresolved problems and writes nothing", async () => {
+    const ctx = await parsedOrder();
+    const before = inventoryCounts(ctx.db);
+    expect(() => ctx.imports.commit(ctx.id, opId())).toThrow(
+      "Line 1: Choose an existing part or create a new part"
+    );
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+    expect(getImport(ctx.db, ctx.id)!.commitState).toBe("open");
+  });
+
+  it("rolls back every record when a line fails during the commit", async () => {
+    const ctx = await parsedOrder();
+    const { id } = ctx;
+    edit(ctx, id, 0, { resolution: "new", fields: { packQuantity: "100" } });
+    edit(ctx, id, 2, { resolution: "existing", partId: ctx.parts.resistor4k7 });
+    ctx.catalog.archivePart(ctx.parts.resistor4k7);
+    const before = inventoryCounts(ctx.db);
+    expect(() => ctx.imports.commit(id, opId())).toThrow("Line 2: 4.7k resistor 0805 is archived");
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+  });
+
+  it("warns about a repeated source and supplier reference but allows the commit", async () => {
+    const first = await parsedOrder();
+    edit(first, first.id, 0, {
+      resolution: "existing",
+      partId: first.parts.screw,
+      fields: { packQuantity: "100" },
+    });
+    edit(first, first.id, 2, { resolution: "existing", partId: first.parts.resistor4k7 });
+    first.imports.commit(first.id, opId());
+
+    const second = first.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: orderList.source,
+    });
+    await first.imports.parse(second, fixtureExtractor(orderList.response));
+    const view = review(first, second);
+    expect(view.sameSource).toEqual([{ id: first.id, commitState: "committed" }]);
+    expect(view.sameReference.map((o) => o.reference)).toEqual(["DK-55012"]);
+
+    edit(first, second, 0, {
+      resolution: "existing",
+      partId: first.parts.screw,
+      fields: { packQuantity: "100" },
+    });
+    edit(first, second, 2, { resolution: "existing", partId: first.parts.resistor4k7 });
+    const result = first.imports.commit(second, opId());
+    expect(result.repeated).toBe(false);
+    expect(first.orders.listOrders()).toHaveLength(2);
+  });
+});
+
+describe("failed parsing", () => {
+  it("leaves the source editable and creates nothing when the output is invalid", async () => {
+    const ctx = createTestImports();
+    const before = inventoryCounts(ctx.db);
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "2x M3 screws",
+    });
+    const outcome = await ctx.imports.parse(
+      id,
+      fixtureExtractor({ supplier: null, lines: "none" })
+    );
+    expect(outcome.ok).toBe(false);
+
+    const record = getImport(ctx.db, id)!;
+    expect(record.parseState).toBe("failed");
+    expect(record.parseError).toContain("did not match the order schema");
+    expect(record.sourceText).toBe("2x M3 screws");
+    expect(review(ctx, id).lines).toEqual([]);
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+
+    ctx.imports.updateSource(id, "2x M3 × 8 pan head screws");
+    expect(getImport(ctx.db, id)!.sourceText).toBe("2x M3 × 8 pan head screws");
+  });
+
+  it("keeps the earlier proposals when a retry fails", async () => {
+    const ctx = await parsedOrder();
+    edit(ctx, ctx.id, 0, { fields: { packQuantity: "100" } });
+    const failing = async () => {
+      throw new Error("network unreachable");
+    };
+    expect(await ctx.imports.parse(ctx.id, failing)).toEqual({
+      ok: false,
+      error: "Parsing failed: network unreachable",
+    });
+    const view = review(ctx, ctx.id);
+    expect(view.record.parseState).toBe("failed");
+    expect(view.lines).toHaveLength(3);
+    expect(view.lines[0].fields.packQuantity).toBe("100");
+  });
+
+  it("works manually without an API key", async () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "Bolt Depot: 1 pack of 100 M3x8 pan head screws",
+    });
+    const outcome = await ctx.imports.parse(id, createOpenAIExtractor(undefined));
+    expect(outcome).toEqual({
+      ok: false,
+      error: expect.stringContaining("OPENAI_API_KEY is not set"),
+    });
+
+    ctx.imports.updateHeader(id, {
+      supplier: "Bolt Depot",
+      reference: null,
+      projectId: null,
+      projectName: null,
+      notes: null,
+    });
+    ctx.imports.addLine(id, {
+      groupId: null,
+      resolution: "existing",
+      partId: ctx.parts.screw,
+      fields: {
+        ...emptyLineFields("M3x8 pan head screws"),
+        quantity: "1",
+        purchaseUnit: "pack",
+        packQuantity: "100",
+      },
+    });
+    const { orderId } = ctx.imports.commit(id, opId());
+    expect(ctx.orders.getOrderDetails(orderId!)!.lines.map((l) => l.quantity)).toEqual([100]);
+  });
+});
+
+async function parsedBom(
+  fixture: { source: string; response: unknown },
+  sourceType: "text" | "csv"
+) {
+  const ctx = createTestImports();
+  const id = ctx.imports.createImport({ kind: "project", sourceType, sourceText: fixture.source });
+  const outcome = await ctx.imports.parse(id, fixtureExtractor(fixture.response));
+  expect(outcome.ok).toBe(true);
+  return { ...ctx, id };
+}
+
+describe("BOM import", () => {
+  it("keeps explicit sections with evidence and commits corrected groups once", async () => {
+    const ctx = await parsedBom(bomSections, "text");
+    const { id } = ctx;
+    const before = inventoryCounts(ctx.db);
+    let view = review(ctx, id);
+    expect(view.record.header.projectName).toBe("Desk lamp");
+    expect(
+      view.groups.map(({ name, sourceRow, sourceExcerpt }) => ({ name, sourceRow, sourceExcerpt }))
+    ).toEqual(bomSections.expected.groups);
+    const groupName = (groupId: number | null) =>
+      view.groups.find((g) => g.id === groupId)?.name ?? null;
+    expect(view.lines.map((l) => groupName(l.groupId))).toEqual(bomSections.expected.lineGroups);
+    // Matching chose the catalog screw and resistor; the others stay requirements.
+    expect(view.lines.map((l) => [l.resolution, l.partId])).toEqual([
+      ["existing", ctx.parts.screw],
+      ["requirement", null],
+      ["requirement", null],
+      ["existing", ctx.parts.resistor4k7],
+    ]);
+
+    // Corrections: rename a group, move the screw into a new group, ungroup the regulator.
+    const [power, controller] = view.groups;
+    ctx.imports.renameGroup(id, controller.id, "Main board");
+    const enclosure = ctx.imports.addGroup(id, "Enclosure");
+    edit(ctx, id, 0, { groupId: enclosure });
+    edit(ctx, id, 2, { groupId: null });
+    view = review(ctx, id);
+    expect(view.lines.flatMap((l) => l.problems)).toEqual([]);
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+
+    const operationId = opId();
+    const result = ctx.imports.commit(id, operationId);
+    const projectId = result.projectId!;
+    expect(ctx.projects.getProjectDetails(projectId)!.project.name).toBe("Desk lamp");
+    const components = listComponents(ctx.db, projectId);
+    expect(components.map((c) => c.name)).toEqual(["Power supply", "Main board", "Enclosure"]);
+    const componentName = (id: number | null) => components.find((c) => c.id === id)?.name ?? null;
+    const rows = listBomLines(ctx.db, projectId);
+    expect(
+      rows.map((r) => [r.description, componentName(r.componentId), r.quantity, r.partId])
+    ).toEqual([
+      ["M3x8 pan head screw (enclosure)", "Enclosure", 4, ctx.parts.screw],
+      ["100nF 50V 0805 capacitor", "Power supply", 2, null],
+      ["AMS1117-3.3 regulator", null, 1, null],
+      ["4k7 0805 resistor", "Main board", 4, ctx.parts.resistor4k7],
+    ]);
+    expect(rows[1].referenceDesignators).toBe("C1, C2");
+    expect(rows[2].partNumber).toBe("AMS1117-3.3");
+    expect(power.sourceExcerpt).toBe("Power supply:");
+
+    const after = inventoryCounts(ctx.db);
+    expect(after).toEqual({
+      ...before,
+      projects: before.projects + 1,
+      project_components: before.project_components + 3,
+      bom_lines: before.bom_lines + 4,
+    });
+    expect(ctx.imports.commit(id, operationId).repeated).toBe(true);
+    expect(ctx.imports.commit(id, opId()).repeated).toBe(true);
+    expect(inventoryCounts(ctx.db)).toEqual(after);
+  });
+
+  it("adds rows to an existing project and reuses a component with the same name", async () => {
+    const ctx = await parsedBom(bomSections, "text");
+    const projectId = ctx.projects.createProject({
+      name: "Lamp v2",
+      status: "active",
+      notes: null,
+      links: [],
+    });
+    const existing = ctx.projects.createComponent(projectId, { name: "power supply", notes: null });
+    ctx.imports.updateHeader(ctx.id, {
+      supplier: null,
+      reference: null,
+      projectId,
+      projectName: null,
+      notes: null,
+    });
+    ctx.imports.commit(ctx.id, opId());
+    expect(listComponents(ctx.db, projectId).map((c) => c.name)).toEqual([
+      "power supply",
+      "Controller",
+    ]);
+    expect(listBomLines(ctx.db, projectId).filter((r) => r.componentId === existing)).toHaveLength(
+      2
+    );
+  });
+
+  it("does not invent groups for a flat BOM", async () => {
+    const ctx = await parsedBom(bomFlat, "csv");
+    const view = review(ctx, ctx.id);
+    expect(view.groups).toEqual([]);
+    expect(view.lines.map((l) => l.groupId)).toEqual(bomFlat.expected.lineGroups);
+    expect(view.lines[1].proposal!.unresolved).toEqual(bomFlat.expected.capacitorUnresolved);
+
+    ctx.imports.updateHeader(ctx.id, {
+      supplier: null,
+      reference: null,
+      projectId: null,
+      projectName: "Flat board",
+      notes: null,
+    });
+    const { projectId } = ctx.imports.commit(ctx.id, opId());
+    expect(listComponents(ctx.db, projectId!)).toEqual([]);
+    expect(listBomLines(ctx.db, projectId!).map((r) => r.componentId)).toEqual([null, null, null]);
+    expect(inventoryCounts(ctx.db).stock_movements).toBe(0);
+  });
+
+  it("builds lines from mapped CSV columns without a model, keeping a component column", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({
+      kind: "project",
+      sourceType: "csv",
+      sourceText: `Component,Qty,Value,Package,Ref
+Power,2,100nF,0805,"C1,C2"
+,1,4k7,0805,R1
+Power,1,AMS1117-3.3,SOT-223,U1`,
+    });
+    ctx.imports.setCsvSettings(id, {
+      hasHeader: true,
+      roles: ["group", "quantity", "description", "description", "reference_designators"],
+    });
+    expect(ctx.imports.linesFromColumns(id)).toBe(3);
+    const view = review(ctx, id);
+    expect(view.record.modelId).toBeNull();
+    expect(view.groups.map((g) => [g.name, g.sourceRow])).toEqual([["Power", 2]]);
+    expect(
+      view.lines.map((l) => [l.fields.description, l.fields.quantity, l.fields.unit, l.groupId])
+    ).toEqual([
+      ["100nF 0805", "2", "pcs", view.groups[0].id],
+      ["4k7 0805", "1", "pcs", null],
+      ["AMS1117-3.3 SOT-223", "1", "pcs", view.groups[0].id],
+    ]);
+    expect(view.lines[0].proposal!.provenance).toMatchObject({
+      quantity: "source",
+      unit: "inferred",
+    });
+  });
+
+  it("keeps group membership within the import", async () => {
+    const ctx = await parsedBom(bomSections, "text");
+    const other = ctx.imports.createImport({
+      kind: "project",
+      sourceType: "text",
+      sourceText: bomSections.source,
+    });
+    await ctx.imports.parse(other, fixtureExtractor(bomSections.response));
+    const foreignGroup = review(ctx, other).groups[0].id;
+    expect(() => edit(ctx, ctx.id, 0, { groupId: foreignGroup })).toThrow("does not exist");
+  });
+});

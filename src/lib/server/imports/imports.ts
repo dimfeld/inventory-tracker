@@ -1,0 +1,776 @@
+import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
+import { expandAttributes, formatAttributeValue } from "#lib/attributes.ts";
+import { categoryOptions } from "#lib/categories.ts";
+import {
+  EMPTY_HEADER,
+  emptyLineFields,
+  type CsvSettings,
+  type ImportHeader,
+  type ImportKind,
+  type ImportLineFields,
+  type Resolution,
+  type SourceType,
+} from "#lib/imports.ts";
+import { describePackConversion } from "#lib/orders.ts";
+import { normalizeAttributeKey, type PartInput } from "#lib/schemas/part.ts";
+import type { BomLineInput } from "#lib/schemas/project.ts";
+import {
+  getAttributeDefinition,
+  getCategory,
+  getPart,
+  listCategories,
+  type Part,
+} from "#lib/server/db/catalog.ts";
+import {
+  clearProposals,
+  deleteGroup,
+  deleteImport,
+  deleteLine,
+  getImport,
+  getLine,
+  insertGroup,
+  insertImport,
+  insertLine,
+  listGroups,
+  listImports,
+  listImportsWithSource,
+  listLines,
+  recordCommit,
+  recordLineCommit,
+  recordParse,
+  renameGroup,
+  setParseState,
+  updateHeader,
+  updateLine,
+  updateSource,
+  type ImportGroup,
+  type ImportLine,
+  type ImportRecord,
+} from "#lib/server/db/imports.ts";
+import { listOrdersWithReference } from "#lib/server/db/orders.ts";
+import { searchParts } from "#lib/server/db/part-search.ts";
+import { getProject, listComponents, listProjects } from "#lib/server/db/projects.ts";
+import { createCatalogService, typedAttributeValue } from "#lib/server/inventory/catalog.ts";
+import { InventoryError, isUserError, NotFoundError } from "#lib/server/inventory/errors.ts";
+import { createOrderService } from "#lib/server/inventory/orders.ts";
+import {
+  matchRequirement,
+  requirementOf,
+  SOURCE_LABELS,
+  type Candidate,
+  type RequirementConstraint,
+} from "#lib/server/projects/matching.ts";
+import { createProjectService } from "#lib/server/projects/projects.ts";
+import { assertUnit, isUnit, toBaseQuantity, UNITS, type Unit } from "#lib/units.ts";
+import { outputFromColumns } from "./columns";
+import { loadCatalogContext } from "./context";
+import { ExtractionError, type ExtractionUsage, type Extractor } from "./extractor";
+import { normalizeOutput, type NormalizedImport } from "./normalize";
+import { PROMPT_VERSION, sourcePrompt, systemPrompt } from "./prompt";
+import { OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
+import { csvTable, defaultCsvSettings, sourceRows } from "./source";
+
+export type ImportService = ReturnType<typeof createImportService>;
+
+/** The owner's edit of one line. */
+export interface LineEdit {
+  fields: ImportLineFields;
+  groupId: number | null;
+  resolution: Resolution | null;
+  partId: number | null;
+}
+
+export type ParseOutcome = { ok: true; lineCount: number } | { ok: false; error: string };
+
+export interface CommitResult {
+  orderId: number | null;
+  projectId: number | null;
+  /** True when the import was already committed and nothing new was created. */
+  repeated: boolean;
+}
+
+const WHOLE = /^\d+$/;
+const DECIMAL = /^\d+(\.\d+)?$/;
+const IDENTIFIER_SOURCES = new Set(["part_number", "alias", "supplier_sku"]);
+
+export function sourceHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/** Line problems that block the commit. Other uncertainty is shown as a warning. */
+export function lineProblems(kind: ImportKind, line: LineEdit, part: Part | null): string[] {
+  const f = line.fields;
+  const problems: string[] = [];
+  if (!f.description.trim()) problems.push("Description is required");
+
+  if (line.resolution === null || (kind === "order" && line.resolution === "requirement")) {
+    problems.push(
+      kind === "order"
+        ? "Choose an existing part or create a new part"
+        : "Choose an existing part, a new part, or a requirement"
+    );
+  }
+  if (line.resolution === "existing") {
+    if (!part) problems.push("Choose the existing part");
+    else if (part.archivedAt) problems.push(`${part.name} is archived`);
+  }
+  if (line.resolution === "new" && !(f.unit && isUnit(f.unit))) {
+    problems.push("Choose the base unit of the new part");
+  }
+
+  if (kind === "order") {
+    if (!f.quantity || !WHOLE.test(f.quantity) || Number(f.quantity) === 0) {
+      problems.push("Quantity ordered must be a whole number greater than zero");
+    }
+    if (!f.purchaseUnit) problems.push("Enter the purchase unit, such as pack or each");
+    if (!f.packQuantity || !WHOLE.test(f.packQuantity) || Number(f.packQuantity) === 0) {
+      problems.push("Enter the pack size: how many base units one purchase unit holds");
+    }
+    if (f.unitPrice !== null && !DECIMAL.test(f.unitPrice)) problems.push("Price must be a number");
+    if (f.unitPrice !== null && !f.currency) problems.push("Enter the currency of the price");
+    return problems;
+  }
+
+  if (!f.quantity || !DECIMAL.test(f.quantity) || Number(f.quantity) === 0) {
+    problems.push("Quantity must be a number greater than zero");
+  }
+  if (!f.unit || !isUnit(f.unit)) {
+    problems.push("Choose a unit");
+  } else if (line.resolution === "existing" && part && f.quantity && DECIMAL.test(f.quantity)) {
+    try {
+      toBaseQuantity(f.quantity, f.unit, assertUnit(part.baseUnit));
+    } catch (error) {
+      if (!isUserError(error)) throw error;
+      problems.push(error.message);
+    }
+  }
+  return problems;
+}
+
+/** Reads the source rows as text: a CSV table with column names, or numbered lines. */
+function sourceView(record: ImportRecord) {
+  const rows = sourceRows(record.sourceType, record.sourceText);
+  if (record.sourceType !== "csv") return { rows, csv: null };
+  const settings = record.csvSettings ?? defaultCsvSettings(rows);
+  return { rows, csv: { settings, ...csvTable(rows, settings) } };
+}
+
+/**
+ * Imports of order lists and project BOMs: drafts, extraction into proposals, owner review, and
+ * the commit. Only the commit creates catalog parts, orders, projects, or BOM rows, in one
+ * transaction. No import operation changes stock: an imported order is a draft order that has
+ * received nothing.
+ */
+export function createImportService(db: Database) {
+  const catalog = createCatalogService(db);
+  const orders = createOrderService(db);
+  const projects = createProjectService(db);
+
+  function inTransaction<T>(fn: () => T): T {
+    return db.transaction(fn).immediate();
+  }
+
+  function requireImport(id: number): ImportRecord {
+    const record = getImport(db, id);
+    if (!record) throw new NotFoundError(`Import ${id} does not exist`);
+    return record;
+  }
+
+  /** An import that can still change. */
+  function requireOpen(id: number): ImportRecord {
+    const record = requireImport(id);
+    if (record.commitState === "committed") {
+      throw new InventoryError("This import is committed and can no longer change");
+    }
+    return record;
+  }
+
+  function requireLine(importId: number, lineId: number): ImportLine {
+    const line = getLine(db, lineId);
+    if (!line || line.importId !== importId) {
+      throw new NotFoundError(`Line ${lineId} does not exist in this import`);
+    }
+    return line;
+  }
+
+  function requireGroup(importId: number, groupId: number): ImportGroup {
+    const group = listGroups(db, importId).find((g) => g.id === groupId);
+    if (!group) throw new NotFoundError(`Group ${groupId} does not exist in this import`);
+    return group;
+  }
+
+  /** Typed constraints of the line's attributes that have a definition and a readable value. */
+  function lineConstraints(fields: ImportLineFields): RequirementConstraint[] {
+    const attributes = expandAttributes(fields.attributes.map((a) => ({ ...a, label: a.key })));
+    return attributes.flatMap((attribute) => {
+      const definition = getAttributeDefinition(db, attribute.key);
+      if (!definition) return [];
+      let value;
+      try {
+        value = typedAttributeValue(definition, attribute);
+      } catch (error) {
+        if (error instanceof InventoryError) return [];
+        throw error;
+      }
+      if (value.valueText === null && value.valueNumber === null && value.valueBoolean === null) {
+        return [];
+      }
+      return [
+        {
+          ...value,
+          comparison: "equal" as const,
+          rawMaxValue: null,
+          maxValueNumber: null,
+          key: definition.key,
+          label: definition.label,
+          normalization: definition.normalization,
+        },
+      ];
+    });
+  }
+
+  /** Deterministic catalog candidates for a line's current fields. */
+  function lineCandidates(fields: ImportLineFields) {
+    const category = fields.categoryId === null ? null : getCategory(db, fields.categoryId);
+    const requirement = requirementOf(
+      db,
+      {
+        unit: fields.unit && isUnit(fields.unit) ? fields.unit : null,
+        partId: null,
+        categoryId: category?.id ?? null,
+        categoryName: category?.name ?? null,
+        manufacturer: fields.manufacturer,
+        partNumber: fields.partNumber,
+      },
+      lineConstraints(fields)
+    );
+    const candidates = matchRequirement(db, requirement, { supplierSku: fields.supplierSku });
+    return { requirement, candidates };
+  }
+
+  /** The single confirmed match, if there is exactly one. */
+  function soleMatch(candidates: Candidate[]): number | null {
+    const matches = candidates.filter((c) => c.status === "match");
+    return matches.length === 1 ? matches[0].part.id : null;
+  }
+
+  /** Replace the lines and groups with new proposals, and preselect sole matches. */
+  function saveProposals(
+    record: ImportRecord,
+    normalized: NormalizedImport,
+    meta: { modelId: string | null; usage: ExtractionUsage | null; versioned: boolean }
+  ) {
+    inTransaction(() => {
+      requireOpen(record.id);
+      clearProposals(db, record.id);
+      const groupIds = new Map<string, number>();
+      for (const group of normalized.groups) {
+        groupIds.set(group.name.toLowerCase(), insertGroup(db, record.id, group));
+      }
+      for (const line of normalized.lines) {
+        const { proposal } = line;
+        const partId = soleMatch(lineCandidates(proposal.fields).candidates);
+        insertLine(db, record.id, {
+          groupId:
+            proposal.groupName === null
+              ? null
+              : (groupIds.get(proposal.groupName.toLowerCase()) ?? null),
+          sourceRow: line.sourceRow,
+          sourceExcerpt: line.sourceExcerpt,
+          proposal,
+          fields: proposal.fields,
+          resolution:
+            partId !== null ? "existing" : record.kind === "project" ? "requirement" : null,
+          partId,
+        });
+      }
+      const extracted = Object.fromEntries(
+        Object.entries(normalized.header).filter(([, value]) => value !== null)
+      );
+      recordParse(db, record.id, {
+        modelId: meta.modelId,
+        promptVersion: meta.versioned ? PROMPT_VERSION : null,
+        schemaVersion: meta.versioned ? SCHEMA_VERSION : null,
+        inputTokens: meta.usage?.inputTokens ?? null,
+        outputTokens: meta.usage?.outputTokens ?? null,
+        totalTokens: meta.usage?.totalTokens ?? null,
+        header: { ...record.header, ...extracted },
+        headerProvenance: normalized.headerProvenance,
+      });
+    });
+  }
+
+  function checkEdit(record: ImportRecord, edit: LineEdit) {
+    if (edit.groupId !== null) {
+      if (record.kind !== "project") throw new InventoryError("Only BOM lines have groups");
+      requireGroup(record.id, edit.groupId);
+    }
+    if (edit.resolution === "requirement" && record.kind === "order") {
+      throw new InventoryError("An order line needs an existing or a new part");
+    }
+    if (edit.resolution === "existing") {
+      if (edit.partId === null) throw new InventoryError("Choose the existing part");
+      if (!getPart(db, edit.partId)) throw new NotFoundError(`Part ${edit.partId} does not exist`);
+    }
+  }
+
+  function storedEdit(edit: LineEdit) {
+    return { ...edit, partId: edit.resolution === "existing" ? edit.partId : null };
+  }
+
+  function newPartInput(record: ImportRecord, fields: ImportLineFields): PartInput {
+    const supplier = record.header.supplier;
+    return {
+      name: fields.description,
+      categoryId: fields.categoryId,
+      baseUnit: fields.unit as Unit,
+      manufacturer: fields.manufacturer,
+      partNumber: fields.partNumber,
+      notes: fields.notes,
+      attributes: fields.attributes.map((a) => ({
+        key: normalizeAttributeKey(a.key),
+        label: a.key,
+        value: a.value,
+      })),
+      aliases: [],
+      tags: [],
+      supplierParts:
+        record.kind === "order" && supplier && fields.supplierSku
+          ? [
+              {
+                id: null,
+                supplier,
+                sku: fields.supplierSku,
+                url: null,
+                purchaseUnit: fields.purchaseUnit,
+                packQuantity: Number(fields.packQuantity),
+              },
+            ]
+          : [],
+    };
+  }
+
+  function bomLineInput(
+    line: ImportLine,
+    partId: number | null,
+    componentId: number | null
+  ): BomLineInput {
+    const f = line.fields;
+    const requirement = line.resolution === "requirement";
+    return {
+      description: f.description,
+      amount: f.quantity!,
+      unit: f.unit as Unit,
+      componentId,
+      referenceDesignators: f.referenceDesignators,
+      notes: f.notes,
+      partId,
+      categoryId: requirement ? f.categoryId : null,
+      manufacturer: requirement ? f.manufacturer : null,
+      partNumber: requirement ? (f.partNumber ?? f.supplierSku) : null,
+      constraints: requirement
+        ? f.attributes.map((a) => ({
+            key: a.key,
+            comparison: "equal" as const,
+            value: a.value,
+            maxValue: null,
+          }))
+        : [],
+    };
+  }
+
+  function headerProblems(record: ImportRecord): string[] {
+    const { header } = record;
+    if (record.kind === "order") return header.supplier ? [] : ["Enter the supplier"];
+    if (header.projectId !== null) {
+      return getProject(db, header.projectId) ? [] : ["Choose an existing project"];
+    }
+    return header.projectName ? [] : ["Choose a project or enter a name for a new one"];
+  }
+
+  /** Create the order and its lines. New parts are created first. */
+  function commitOrder(record: ImportRecord, lines: ImportLine[]) {
+    const { header } = record;
+    const { id: orderId } = orders.createOrder({
+      supplier: header.supplier!,
+      reference: header.reference,
+      expectedOn: null,
+      trackingUrl: null,
+      notes: header.notes,
+    });
+    lines.forEach((line, index) =>
+      atLine(index, () => {
+        const f = line.fields;
+        const createdPartId =
+          line.resolution === "new" ? catalog.createPart(newPartInput(record, f)) : null;
+        const orderLineId = orders.addLine(orderId, {
+          partId: createdPartId ?? line.partId!,
+          supplierSku: f.supplierSku,
+          purchaseQuantity: Number(f.quantity),
+          purchaseUnit: f.purchaseUnit!,
+          packQuantity: Number(f.packQuantity),
+          unitPrice: f.unitPrice,
+          currency: f.unitPrice === null ? null : (f.currency?.toUpperCase() ?? null),
+          notes: f.notes,
+        });
+        recordLineCommit(db, line.id, { createdPartId, orderLineId, bomLineId: null });
+      })
+    );
+    return { orderId, projectId: null };
+  }
+
+  /**
+   * Add the BOM rows to the project with their components. A group with lines becomes a
+   * component of the project; an existing component with the same name is reused.
+   */
+  function commitProject(record: ImportRecord, lines: ImportLine[]) {
+    const { header } = record;
+    const projectId =
+      header.projectId ??
+      projects.createProject({
+        name: header.projectName!,
+        status: "planned",
+        notes: header.notes,
+        links: [],
+      });
+    const existing = listComponents(db, projectId);
+    const componentIds = new Map<number, number>();
+    for (const group of listGroups(db, record.id)) {
+      if (!lines.some((line) => line.groupId === group.id)) continue;
+      const same = existing.find((c) => c.name.toLowerCase() === group.name.toLowerCase());
+      componentIds.set(
+        group.id,
+        same?.id ?? projects.createComponent(projectId, { name: group.name, notes: null })
+      );
+    }
+    lines.forEach((line, index) =>
+      atLine(index, () => {
+        const createdPartId =
+          line.resolution === "new" ? catalog.createPart(newPartInput(record, line.fields)) : null;
+        const partId = line.resolution === "requirement" ? null : (createdPartId ?? line.partId);
+        const componentId = line.groupId === null ? null : componentIds.get(line.groupId)!;
+        const bomLineId = projects.createBomLine(
+          projectId,
+          bomLineInput(line, partId, componentId)
+        );
+        recordLineCommit(db, line.id, { createdPartId, orderLineId: null, bomLineId });
+      })
+    );
+    return { orderId: null, projectId };
+  }
+
+  return {
+    listImports: () => listImports(db),
+
+    /** Save the source as a draft. Nothing is sent anywhere. */
+    createImport(input: { kind: ImportKind; sourceType: SourceType; sourceText: string }): number {
+      const csvSettings =
+        input.sourceType === "csv" ? defaultCsvSettings(sourceRows("csv", input.sourceText)) : null;
+      return insertImport(db, {
+        ...input,
+        sourceHash: sourceHash(input.sourceText),
+        csvSettings,
+        header: EMPTY_HEADER,
+      });
+    },
+
+    /** Correct the source text. Existing lines stay until the next parse. */
+    updateSource(id: number, sourceText: string): void {
+      inTransaction(() => {
+        const record = requireOpen(id);
+        let csvSettings = record.csvSettings;
+        if (record.sourceType === "csv") {
+          const fresh = defaultCsvSettings(sourceRows("csv", sourceText));
+          // Keep the roles of columns that still exist.
+          csvSettings = {
+            hasHeader: csvSettings?.hasHeader ?? true,
+            roles: fresh.roles.map((role, i) => csvSettings?.roles[i] ?? role),
+          };
+        }
+        updateSource(db, id, { sourceText, sourceHash: sourceHash(sourceText), csvSettings });
+      });
+    },
+
+    setCsvSettings(id: number, settings: CsvSettings): void {
+      inTransaction(() => {
+        const record = requireOpen(id);
+        if (record.sourceType !== "csv") throw new InventoryError("This source is not CSV");
+        updateSource(db, id, { ...record, csvSettings: settings });
+      });
+    },
+
+    /**
+     * Send the saved source to the extractor and replace the lines with its normalized
+     * proposals. The import is marked as parsing before the call. A failed call or an answer
+     * that does not match the schema marks it failed; its source and lines stay as they were.
+     * Parsing writes only import tables.
+     */
+    async parse(id: number, extractor: Extractor): Promise<ParseOutcome> {
+      const record = requireOpen(id);
+      const context = loadCatalogContext(db);
+      const { rows, csv } = sourceView(record);
+      setParseState(db, id, "parsing", null);
+
+      const fail = (error: string): ParseOutcome => {
+        setParseState(db, id, "failed", error);
+        return { ok: false, error };
+      };
+      let result;
+      try {
+        result = await extractor({
+          kind: record.kind,
+          system: systemPrompt(record.kind, context),
+          prompt: sourcePrompt(rows, csv?.settings ?? null),
+        });
+      } catch (error) {
+        if (error instanceof ExtractionError) return fail(error.message);
+        return fail(`Parsing failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const parsed = OUTPUT_SCHEMAS[record.kind].safeParse(result.output);
+      if (!parsed.success) {
+        return fail(
+          `The model's answer did not match the ${record.kind} schema: ${parsed.error.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")}`
+        );
+      }
+      const normalized = normalizeOutput(record.kind, context, parsed.data);
+      saveProposals(record, normalized, {
+        modelId: result.modelId,
+        usage: result.usage,
+        versioned: true,
+      });
+      return { ok: true, lineCount: normalized.lines.length };
+    },
+
+    /** Lines from the owner's CSV column roles, without a model. Replaces the lines. */
+    linesFromColumns(id: number): number {
+      const record = requireOpen(id);
+      const { rows, csv } = sourceView(record);
+      if (!csv) throw new InventoryError("Column mapping needs a CSV source");
+      const normalized = normalizeOutput(
+        record.kind,
+        loadCatalogContext(db),
+        outputFromColumns(record.kind, rows, csv.settings)
+      );
+      saveProposals(record, normalized, { modelId: null, usage: null, versioned: false });
+      return normalized.lines.length;
+    },
+
+    updateHeader(id: number, header: ImportHeader): void {
+      inTransaction(() => {
+        const record = requireOpen(id);
+        if (header.projectId !== null && !getProject(db, header.projectId)) {
+          throw new NotFoundError(`Project ${header.projectId} does not exist`);
+        }
+        updateHeader(db, id, {
+          ...EMPTY_HEADER,
+          ...(record.kind === "order"
+            ? { supplier: header.supplier, reference: header.reference }
+            : { projectId: header.projectId, projectName: header.projectName }),
+          notes: header.notes,
+        });
+      });
+    },
+
+    /** Add a line the owner enters, such as after a failed parse. */
+    addLine(id: number, edit?: LineEdit): number {
+      return inTransaction(() => {
+        const record = requireOpen(id);
+        const line = edit ?? {
+          fields: emptyLineFields(),
+          groupId: null,
+          resolution: record.kind === "project" ? ("requirement" as const) : null,
+          partId: null,
+        };
+        checkEdit(record, line);
+        return insertLine(db, id, {
+          ...storedEdit(line),
+          sourceRow: null,
+          sourceExcerpt: null,
+          proposal: null,
+        });
+      });
+    },
+
+    updateLine(id: number, lineId: number, edit: LineEdit): void {
+      inTransaction(() => {
+        const record = requireOpen(id);
+        requireLine(id, lineId);
+        checkEdit(record, edit);
+        updateLine(db, lineId, storedEdit(edit));
+      });
+    },
+
+    removeLine(id: number, lineId: number): void {
+      inTransaction(() => {
+        requireOpen(id);
+        requireLine(id, lineId);
+        deleteLine(db, lineId);
+      });
+    },
+
+    addGroup(id: number, name: string): number {
+      return inTransaction(() => {
+        if (requireOpen(id).kind !== "project") {
+          throw new InventoryError("Only BOM imports have component groups");
+        }
+        return insertGroup(db, id, { name, sourceRow: null, sourceExcerpt: null });
+      });
+    },
+
+    renameGroup(id: number, groupId: number, name: string): void {
+      inTransaction(() => {
+        requireOpen(id);
+        requireGroup(id, groupId);
+        renameGroup(db, groupId, name);
+      });
+    },
+
+    /** Remove a group. Its lines become ungrouped. */
+    removeGroup(id: number, groupId: number): void {
+      inTransaction(() => {
+        requireOpen(id);
+        requireGroup(id, groupId);
+        deleteGroup(db, groupId);
+      });
+    },
+
+    /** Delete an import that was not committed. Nothing outside the import changes. */
+    discard(id: number): void {
+      inTransaction(() => {
+        requireOpen(id);
+        deleteImport(db, id);
+      });
+    },
+
+    /** Everything the review page shows: source, proposals, candidates, problems, warnings. */
+    getReview(id: number) {
+      const record = getImport(db, id);
+      if (!record) return null;
+      const groups = listGroups(db, id);
+      const lines = listLines(db, id).map((line) => {
+        const part = line.partId === null ? null : getPart(db, line.partId);
+        const { requirement, candidates } = lineCandidates(line.fields);
+        const identifierConflicts = candidates
+          .filter((c) => IDENTIFIER_SOURCES.has(c.source) && c.status === "conflict")
+          .map((c) => `${c.part.name} has this identifier, but: ${c.conflicts.join("; ")}`);
+        const f = line.fields;
+        let conversion: string | null = null;
+        const baseUnit = part?.baseUnit ?? f.unit;
+        if (record.kind === "order" && baseUnit && f.purchaseUnit) {
+          const purchaseQuantity = Number(f.quantity);
+          const packQuantity = Number(f.packQuantity);
+          if (
+            Number.isInteger(purchaseQuantity) &&
+            purchaseQuantity > 0 &&
+            Number.isInteger(packQuantity) &&
+            packQuantity > 0
+          ) {
+            conversion = describePackConversion({
+              purchaseQuantity,
+              purchaseUnit: f.purchaseUnit,
+              packQuantity,
+              baseUnit,
+            });
+          }
+        }
+        return {
+          ...line,
+          part,
+          candidates: candidates.map((c) => ({ ...c, sourceLabel: SOURCE_LABELS[c.source] })),
+          identifierConflicts,
+          /** Required attributes a generic requirement or new part does not state. */
+          missingRequired:
+            line.resolution === "existing" ? [] : requirement.missingRequired.map((m) => m.label),
+          conversion,
+          /** Readable typed attribute values, such as 4.7 kΩ for 4k7, by key. */
+          readings: Object.fromEntries(
+            lineConstraints(f).map((c) => [
+              c.key,
+              formatAttributeValue(c.normalization, c) ?? c.rawValue,
+            ])
+          ),
+          problems: lineProblems(record.kind, line, part),
+        };
+      });
+      return {
+        record,
+        source: sourceView(record),
+        groups,
+        lines,
+        headerProblems: headerProblems(record),
+        sameSource: listImportsWithSource(db, record.kind, record.sourceHash, id),
+        sameReference:
+          record.kind === "order" && record.header.supplier && record.header.reference
+            ? listOrdersWithReference(db, record.header.supplier, record.header.reference, null)
+            : [],
+      };
+    },
+
+    /** Options for the review forms. */
+    reviewOptions() {
+      return {
+        categories: categoryOptions(listCategories(db)),
+        definitions: loadCatalogContext(db).definitions.map(({ key, label, canonicalUnit }) => ({
+          key,
+          label,
+          canonicalUnit,
+        })),
+        parts: searchParts(db, {
+          text: null,
+          categoryId: null,
+          attributes: [],
+          tags: [],
+          includeArchived: false,
+        }).map(({ id, name, baseUnit, partNumber }) => ({ id, name, baseUnit, partNumber })),
+        projects: listProjects(db).map(({ id, name }) => ({ id, name })),
+        units: Object.keys(UNITS),
+      };
+    },
+
+    /**
+     * Commit the reviewed import in one transaction: new parts, then the draft order and its
+     * lines, or the project's components and BOM rows. A repeated commit returns the recorded
+     * result and creates nothing. No stock movement is recorded.
+     */
+    commit(id: number, operationId: string): CommitResult {
+      return inTransaction(() => {
+        const record = requireImport(id);
+        if (record.commitState === "committed") {
+          return { orderId: record.orderId, projectId: record.projectId, repeated: true };
+        }
+        const lines = listLines(db, id);
+        if (lines.length === 0) throw new InventoryError("Add at least one line before committing");
+        const problems = [
+          ...headerProblems(record),
+          ...lines.flatMap((line, index) =>
+            lineProblems(
+              record.kind,
+              line,
+              line.partId === null ? null : getPart(db, line.partId)
+            ).map((problem) => `Line ${index + 1}: ${problem}`)
+          ),
+        ];
+        if (problems.length > 0) throw new InventoryError(problems.join(". "));
+
+        const result =
+          record.kind === "order" ? commitOrder(record, lines) : commitProject(record, lines);
+        recordCommit(db, id, { operationId, ...result });
+        return { ...result, repeated: false };
+      });
+    },
+  };
+}
+
+/** Run a line's commit step; a rejected change names the line. */
+function atLine(index: number, fn: () => void) {
+  try {
+    fn();
+  } catch (error) {
+    if (isUserError(error)) throw new InventoryError(`Line ${index + 1}: ${error.message}`);
+    throw error;
+  }
+}

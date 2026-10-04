@@ -18,6 +18,7 @@
     <a href="/projects" class="text-blue-700 hover:underline">Projects</a>
     <a href="/orders" class="text-blue-700 hover:underline">Orders</a>
     <a href="/shopping" class="text-blue-700 hover:underline">Shopping</a>
+    <a href="/imports" class="text-blue-700 hover:underline">Imports</a>
   </nav>
 </header>
 

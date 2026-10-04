@@ -53,15 +53,19 @@ export const SOURCE_LABELS: Record<CandidateSource, string> = {
 /** `match` only when nothing conflicts and nothing is unknown. */
 export type CandidateStatus = "match" | "unresolved" | "conflict";
 
+/** A requirement constraint, with or without a stored BOM line. */
+export type RequirementConstraint = Omit<BomConstraint, "bomLineId">;
+
 export interface Requirement {
-  unit: string;
+  /** Null when the unit is not known yet, such as in an import proposal. */
+  unit: string | null;
   partId: number | null;
   categoryName: string | null;
   /** The requirement's category and its descendants, or null without a category. */
   categoryScope: number[] | null;
   manufacturer: string | null;
   partNumber: string | null;
-  constraints: BomConstraint[];
+  constraints: RequirementConstraint[];
   /**
    * Required attributes of the category that a generic requirement does not specify. Empty
    * when the requirement names an exact part or part number, which identifies the part.
@@ -120,7 +124,10 @@ function display(
 
 type Check = { evidence: string } | { unresolved: string } | { conflict: string };
 
-function checkConstraint(constraint: BomConstraint, value: CandidateAttribute | undefined): Check {
+function checkConstraint(
+  constraint: RequirementConstraint,
+  value: CandidateAttribute | undefined
+): Check {
   const { label, normalization } = constraint;
   const wanted = display(normalization, constraint, constraint.rawValue);
   if (!value) {
@@ -177,12 +184,14 @@ export function evaluateCandidate(requirement: Requirement, facts: PartFacts): E
   const unresolved: string[] = [];
   const conflicts: string[] = [];
 
-  if (unitsCompatible(requirement.unit, part.baseUnit)) {
-    evidence.push(`Counted in ${part.baseUnit}, compatible with ${requirement.unit}`);
-  } else {
-    conflicts.push(
-      `Counted in ${part.baseUnit}, which cannot convert to the requirement's ${requirement.unit}`
-    );
+  if (requirement.unit !== null) {
+    if (unitsCompatible(requirement.unit, part.baseUnit)) {
+      evidence.push(`Counted in ${part.baseUnit}, compatible with ${requirement.unit}`);
+    } else {
+      conflicts.push(
+        `Counted in ${part.baseUnit}, which cannot convert to the requirement's ${requirement.unit}`
+      );
+    }
   }
 
   if (requirement.partId !== null) {
@@ -244,26 +253,44 @@ export function evaluateCandidate(requirement: Requirement, facts: PartFacts): E
   return { status, evidence, unresolved, conflicts };
 }
 
-/** The requirement as the matcher sees it: a BOM line with its constraints and category rules. */
-export function loadRequirement(db: Database, line: BomLine): Requirement {
-  const constraints = listConstraints(db, [line.id]);
+/** The fields of a requirement that matching reads, from a BOM line or an import proposal. */
+export interface RequirementSource {
+  unit: string | null;
+  partId: number | null;
+  categoryId: number | null;
+  categoryName: string | null;
+  manufacturer: string | null;
+  partNumber: string | null;
+}
+
+/** The requirement as the matcher sees it, with the category's required-attribute rules. */
+export function requirementOf(
+  db: Database,
+  source: RequirementSource,
+  constraints: RequirementConstraint[]
+): Requirement {
   const constrained = new Set(constraints.map((c) => c.attributeId));
-  const generic = line.partId === null && line.partNumber === null;
+  const generic = source.partId === null && source.partNumber === null;
   return {
-    unit: line.unit,
-    partId: line.partId,
-    categoryName: line.categoryName,
-    categoryScope: line.categoryId === null ? null : categoryScope(db, line.categoryId),
-    manufacturer: line.manufacturer,
-    partNumber: line.partNumber,
+    unit: source.unit,
+    partId: source.partId,
+    categoryName: source.categoryName,
+    categoryScope: source.categoryId === null ? null : categoryScope(db, source.categoryId),
+    manufacturer: source.manufacturer,
+    partNumber: source.partNumber,
     constraints,
     missingRequired:
-      line.categoryId === null || !generic
+      source.categoryId === null || !generic
         ? []
-        : listRequiredAttributes(db, line.categoryId).filter(
+        : listRequiredAttributes(db, source.categoryId).filter(
             (required) => !constrained.has(required.attributeId)
           ),
   };
+}
+
+/** The requirement of a stored BOM line. */
+export function loadRequirement(db: Database, line: BomLine): Requirement {
+  return requirementOf(db, line, listConstraints(db, [line.id]));
 }
 
 function loadFacts(db: Database, parts: CandidatePart[]): PartFacts[] {
@@ -289,14 +316,24 @@ export function evaluatePart(
 
 const STATUS_ORDER: Record<CandidateStatus, number> = { match: 0, unresolved: 1, conflict: 2 };
 
+export interface MatchOptions {
+  /** A supplier SKU to look up in addition to the requirement's part number. */
+  supplierSku?: string | null;
+  /** Parts the owner approved for the requirement. */
+  choices?: BomPartChoice[];
+}
+
 /**
- * Candidates for a BOM line, in discovery order. Parts found only through the category are
+ * Candidates for a requirement, in discovery order. Parts found only through the category are
  * listed when nothing conflicts; parts found through an identifier or an approval are always
  * listed, so the owner can see why they do or do not fit.
  */
-export function findCandidates(db: Database, line: BomLine): MatchResult {
-  const requirement = loadRequirement(db, line);
-  const choices = new Map(listChoices(db, [line.id]).map((c) => [c.partId, c]));
+export function matchRequirement(
+  db: Database,
+  requirement: Requirement,
+  options: MatchOptions = {}
+): Candidate[] {
+  const choices = new Map((options.choices ?? []).map((c) => [c.partId, c]));
   const found = new Map<number, { part: CandidatePart; source: CandidateSource }>();
   const add = (parts: CandidatePart[], source: CandidateSource) => {
     for (const part of parts) {
@@ -304,13 +341,14 @@ export function findCandidates(db: Database, line: BomLine): MatchResult {
     }
   };
 
-  if (line.partId !== null) add(getCandidateParts(db, [line.partId]), "exact_part");
-  if (line.partNumber !== null) {
-    add(findPartsByPartNumber(db, line.partNumber), "part_number");
-    add(findPartsByAlias(db, line.partNumber), "alias");
-    add(findPartsBySupplierSku(db, line.partNumber), "supplier_sku");
+  if (requirement.partId !== null) add(getCandidateParts(db, [requirement.partId]), "exact_part");
+  if (requirement.partNumber !== null) {
+    add(findPartsByPartNumber(db, requirement.partNumber), "part_number");
+    add(findPartsByAlias(db, requirement.partNumber), "alias");
+    add(findPartsBySupplierSku(db, requirement.partNumber), "supplier_sku");
   }
-  if (line.partId === null && requirement.categoryScope !== null) {
+  if (options.supplierSku) add(findPartsBySupplierSku(db, options.supplierSku), "supplier_sku");
+  if (requirement.partId === null && requirement.categoryScope !== null) {
     add(listPartsInCategories(db, requirement.categoryScope), "attributes");
   }
   add(getCandidateParts(db, [...choices.keys()]), "approved");
@@ -335,5 +373,14 @@ export function findCandidates(db: Database, line: BomLine): MatchResult {
       sourceOrder.indexOf(a.source) - sourceOrder.indexOf(b.source) ||
       STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
   );
-  return { requirement, candidates };
+  return candidates;
+}
+
+/** Candidates for a BOM line. */
+export function findCandidates(db: Database, line: BomLine): MatchResult {
+  const requirement = loadRequirement(db, line);
+  return {
+    requirement,
+    candidates: matchRequirement(db, requirement, { choices: listChoices(db, [line.id]) }),
+  };
 }
