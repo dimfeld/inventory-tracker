@@ -31,6 +31,7 @@ import {
   listLocationBalances,
   listPartMovements,
 } from "#lib/server/db/movements.ts";
+import { listStorageStock } from "#lib/server/db/reservations.ts";
 import {
   expandAttributes,
   filterValueOf,
@@ -329,6 +330,10 @@ export function createCatalogService(db: Database) {
         tags: listPartTags(db, id),
         supplierParts: listSupplierParts(db, id),
         balances: listLocationBalances(db, id),
+        /** Active project reservations at storage locations. */
+        reserved: listStorageStock(db, [id])
+          .filter((s) => s.reserved > 0)
+          .map(({ locationId, reserved }) => ({ locationId, reserved })),
         movements: listPartMovements(db, id),
       };
     },

@@ -17,7 +17,7 @@ export const load: PageServerLoad = ({ params }) => {
   const { baseUnit } = details.part;
   return {
     ...details,
-    locations: locations.listLocations(),
+    locations: locations.listStorageLocations(),
     units: isUnit(baseUnit) ? compatibleUnits(baseUnit) : [],
     today: today(),
     // One ID per page load; a repeated submission of the same form is rejected.
@@ -69,7 +69,12 @@ function performStockAction(action: StockAction, partId: number, input: StockFor
       const note = result.movement ? "" : " It matched, so no correction was needed.";
       const from = formatQuantity(result.previousQuantity, result.baseUnit);
       const to = formatQuantity(result.countedQuantity, result.baseUnit);
-      return `Count recorded: ${from} → ${to}.${note}`;
+      const released = result.releasedReservations.map(
+        (r) =>
+          ` Reduced the reservation of ${r.projectName} (${r.lineDescription}) by ` +
+          `${formatQuantity(r.released, r.baseUnit)}.`
+      );
+      return `Count recorded: ${from} → ${to}.${note}${released.join("")}`;
     }
   }
 }

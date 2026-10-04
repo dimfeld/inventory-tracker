@@ -49,10 +49,16 @@ import {
   type Project,
   type ProjectComponent,
 } from "#lib/server/db/projects.ts";
+import { parseId } from "#lib/schemas/result.ts";
 import { typedAttributeValue } from "#lib/server/inventory/catalog.ts";
 import { InventoryError, NotFoundError } from "#lib/server/inventory/errors.ts";
 import { assertUnit, toBaseQuantity } from "#lib/units.ts";
-import { noBomAllocations, type BomAllocationGuard, type BomLineState } from "./allocations";
+import {
+  noBomAllocations,
+  type BomAllocationGuard,
+  type BomLineState,
+  type StatusChangeResult,
+} from "./allocations";
 import { evaluatePart, findCandidates, loadRequirement, unitsCompatible } from "./matching";
 import { summarizeBom, type BomTotal } from "./summary";
 
@@ -75,6 +81,13 @@ export interface BomSection {
 /** Which lines to show: all, one component's, or the ungrouped ones. */
 export type ComponentFilter = number | "ungrouped" | null;
 
+/** Read a `component` URL parameter: a component ID, "ungrouped", or anything else for all. */
+export function parseComponentFilter(value: string | null): ComponentFilter {
+  if (value === "ungrouped") return "ungrouped";
+  const id = parseId(value ?? "");
+  return id === null || Number.isNaN(id) ? null : id;
+}
+
 export type ProjectService = ReturnType<typeof createProjectService>;
 
 function projectFields(input: ProjectInput) {
@@ -92,7 +105,8 @@ export function linksOf(project: Project): string[] {
 
 /**
  * Projects, BOM lines, component groups, and approved part choices. None of these operations
- * change physical stock or reservations.
+ * change physical stock. Status changes and BOM edits apply the allocation guard's rules to
+ * reservations.
  */
 export function createProjectService(db: Database, options: ProjectServiceOptions = {}) {
   const allocations = options.allocations ?? noBomAllocations;
@@ -224,10 +238,20 @@ export function createProjectService(db: Database, options: ProjectServiceOption
       return insertProject(db, projectFields(input));
     },
 
-    updateProject(id: number, input: ProjectInput): void {
-      inTransaction(() => {
-        requireProject(id);
+    /**
+     * Save a project. A status change applies its allocation rules in the same transaction,
+     * such as releasing reservations on cancellation.
+     */
+    updateProject(id: number, input: ProjectInput): StatusChangeResult {
+      return inTransaction(() => {
+        const project = requireProject(id);
         updateProject(db, id, projectFields(input));
+        if (project.status === input.status) return { releasedReservations: 0 };
+        return allocations.applyStatusChange(db, {
+          projectId: id,
+          from: project.status,
+          to: input.status,
+        });
       });
     },
 

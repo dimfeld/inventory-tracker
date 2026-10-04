@@ -54,6 +54,24 @@
   </table>
 {/snippet}
 
+{#snippet stockCell(coverage: (typeof data.coverage)[number])}
+  {@const fmt = (quantity: number) => formatQuantity(quantity, coverage.unit)}
+  <div>Used {fmt(coverage.used)}</div>
+  <div>Picked {fmt(coverage.picked)}</div>
+  <div>Reserved {fmt(coverage.reserved)}</div>
+  <div class={coverage.uncovered > 0 ? 'font-semibold text-amber-700' : 'text-gray-600'}>
+    Uncovered {fmt(coverage.uncovered)}
+  </div>
+  {#if coverage.excess > 0}<div class="text-red-700">Excess {fmt(coverage.excess)}</div>{/if}
+  {#each coverage.parts as part (part.partId)}
+    <div class="text-xs text-gray-600">
+      {part.partName}{#if part.reservations.length > 0}: {part.reservations
+          .map((r) => `${formatQuantity(r.quantity, part.baseUnit)} at ${r.locationName}`)
+          .join(', ')}{/if}
+    </div>
+  {/each}
+{/snippet}
+
 <p class="mb-2 text-sm"><a href="/projects" class="text-blue-700 hover:underline">← Projects</a></p>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
@@ -77,6 +95,10 @@
       <span class="text-sm">Name</span>
       <input name="name" required value={project.name} class="input" />
     </label>
+    <p class="text-sm text-gray-600">
+      Cancelling releases reservations; picked stock stays until you use or return it. A project
+      with picked stock cannot be completed.
+    </p>
     <label class="block">
       <span class="text-sm">Status</span>
       <select name="status" class="input">
@@ -176,8 +198,14 @@
     </nav>
   {/if}
   <a
+    href="{base}/pick{data.filter === null ? '' : `?component=${data.filter}`}"
+    class="btn-secondary ml-auto"
+  >
+    Pick list
+  </a>
+  <a
     href="{base}/lines/new{typeof data.filter === 'number' ? `?component=${data.filter}` : ''}"
-    class="btn ml-auto"
+    class="btn"
   >
     Add BOM row
   </a>
@@ -198,6 +226,7 @@
           <tr>
             <th class="py-1">Description</th>
             <th>Quantity</th>
+            <th>Stock</th>
             <th>Requirement</th>
             <th>Approved parts</th>
             <th>Group</th>
@@ -215,6 +244,9 @@
                 {#if line.notes}<div class="text-gray-500">{line.notes}</div>{/if}
               </td>
               <td class="whitespace-nowrap">{formatQuantity(line.quantity, line.unit)}</td>
+              <td class="whitespace-nowrap">
+                {@render stockCell(data.coverage[line.id])}
+              </td>
               <td>
                 {#if line.partId !== null}
                   Exact: <a href="/parts/{line.partId}" class="text-blue-700 hover:underline">{line.partName}</a>
@@ -256,7 +288,7 @@
                 </form>
               </td>
               <td class="whitespace-nowrap">
-                <a href="{base}/lines/{line.id}" class="text-blue-700 hover:underline">Candidates</a>
+                <a href="{base}/lines/{line.id}" class="text-blue-700 hover:underline">Stock &amp; parts</a>
                 <a href="{base}/lines/{line.id}/edit" class="ml-2 text-blue-700 hover:underline">Edit</a>
                 <form method="POST" action="?/deleteLine" use:enhance class="inline">
                   <input type="hidden" name="line_id" value={line.id} />

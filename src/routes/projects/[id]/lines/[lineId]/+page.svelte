@@ -21,11 +21,63 @@
     if ('errors' in form) return { ok: false, text: Object.values(form.errors ?? {}).join('. ') };
     return null;
   });
+
+  const STOCK_ACTIONS = ['reserve', 'release', 'pick', 'use', 'return'];
+  const stockFeedback = $derived.by(() => {
+    if (!form || !STOCK_ACTIONS.includes(form.action)) return null;
+    if ('success' in form) return { ok: true, text: form.success };
+    if ('message' in form) return { ok: false, text: form.message };
+    if ('errors' in form) return { ok: false, text: Object.values(form.errors ?? {}).join('. ') };
+    return null;
+  });
+
+  const coverage = $derived(data.stock.coverage);
+  const allocationOf = (partId: number) => coverage.parts.find((p) => p.partId === partId);
+  const reservedHere = (partId: number, locationId: number) =>
+    allocationOf(partId)?.reservations.find((r) => r.locationId === locationId)?.quantity ?? 0;
 </script>
 
 <svelte:head>
   <title>{line.description} · {data.project.name}</title>
 </svelte:head>
+
+{#snippet hiddenFields(partId: number)}
+  <input type="hidden" name="line_id" value={line.id} />
+  <input type="hidden" name="part_id" value={partId} />
+  <input type="hidden" name="operation_id" value={data.operationId} />
+  <input type="hidden" name="occurred_on" value={data.today} />
+{/snippet}
+
+{#snippet amountFields(part: { baseUnit: string; units: string[] }, max?: number)}
+  <input
+    name="amount"
+    required
+    inputmode="decimal"
+    value={max ?? ''}
+    aria-label="Quantity"
+    class="w-16 rounded border border-gray-300 px-1"
+  />
+  <select name="unit" aria-label="Unit" class="rounded border border-gray-300 px-1">
+    {#each part.units as unit (unit)}
+      <option value={unit} selected={unit === part.baseUnit}>{unit}</option>
+    {/each}
+  </select>
+{/snippet}
+
+{#snippet amountForm(
+  action: string,
+  label: string,
+  part: { partId: number; baseUnit: string; units: string[] },
+  locationId: number,
+  max?: number
+)}
+  <form method="POST" action="?/{action}" use:enhance class="flex items-end gap-1">
+    {@render hiddenFields(part.partId)}
+    <input type="hidden" name="location_id" value={locationId} />
+    {@render amountFields(part, max)}
+    <button class="btn-secondary">{label}</button>
+  </form>
+{/snippet}
 
 <p class="mb-2 text-sm">
   <a href="/projects/{data.project.id}" class="text-blue-700 hover:underline">← {data.project.name}</a>
@@ -83,6 +135,101 @@
       {/each}
     </ul>
   {/if}
+</section>
+
+<section class="mb-6">
+  <h2 class="mb-2 font-semibold">Stock for this row</h2>
+  <dl class="mb-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+    <dt class="text-gray-600">Required</dt><dd>{formatQuantity(coverage.required, coverage.unit)}</dd>
+    <dt class="text-gray-600">Used</dt><dd>{formatQuantity(coverage.used, coverage.unit)}</dd>
+    <dt class="text-gray-600">Picked</dt><dd>{formatQuantity(coverage.picked, coverage.unit)}</dd>
+    <dt class="text-gray-600">Reserved</dt><dd>{formatQuantity(coverage.reserved, coverage.unit)}</dd>
+    <dt class="text-gray-600">Uncovered</dt><dd>{formatQuantity(coverage.uncovered, coverage.unit)}</dd>
+    {#if coverage.excess > 0}
+      <dt class="text-red-700">Excess</dt>
+      <dd class="text-red-700">
+        {formatQuantity(coverage.excess, coverage.unit)} more than required. Return or keep it; it is not deleted.
+      </dd>
+    {/if}
+  </dl>
+  {#if stockFeedback}<p class="mb-3 {stockFeedback.ok ? 'text-green-700' : 'text-red-700'}">{stockFeedback.text}</p>{/if}
+
+  {#if data.stock.parts.length === 0}
+    <p class="text-sm text-gray-600">Approve a part to reserve stock for this row.</p>
+  {/if}
+  {#each data.stock.parts as part (part.partId)}
+    {@const allocation = allocationOf(part.partId)}
+    <article class="mb-3 rounded border p-3 text-sm">
+      <h3 class="mb-2 font-semibold">
+        <a href="/parts/{part.partId}" class="text-blue-700 hover:underline">{part.partName}</a>
+        {#if !part.allowed}<span class="rounded bg-red-100 px-1 text-xs text-red-800">no longer approved</span>{/if}
+      </h3>
+      {#if part.storage.length === 0}
+        <p class="mb-2 text-gray-600">No stock in storage.</p>
+      {:else}
+        <table class="mb-2 w-full text-left">
+          <thead class="border-b text-gray-600">
+            <tr>
+              <th class="py-1">Location</th>
+              <th class="text-right">In storage</th>
+              <th class="text-right">Reserved (all)</th>
+              <th class="text-right">Available</th>
+              <th class="text-right">For this row</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each part.storage as stock (stock.locationId)}
+              {@const mine = reservedHere(part.partId, stock.locationId)}
+              <tr class="border-b border-gray-100 align-top">
+                <td class="py-1">{stock.locationName}</td>
+                <td class="text-right">{formatQuantity(stock.balance, part.baseUnit)}</td>
+                <td class="text-right">{formatQuantity(stock.reserved, part.baseUnit)}</td>
+                <td class="text-right">{formatQuantity(stock.available, part.baseUnit)}</td>
+                <td class="text-right">{formatQuantity(mine, part.baseUnit)}</td>
+                <td class="space-y-1 pl-3">
+                  {#if part.allowed && !part.archived && stock.available > 0 && coverage.uncovered > 0}
+                    {@render amountForm('reserve', 'Reserve', part, stock.locationId)}
+                  {/if}
+                  {#if mine > 0}
+                    {@render amountForm('pick', 'Pick', part, stock.locationId, mine)}
+                    {@render amountForm('release', 'Release', part, stock.locationId, mine)}
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+      {#if allocation && (allocation.picked > 0 || allocation.used > 0)}
+        <p class="mb-1">
+          Picked and held: {formatQuantity(allocation.picked, part.baseUnit)}. Used:
+          {formatQuantity(allocation.used, part.baseUnit)}.
+        </p>
+      {/if}
+      {#if allocation && allocation.picked > 0}
+        <div class="flex flex-wrap gap-3">
+          <form method="POST" action="?/use" use:enhance class="flex flex-wrap items-end gap-1">
+            {@render hiddenFields(part.partId)}
+            {@render amountFields(part, allocation.picked)}
+            <input name="reason" placeholder="Note (optional)" class="rounded border border-gray-300 px-1" />
+            <button class="btn-secondary">Record use</button>
+          </form>
+          <form method="POST" action="?/return" use:enhance class="flex flex-wrap items-end gap-1">
+            {@render hiddenFields(part.partId)}
+            {@render amountFields(part, allocation.picked)}
+            <select name="location_id" required class="rounded border border-gray-300 px-1">
+              {#each data.storageLocations as location (location.id)}
+                <option value={location.id}>{location.name}</option>
+              {/each}
+            </select>
+            <label class="flex items-center gap-1"><input type="checkbox" name="reserve_again" /> Reserve again</label>
+            <button class="btn-secondary">Return</button>
+          </form>
+        </div>
+      {/if}
+    </article>
+  {/each}
 </section>
 
 <section class="mb-6">

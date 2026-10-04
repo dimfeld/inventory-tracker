@@ -107,6 +107,7 @@ describe("projects and BOM lines", () => {
           changes.push(change);
           if (reject) throw new InventoryError("2 pcs are already picked for this line");
         },
+        applyStatusChange: () => ({ releasedReservations: 0 }),
       },
     });
     const screw = catalog.createPart(partInput());

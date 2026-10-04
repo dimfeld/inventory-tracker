@@ -1,8 +1,11 @@
 import { error, fail } from "@sveltejs/kit";
 import { parseId, text } from "#lib/schemas/result.ts";
 import { parseChoiceForm } from "#lib/schemas/project.ts";
+import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
-import { projects } from "#lib/server/projects/index.ts";
+import { inventory } from "#lib/server/inventory/index.ts";
+import { allocationAction } from "#lib/server/projects/allocation-actions.ts";
+import { allocations, projects } from "#lib/server/projects/index.ts";
 import { SOURCE_LABELS } from "#lib/server/projects/matching.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
@@ -20,10 +23,21 @@ export const load: PageServerLoad = ({ params }) => {
     missingRequired: requirement.missingRequired,
     candidates: candidates.map((c) => ({ ...c, sourceLabel: SOURCE_LABELS[c.source] })),
     parts: projects().bomFormOptions().parts,
+    stock: allocations().getLineStock(projectId, lineId),
+    storageLocations: inventory().locations.listStorageLocations(),
+    today: today(),
+    // One ID per page load; a repeated submission of the same form is rejected.
+    operationId: crypto.randomUUID(),
   };
 };
 
 export const actions: Actions = {
+  reserve: allocationAction("reserve"),
+  release: allocationAction("release"),
+  pick: allocationAction("pick"),
+  use: allocationAction("use"),
+  return: allocationAction("return"),
+
   approve: async ({ request, params }) => {
     const parsed = parseChoiceForm(await request.formData());
     if (!parsed.success) return fail(400, { action: "approve", errors: parsed.errors });

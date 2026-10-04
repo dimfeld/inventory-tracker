@@ -16,7 +16,7 @@ import {
   InventoryError,
   NotFoundError,
 } from "./errors";
-import { noReservations, type ReservationGuard } from "./reservations";
+import { noReservations, type ReservationAdjustment, type ReservationGuard } from "./reservations";
 
 interface StockActionBase {
   /** Unique ID for this submission. A repeated ID is rejected without writing. */
@@ -63,6 +63,8 @@ export interface StockCountResult {
   countedQuantity: number;
   /** The correction movement, or null when the count matched the recorded balance. */
   movement: Movement | null;
+  /** Reservations at the location reduced to fit the counted stock. */
+  releasedReservations: ReservationAdjustment[];
 }
 
 export interface StockServiceOptions {
@@ -96,10 +98,16 @@ export function createStockService(db: Database, options: StockServiceOptions = 
     return part;
   }
 
+  /** Ordinary stock changes apply to storage. Project holding stock changes only by BOM line. */
   function requireLocation(locationId: number) {
     const location = getLocation(db, locationId);
     if (!location) {
       throw new NotFoundError(`Location ${locationId} does not exist`);
+    }
+    if (location.kind === "project") {
+      throw new InventoryError(
+        `${location.name} holds picked stock. Use the project's use or return actions.`
+      );
     }
     return location;
   }
@@ -112,13 +120,16 @@ export function createStockService(db: Database, options: StockServiceOptions = 
     return quantity;
   }
 
-  /** Check that `quantity` can leave `locationId`, including reservation rules. */
+  /**
+   * Check that `quantity` can leave `locationId`, including reservation rules. Returns the
+   * reservations that the reservation guard reduced.
+   */
   function checkOutgoing(
     part: Part,
     locationId: number,
     quantity: number,
     movementType: MovementType
-  ) {
+  ): ReservationAdjustment[] {
     const location = requireLocation(locationId);
     const balanceBefore = getBalance(db, part.id, locationId);
     const balanceAfter = balanceBefore - quantity;
@@ -128,14 +139,16 @@ export function createStockService(db: Database, options: StockServiceOptions = 
           `cannot remove ${formatQuantity(quantity, part.baseUnit)}`
       );
     }
-    reservations.assertOutgoingAllowed(db, {
-      partId: part.id,
-      locationId,
-      quantity,
-      movementType,
-      balanceBefore,
-      balanceAfter,
-    });
+    return (
+      reservations.assertOutgoingAllowed(db, {
+        partId: part.id,
+        locationId,
+        quantity,
+        movementType,
+        balanceBefore,
+        balanceAfter,
+      }) ?? []
+    );
   }
 
   function record(
@@ -229,6 +242,7 @@ export function createStockService(db: Database, options: StockServiceOptions = 
         const difference = countedQuantity - previousQuantity;
 
         let movement: Movement | null = null;
+        let releasedReservations: ReservationAdjustment[] = [];
         if (difference > 0) {
           movement = record(input, {
             quantity: difference,
@@ -238,7 +252,12 @@ export function createStockService(db: Database, options: StockServiceOptions = 
             reason: input.reason,
           });
         } else if (difference < 0) {
-          checkOutgoing(part, input.locationId, -difference, "count_correction");
+          releasedReservations = checkOutgoing(
+            part,
+            input.locationId,
+            -difference,
+            "count_correction"
+          );
           movement = record(input, {
             quantity: -difference,
             fromLocationId: input.locationId,
@@ -247,7 +266,13 @@ export function createStockService(db: Database, options: StockServiceOptions = 
             reason: input.reason,
           });
         }
-        return { baseUnit: part.baseUnit, previousQuantity, countedQuantity, movement };
+        return {
+          baseUnit: part.baseUnit,
+          previousQuantity,
+          countedQuantity,
+          movement,
+          releasedReservations,
+        };
       });
     },
   };

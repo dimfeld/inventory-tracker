@@ -12,10 +12,15 @@
     loss: 'Loss',
     supplier_return: 'Supplier return',
     count_correction: 'Count correction',
+    pick: 'Picked for project',
+    project_use: 'Used by project',
+    project_return: 'Returned from project',
   };
 
   const part = $derived(data.part);
   const total = $derived(data.balances.reduce((sum, b) => sum + b.quantity, 0));
+  const reservedAt = (locationId: number) =>
+    data.reserved.find((r) => r.locationId === locationId)?.reserved ?? 0;
   const balanceOf = (locationId: number) =>
     data.balances.find((b) => b.locationId === locationId)?.quantity ?? 0;
   const locationLabel = (location: { id: number; name: string }) =>
@@ -109,17 +114,24 @@
   {#if data.balances.length === 0}
     <p class="text-gray-600">No stock recorded.</p>
   {:else}
-    <table class="w-full max-w-md text-left text-sm">
+    <table class="w-full max-w-xl text-left text-sm">
       <tbody>
         {#each data.balances as balance (balance.locationId)}
           <tr class="border-b border-gray-100">
             <td class="py-1">{balance.locationName}</td>
             <td class="text-right">{formatQuantity(balance.quantity, part.baseUnit)}</td>
+            <td class="pl-3 text-right text-gray-600">
+              {#if reservedAt(balance.locationId) > 0}
+                {formatQuantity(reservedAt(balance.locationId), part.baseUnit)} reserved,
+                {formatQuantity(balance.quantity - reservedAt(balance.locationId), part.baseUnit)} available
+              {/if}
+            </td>
           </tr>
         {/each}
         <tr class="font-semibold">
           <td class="py-1">Total physical stock</td>
           <td class="text-right">{formatQuantity(total, part.baseUnit)}</td>
+          <td></td>
         </tr>
       </tbody>
     </table>

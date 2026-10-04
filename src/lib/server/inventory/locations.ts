@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { getLocationByName, insertLocation, listLocations } from "#lib/server/db/locations.ts";
+import {
+  getLocationByName,
+  insertLocation,
+  listLocations,
+  listStorageLocations,
+} from "#lib/server/db/locations.ts";
 import { InventoryError } from "./errors";
 
 export type LocationService = ReturnType<typeof createLocationService>;
@@ -7,6 +12,8 @@ export type LocationService = ReturnType<typeof createLocationService>;
 export function createLocationService(db: Database) {
   return {
     listLocations: () => listLocations(db),
+
+    listStorageLocations: () => listStorageLocations(db),
 
     createLocation(fields: { name: string; notes: string | null }): number {
       return db.transaction(() => {

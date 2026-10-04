@@ -1,6 +1,9 @@
 import type { BomLineInput, ProjectInput } from "#lib/schemas/project.ts";
+import { storageReservations } from "#lib/server/inventory/reservations.ts";
 import { createTestInventory } from "#lib/server/inventory/test-helpers.ts";
+import { bomAllocationGuard } from "./allocations";
 import { createProjectService, type ProjectServiceOptions } from "./projects";
+import { createAllocationService } from "./stock-allocations";
 
 export function createTestProjects(options: ProjectServiceOptions = {}) {
   const inventory = createTestInventory();
@@ -30,4 +33,14 @@ export function lineInput(overrides: Partial<BomLineInput> = {}): BomLineInput {
 
 export function equal(key: string, value: string) {
   return { key, comparison: "equal" as const, value, maxValue: null };
+}
+
+/** Project and stock services with the app's reservation and allocation rules. */
+export function createTestAllocations() {
+  const inventory = createTestInventory(undefined, { reservations: storageReservations });
+  return {
+    ...inventory,
+    projects: createProjectService(inventory.db, { allocations: bomAllocationGuard }),
+    allocations: createAllocationService(inventory.db),
+  };
 }

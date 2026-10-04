@@ -2,21 +2,15 @@ import { error, fail } from "@sveltejs/kit";
 import { parseId, text } from "#lib/schemas/result.ts";
 import { parseComponentForm, parseProjectForm } from "#lib/schemas/project.ts";
 import { runAction } from "#lib/server/forms.ts";
-import { projects } from "#lib/server/projects/index.ts";
-import type { ComponentFilter } from "#lib/server/projects/projects.ts";
+import { allocations, projects } from "#lib/server/projects/index.ts";
+import { parseComponentFilter } from "#lib/server/projects/projects.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
-function componentFilter(value: string | null): ComponentFilter {
-  if (value === "ungrouped") return "ungrouped";
-  const id = parseId(value ?? "");
-  return id === null || Number.isNaN(id) ? null : id;
-}
-
 export const load: PageServerLoad = ({ params, url }) => {
-  const filter = componentFilter(url.searchParams.get("component"));
+  const filter = parseComponentFilter(url.searchParams.get("component"));
   const details = projects().getProjectDetails(Number(params.id), filter);
   if (!details) error(404, "Project not found");
-  return { ...details, filter };
+  return { ...details, filter, coverage: allocations().getProjectCoverage(details.project.id) };
 };
 
 /** A required ID field from a form. Returns null when it is missing or invalid. */
@@ -30,8 +24,10 @@ export const actions: Actions = {
     const parsed = parseProjectForm(await request.formData());
     if (!parsed.success) return fail(400, { action: "update", errors: parsed.errors });
     return runAction("update", () => {
-      projects().updateProject(Number(params.id), parsed.data);
-      return { action: "update", success: "Project saved." };
+      const { releasedReservations } = projects().updateProject(Number(params.id), parsed.data);
+      const released =
+        releasedReservations > 0 ? ` Released ${releasedReservations} reservation(s).` : "";
+      return { action: "update", success: `Project saved.${released}` };
     });
   },
 

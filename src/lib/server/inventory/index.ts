@@ -1,7 +1,7 @@
 import { getDb } from "#lib/server/db/index.ts";
 import { createCatalogService } from "./catalog";
 import { createLocationService } from "./locations";
-import { noReservations } from "./reservations";
+import { storageReservations } from "./reservations";
 import { createStockService } from "./stock";
 
 export { isUserError } from "./errors";
@@ -13,8 +13,7 @@ function createServices() {
   return {
     catalog: createCatalogService(db),
     locations: createLocationService(db),
-    // The reservations plan replaces this guard with one that enforces storage reservations.
-    stock: createStockService(db, { reservations: noReservations }),
+    stock: createStockService(db, { reservations: storageReservations }),
   };
 }
 
