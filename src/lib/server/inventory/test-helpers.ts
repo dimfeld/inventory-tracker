@@ -3,6 +3,8 @@ import { openDatabase } from "#lib/server/db/connection.ts";
 import type { PartInput } from "#lib/schemas/part.ts";
 import { createCatalogService } from "./catalog";
 import { createLocationService } from "./locations";
+import { createOrderService } from "./orders";
+import { createReceiptService } from "./receipts";
 import { createStockService, type StockServiceOptions } from "./stock";
 
 export function createTestInventory(
@@ -14,6 +16,8 @@ export function createTestInventory(
     catalog: createCatalogService(db),
     locations: createLocationService(db),
     stock: createStockService(db, options),
+    orders: createOrderService(db),
+    receipts: createReceiptService(db),
   };
 }
 

@@ -16,6 +16,7 @@
     <a href="/parts/categories" class="text-blue-700 hover:underline">Categories</a>
     <a href="/locations" class="text-blue-700 hover:underline">Locations</a>
     <a href="/projects" class="text-blue-700 hover:underline">Projects</a>
+    <a href="/orders" class="text-blue-700 hover:underline">Orders</a>
   </nav>
 </header>
 

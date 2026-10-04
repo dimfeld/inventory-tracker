@@ -11,7 +11,9 @@ export type MovementType =
   /** Project holding location to outside: consumed or installed for one BOM line. */
   | "project_use"
   /** Project holding location back to storage, for one BOM line. */
-  | "project_return";
+  | "project_return"
+  /** Accepted stock from an order receipt, from outside to storage. */
+  | "receipt";
 
 // A type alias (not an interface) so it can be passed as named SQL bindings.
 export type NewMovement = {
@@ -29,6 +31,8 @@ export type NewMovement = {
   reason: string | null;
   /** The BOM line a project movement belongs to. Null for ordinary stock changes. */
   bomLineId?: number | null;
+  /** The receipt line a receipt movement belongs to. */
+  receiptLineId?: number | null;
 };
 
 export type Movement = NewMovement & {
@@ -49,21 +53,22 @@ export interface LocationBalance {
 
 const MOVEMENT_COLUMNS = `m.id, m.operation_id AS operationId, m.part_id AS partId, m.quantity,
   m.from_location_id AS fromLocationId, m.to_location_id AS toLocationId,
-  m.movement_type AS movementType, m.occurred_on AS occurredOn, m.reason, m.bom_line_id AS bomLineId, m.created_at AS createdAt`;
+  m.movement_type AS movementType, m.occurred_on AS occurredOn, m.reason, m.bom_line_id AS bomLineId,
+  m.receipt_line_id AS receiptLineId, m.created_at AS createdAt`;
 
 export function insertMovement(db: Database, movement: NewMovement): Movement {
   return db
     .query<Movement, NewMovement>(
       `INSERT INTO stock_movements (operation_id, part_id, quantity, from_location_id,
-         to_location_id, movement_type, occurred_on, reason, bom_line_id)
+         to_location_id, movement_type, occurred_on, reason, bom_line_id, receipt_line_id)
        VALUES ($operationId, $partId, $quantity, $fromLocationId, $toLocationId, $movementType,
-         $occurredOn, $reason, $bomLineId)
+         $occurredOn, $reason, $bomLineId, $receiptLineId)
        RETURNING id, operation_id AS operationId, part_id AS partId, quantity,
          from_location_id AS fromLocationId, to_location_id AS toLocationId,
          movement_type AS movementType, occurred_on AS occurredOn, reason,
-         bom_line_id AS bomLineId, created_at AS createdAt`
+         bom_line_id AS bomLineId, receipt_line_id AS receiptLineId, created_at AS createdAt`
     )
-    .get({ bomLineId: null, ...movement })!;
+    .get({ bomLineId: null, receiptLineId: null, ...movement })!;
 }
 
 export function getMovementByOperationId(db: Database, operationId: string): Movement | null {

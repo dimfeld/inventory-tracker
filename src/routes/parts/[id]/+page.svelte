@@ -15,6 +15,7 @@
     pick: 'Picked for project',
     project_use: 'Used by project',
     project_return: 'Returned from project',
+    receipt: 'Order receipt',
   };
 
   const part = $derived(data.part);

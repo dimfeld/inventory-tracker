@@ -1,6 +1,8 @@
 import { getDb } from "#lib/server/db/index.ts";
 import { createCatalogService } from "./catalog";
 import { createLocationService } from "./locations";
+import { createOrderService } from "./orders";
+import { createReceiptService } from "./receipts";
 import { storageReservations } from "./reservations";
 import { createStockService } from "./stock";
 
@@ -14,6 +16,8 @@ function createServices() {
     catalog: createCatalogService(db),
     locations: createLocationService(db),
     stock: createStockService(db, { reservations: storageReservations }),
+    orders: createOrderService(db),
+    receipts: createReceiptService(db),
   };
 }
 

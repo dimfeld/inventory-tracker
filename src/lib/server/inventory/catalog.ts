@@ -31,6 +31,7 @@ import {
   listLocationBalances,
   listPartMovements,
 } from "#lib/server/db/movements.ts";
+import { countPartOrderLines } from "#lib/server/db/orders.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
 import {
   expandAttributes,
@@ -299,9 +300,12 @@ export function createCatalogService(db: Database) {
       db.transaction(() => {
         const part = requirePart(id);
         checkCategory(input.categoryId);
-        if (part.baseUnit !== input.baseUnit && countPartMovements(db, id) > 0) {
+        if (
+          part.baseUnit !== input.baseUnit &&
+          (countPartMovements(db, id) > 0 || countPartOrderLines(db, id) > 0)
+        ) {
           throw new InventoryError(
-            "The base unit cannot change after stock has been recorded, because existing quantities use it"
+            "The base unit cannot change after stock or orders have been recorded, because existing quantities use it"
           );
         }
         updatePart(db, id, partFields(input));

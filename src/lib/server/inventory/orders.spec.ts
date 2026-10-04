@@ -1,0 +1,320 @@
+import { describe, expect, it } from "vitest";
+import { describePackConversion, packConversion } from "#lib/orders.ts";
+import { getBalance, listPartMovements } from "#lib/server/db/movements.ts";
+import { getOrderLine } from "#lib/server/db/orders.ts";
+import { InventoryError } from "./errors";
+import type { OrderLineInput } from "#lib/schemas/order.ts";
+import { createReceiptService, type ReceivedStock } from "./receipts";
+import { createTestInventory, opId, partInput } from "./test-helpers";
+
+const DAY = "2026-10-01";
+
+function lineInput(partId: number, overrides: Partial<OrderLineInput> = {}): OrderLineInput {
+  return {
+    partId,
+    supplierSku: null,
+    purchaseQuantity: 1,
+    purchaseUnit: "pack",
+    packQuantity: 100,
+    unitPrice: null,
+    currency: null,
+    notes: null,
+    ...overrides,
+  };
+}
+
+/** A screw part, a storage drawer, and a placed order for one pack of 100 screws. */
+function setup(lines: (partId: number) => OrderLineInput[] = (id) => [lineInput(id)]) {
+  const ctx = createTestInventory();
+  const screw = ctx.catalog.createPart(partInput());
+  const drawer = ctx.locations.createLocation({ name: "Drawer A1", notes: null });
+  const { id: orderId } = ctx.orders.createOrder(
+    { supplier: "Bolt Depot", reference: "BD-1", expectedOn: null, trackingUrl: null, notes: null },
+    lines(screw)
+  );
+  ctx.orders.markPlaced(orderId, DAY);
+  const lineIds = ctx.orders.getOrderDetails(orderId)!.lines.map((l) => l.id);
+  return { ...ctx, screw, drawer, orderId, lineId: lineIds[0], lineIds };
+}
+
+type Ctx = ReturnType<typeof setup>;
+
+function receive(
+  ctx: Ctx,
+  accepted: number,
+  options: { damaged?: number; operationId?: string; cancelRemainder?: boolean } = {}
+) {
+  return ctx.receipts.receive({
+    operationId: options.operationId ?? opId(),
+    orderId: ctx.orderId,
+    receivedOn: DAY,
+    notes: null,
+    lines: [
+      {
+        orderLineId: ctx.lineId,
+        acceptedQuantity: accepted,
+        damagedQuantity: options.damaged ?? 0,
+        locationId: ctx.drawer,
+        notes: null,
+        cancelRemainder: options.cancelRemainder,
+      },
+    ],
+  });
+}
+
+const stock = (ctx: Ctx) => getBalance(ctx.db, ctx.screw, ctx.drawer);
+const line = (ctx: Ctx) => getOrderLine(ctx.db, ctx.lineId)!;
+const incoming = (ctx: Ctx) => ctx.orders.incomingByPart([ctx.screw]);
+
+describe("pack conversion", () => {
+  it("converts a pack of 100 to 100 pieces and shows the conversion", () => {
+    expect(packConversion(1, 100)).toBe(100);
+    expect(
+      describePackConversion({
+        purchaseQuantity: 2,
+        purchaseUnit: "pack",
+        packQuantity: 100,
+        baseUnit: "pcs",
+      })
+    ).toBe("2 pack × 100 pcs = 200 pcs");
+  });
+
+  it("rejects a missing or fractional pack size", () => {
+    expect(() => packConversion(1, 0)).toThrow(/Pack size/);
+    expect(() => packConversion(1, 2.5)).toThrow(/Pack size/);
+    expect(() => setup((id) => [lineInput(id, { packQuantity: 0 })])).toThrow(/Pack size/);
+  });
+
+  it("receiving a pack of 100 adds 100 pieces", () => {
+    const ctx = setup();
+    expect(line(ctx).quantity).toBe(100);
+    const result = ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId: ctx.orderId,
+      receivedOn: DAY,
+      locationId: ctx.drawer,
+      notes: null,
+    });
+    expect(result.lines).toMatchObject([{ acceptedQuantity: 100, locationName: "Drawer A1" }]);
+    expect(stock(ctx)).toBe(100);
+    expect(listPartMovements(ctx.db, ctx.screw)).toMatchObject([
+      { movementType: "receipt", quantity: 100, receiptLineId: result.lines[0].id },
+    ]);
+    expect(line(ctx).outstanding).toBe(0);
+  });
+});
+
+describe("repeat-safe receipts", () => {
+  it("adds stock once for a repeated operation ID and returns the same receipt", () => {
+    const ctx = setup();
+    const operationId = opId();
+    const first = receive(ctx, 30, { operationId });
+    const again = receive(ctx, 30, { operationId });
+    expect(first.repeated).toBe(false);
+    expect(again.repeated).toBe(true);
+    expect(again.receipt.id).toBe(first.receipt.id);
+    expect(stock(ctx)).toBe(30);
+    expect(line(ctx).receivedQuantity).toBe(30);
+
+    // A repeated receive-all with the same ID also changes nothing.
+    const all = ctx.receipts.receiveAllOutstanding({
+      operationId,
+      orderId: ctx.orderId,
+      receivedOn: DAY,
+      locationId: ctx.drawer,
+      notes: null,
+    });
+    expect(all.receipt.id).toBe(first.receipt.id);
+    expect(stock(ctx)).toBe(30);
+  });
+
+  it("records a distinct receipt with the same quantity", () => {
+    const ctx = setup();
+    const first = receive(ctx, 30);
+    const second = receive(ctx, 30);
+    expect(second.receipt.id).not.toBe(first.receipt.id);
+    expect(stock(ctx)).toBe(60);
+    expect(ctx.orders.getOrderDetails(ctx.orderId)!.receipts).toHaveLength(2);
+  });
+});
+
+describe("outstanding supply", () => {
+  it("does not count draft orders as incoming", () => {
+    const ctx = createTestInventory();
+    const screw = ctx.catalog.createPart(partInput());
+    ctx.orders.createOrder(
+      { supplier: "Bolt Depot", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [lineInput(screw)]
+    );
+    expect(ctx.orders.incomingByPart([screw])).toEqual([]);
+  });
+
+  it("reports placed and shipped supply separately", () => {
+    const ctx = setup();
+    const { id: second } = ctx.orders.createOrder(
+      { supplier: "Bolt Depot", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [lineInput(ctx.screw, { purchaseQuantity: 3, packQuantity: 10 })]
+    );
+    ctx.orders.markPlaced(second, DAY);
+    ctx.orders.markShipped(second, DAY);
+    expect(incoming(ctx)).toMatchObject([{ placed: 100, shipped: 30 }]);
+  });
+
+  it("leaves the remainder after a partial receipt and drops fully received lines", () => {
+    const ctx = setup((id) => [lineInput(id), lineInput(id, { packQuantity: 50 })]);
+    receive(ctx, 40);
+    expect(line(ctx).outstanding).toBe(60);
+    expect(incoming(ctx)).toMatchObject([{ placed: 110 }]);
+
+    receive(ctx, 60);
+    expect(line(ctx).outstanding).toBe(0);
+    expect(stock(ctx)).toBe(100);
+    // The order stays open for its other line, but the received line is not incoming.
+    expect(ctx.orders.listIncomingLines([ctx.screw])).toMatchObject([
+      { orderLineId: ctx.lineIds[1], outstanding: 50 },
+    ]);
+    expect(incoming(ctx)).toMatchObject([{ placed: 50 }]);
+  });
+});
+
+describe("delivery review", () => {
+  it("marking delivered does not change stock or outstanding supply", () => {
+    const ctx = setup();
+    ctx.orders.markDelivered(ctx.orderId, DAY);
+    const order = ctx.orders.getOrderDetails(ctx.orderId)!.order;
+    expect(order.deliveryState).toBe("awaiting_review");
+    expect(stock(ctx)).toBe(0);
+    expect(listPartMovements(ctx.db, ctx.screw)).toEqual([]);
+    expect(line(ctx).outstanding).toBe(100);
+  });
+});
+
+describe("damaged, cancelled, and over-receipt", () => {
+  it("records damaged items without adding them to stock", () => {
+    const ctx = setup();
+    receive(ctx, 90, { damaged: 10 });
+    expect(stock(ctx)).toBe(90);
+    expect(line(ctx)).toMatchObject({ receivedQuantity: 90, damagedQuantity: 10, outstanding: 0 });
+  });
+
+  it("cancels the remainder without adding stock", () => {
+    const ctx = setup();
+    receive(ctx, 30, { damaged: 5, cancelRemainder: true });
+    expect(stock(ctx)).toBe(30);
+    expect(line(ctx)).toMatchObject({ cancelledQuantity: 65, outstanding: 0 });
+    expect(incoming(ctx)).toEqual([]);
+
+    const other = setup();
+    receive(other, 20);
+    other.orders.cancelRemainder(other.orderId, other.lineId);
+    expect(line(other)).toMatchObject({ receivedQuantity: 20, cancelledQuantity: 80 });
+    expect(stock(other)).toBe(20);
+  });
+
+  it("rejects an over-receipt without changes until the order is corrected", () => {
+    const ctx = setup();
+    receive(ctx, 60);
+    expect(() => receive(ctx, 50)).toThrow(/40 pcs is outstanding.*Correct the order line/);
+    expect(() => receive(ctx, 30, { damaged: 20 })).toThrow(InventoryError);
+    expect(stock(ctx)).toBe(60);
+    expect(line(ctx)).toMatchObject({ receivedQuantity: 60, damagedQuantity: 0, outstanding: 40 });
+    expect(ctx.orders.getOrderDetails(ctx.orderId)!.receipts).toHaveLength(1);
+
+    // The supplier sent a bigger pack: correct the line to 1 × 110, then receive 50.
+    ctx.orders.updateLine(ctx.orderId, ctx.lineId, lineInput(ctx.screw, { packQuantity: 110 }));
+    receive(ctx, 50);
+    expect(stock(ctx)).toBe(110);
+    expect(line(ctx).outstanding).toBe(0);
+  });
+
+  it("does not correct a line below what already arrived", () => {
+    const ctx = setup();
+    receive(ctx, 60);
+    expect(() =>
+      ctx.orders.updateLine(ctx.orderId, ctx.lineId, lineInput(ctx.screw, { packQuantity: 50 }))
+    ).toThrow(/60 pcs of this line already arrived/);
+    expect(() => ctx.orders.removeLine(ctx.orderId, ctx.lineId)).toThrow(/Cancel its remainder/);
+  });
+
+  it("does not receive a draft order", () => {
+    const ctx = createTestInventory();
+    const screw = ctx.catalog.createPart(partInput());
+    const drawer = ctx.locations.createLocation({ name: "Drawer A1", notes: null });
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Bolt Depot", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [lineInput(screw)]
+    );
+    expect(() =>
+      ctx.receipts.receiveAllOutstanding({
+        operationId: opId(),
+        orderId: id,
+        receivedOn: DAY,
+        locationId: drawer,
+        notes: null,
+      })
+    ).toThrow(/Place the order/);
+    expect(getBalance(ctx.db, screw, drawer)).toBe(0);
+  });
+});
+
+describe("receipt hooks", () => {
+  it("calls the hook inside the transaction and rolls back when it throws", () => {
+    const ctx = setup();
+    const received: ReceivedStock[] = [];
+    const recording = createReceiptService(ctx.db, {
+      hooks: { onLineReceived: (_db, stock) => void received.push(stock) },
+    });
+    recording.receive({
+      operationId: opId(),
+      orderId: ctx.orderId,
+      receivedOn: DAY,
+      notes: null,
+      lines: [
+        {
+          orderLineId: ctx.lineId,
+          acceptedQuantity: 25,
+          damagedQuantity: 0,
+          locationId: ctx.drawer,
+          notes: null,
+        },
+      ],
+    });
+    expect(received).toMatchObject([
+      { orderLineId: ctx.lineId, partId: ctx.screw, locationId: ctx.drawer, quantity: 25 },
+    ]);
+
+    const rejecting = createReceiptService(ctx.db, {
+      hooks: {
+        onLineReceived() {
+          throw new InventoryError("rejected");
+        },
+      },
+    });
+    expect(() =>
+      rejecting.receiveAllOutstanding({
+        operationId: opId(),
+        orderId: ctx.orderId,
+        receivedOn: DAY,
+        locationId: ctx.drawer,
+        notes: null,
+      })
+    ).toThrow("rejected");
+    expect(stock(ctx)).toBe(25);
+    expect(line(ctx).outstanding).toBe(75);
+  });
+});
+
+describe("supplier reference warning", () => {
+  it("saves a repeated supplier reference and reports the other order", () => {
+    const ctx = setup();
+    const repeat = ctx.orders.createOrder({
+      supplier: "bolt depot",
+      reference: "bd-1",
+      expectedOn: null,
+      trackingUrl: null,
+      notes: null,
+    });
+    expect(repeat.sameReference.map((o) => o.id)).toEqual([ctx.orderId]);
+    expect(ctx.orders.getOrderDetails(repeat.id)).not.toBeNull();
+  });
+});
