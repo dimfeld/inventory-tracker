@@ -20,3 +20,25 @@ export function categoryOptions(
     .map((c) => ({ id: c.id, path: pathOf(c.id) }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
+
+/**
+ * Attribute keys that apply to each category: keys assigned to the category or any ancestor.
+ * Keys keep the order of `assignments`.
+ */
+export function applicableAttributeKeys(
+  categories: { id: number; parentId: number | null }[],
+  assignments: { categoryId: number; key: string }[]
+): Record<number, string[]> {
+  const parentOf = new Map(categories.map((c) => [c.id, c.parentId]));
+  const result: Record<number, string[]> = {};
+  for (const category of categories) {
+    const lineage = new Set<number>();
+    for (let id: number | null | undefined = category.id; id != null; id = parentOf.get(id)) {
+      lineage.add(id);
+    }
+    result[category.id] = [
+      ...new Set(assignments.filter((a) => lineage.has(a.categoryId)).map((a) => a.key)),
+    ];
+  }
+  return result;
+}

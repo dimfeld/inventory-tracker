@@ -9,13 +9,17 @@ import {
   insertCategory,
   insertPart,
   insertSupplierPart,
+  listAllTags,
+  listAttributeApplicability,
+  listAttributeDefinitions,
   listCategories,
   listPartAliases,
-  listParts,
   listPartAttributes,
+  listPartTags,
   listSupplierParts,
   replacePartAliases,
   replacePartAttributes,
+  replacePartTags,
   setPartArchived,
   updatePart,
   updateSupplierPart,
@@ -27,14 +31,56 @@ import {
   listLocationBalances,
   listPartMovements,
 } from "#lib/server/db/movements.ts";
+import {
+  expandAttributes,
+  filterValueOf,
+  formatAttributeValue,
+  isNormalizationRule,
+  normalizeAttributeValue,
+} from "#lib/attributes.ts";
+import { applicableAttributeKeys, categoryOptions } from "#lib/categories.ts";
 import type { AttributeInput, PartInput } from "#lib/schemas/part.ts";
+import {
+  listAttributesOfParts,
+  listFacetDefinitions,
+  listFacetValues,
+  searchParts,
+  type AttributeCondition,
+} from "#lib/server/db/part-search.ts";
 import { InventoryError, NotFoundError } from "./errors";
 
 export type CatalogService = ReturnType<typeof createCatalogService>;
 
+export interface PartFilter {
+  text: string | null;
+  categoryId: number | null;
+  /** Combined with AND. The values of one attribute are combined with OR. */
+  attributes: { key: string; values: string[] }[];
+  /** Combined with OR. */
+  tags: string[];
+  includeArchived: boolean;
+}
+
+export interface FacetValue {
+  /** The normalized value, as used in a filter. */
+  value: string;
+  /** Readable form, such as `4.7 kΩ`. */
+  label: string;
+  partCount: number;
+}
+
+export interface AttributeFacet {
+  key: string;
+  label: string;
+  values: FacetValue[];
+}
+
 const BOOLEAN_VALUES: Record<string, boolean> = { yes: true, true: true, no: false, false: false };
 
-/** Convert attribute text to the typed value its definition expects. Keeps the raw text. */
+/**
+ * Convert attribute text to the typed value its definition expects. Keeps the raw text.
+ * Text that a normalization rule cannot read keeps no typed value.
+ */
 function typedValue(definition: AttributeDefinition, input: AttributeInput): PartAttributeValue {
   const value: PartAttributeValue = {
     attributeId: definition.id,
@@ -43,6 +89,9 @@ function typedValue(definition: AttributeDefinition, input: AttributeInput): Par
     valueNumber: null,
     valueBoolean: null,
   };
+  if (isNormalizationRule(definition.normalization)) {
+    return { ...value, ...normalizeAttributeValue(definition.normalization, input.value) };
+  }
   switch (definition.valueType) {
     case "text":
       value.valueText = input.value;
@@ -82,7 +131,7 @@ export function createCatalogService(db: Database) {
 
   /** Attributes without a definition get a new text definition. */
   function saveAttributes(partId: number, attributes: AttributeInput[]) {
-    const values = attributes.map((attribute) => {
+    const values = expandAttributes(attributes).map((attribute) => {
       const definition =
         getAttributeDefinition(db, attribute.key) ??
         insertAttributeDefinition(db, {
@@ -123,6 +172,7 @@ export function createCatalogService(db: Database) {
   function saveDetails(partId: number, input: PartInput) {
     saveAttributes(partId, input.attributes);
     replacePartAliases(db, partId, input.aliases);
+    replacePartTags(db, partId, input.tags);
     saveSupplierParts(partId, input.supplierParts);
   }
 
@@ -137,10 +187,90 @@ export function createCatalogService(db: Database) {
     };
   }
 
+  /** Typed conditions for a filter. Values are normalized with the attribute's own rule. */
+  function attributeConditions(filter: PartFilter["attributes"]): AttributeCondition[] {
+    return filter.map(({ key, values }) => {
+      const definition = getAttributeDefinition(db, key);
+      // An unknown attribute matches nothing.
+      const condition: AttributeCondition = {
+        attributeId: definition?.id ?? 0,
+        texts: [],
+        numbers: [],
+      };
+      if (!definition) return condition;
+      for (const value of values) {
+        const typed = isNormalizationRule(definition.normalization)
+          ? normalizeAttributeValue(definition.normalization, value)
+          : { valueText: value, valueNumber: null };
+        if (typed?.valueText != null) condition.texts.push(typed.valueText);
+        if (typed?.valueNumber != null) condition.numbers.push(typed.valueNumber);
+      }
+      return condition;
+    });
+  }
+
   return {
     listCategories: () => listCategories(db),
 
-    listParts: (options: { includeArchived: boolean }) => listParts(db, options),
+    listTags: () => listAllTags(db),
+
+    /** Attribute definitions and the keys that apply to each category (including inherited). */
+    attributeOptions() {
+      return {
+        definitions: listAttributeDefinitions(db).map(({ key, label, canonicalUnit }) => ({
+          key,
+          label,
+          canonicalUnit,
+        })),
+        applicable: applicableAttributeKeys(listCategories(db), listAttributeApplicability(db)),
+      };
+    },
+
+    /** Parts matching the filter, with category paths and attributes in readable form. */
+    searchParts(filter: PartFilter) {
+      const rows = searchParts(db, {
+        text: filter.text,
+        categoryId: filter.categoryId,
+        attributes: attributeConditions(filter.attributes),
+        tags: filter.tags,
+        includeArchived: filter.includeArchived,
+      });
+      const paths = new Map(categoryOptions(listCategories(db)).map((c) => [c.id, c.path]));
+      const attributes = Map.groupBy(
+        listAttributesOfParts(
+          db,
+          rows.map((row) => row.id)
+        ),
+        (row) => row.partId
+      );
+      return rows.map((row) => ({
+        ...row,
+        categoryPath: row.categoryId === null ? null : (paths.get(row.categoryId) ?? null),
+        attributes: (attributes.get(row.id) ?? []).map((a) => ({
+          key: a.key,
+          label: a.label,
+          rawValue: a.rawValue,
+          display: formatAttributeValue(a.normalization, a),
+        })),
+      }));
+    },
+
+    /** Filterable attributes for a category scope, with the values present in that scope. */
+    partFacets(categoryId: number | null, includeArchived: boolean): AttributeFacet[] {
+      const values = Map.groupBy(
+        listFacetValues(db, categoryId, includeArchived),
+        (row) => row.attributeId
+      );
+      return listFacetDefinitions(db, categoryId, includeArchived).map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        values: (values.get(definition.id) ?? []).map((row) => ({
+          value: filterValueOf(row),
+          label: formatAttributeValue(definition.normalization, row) ?? filterValueOf(row),
+          partCount: row.partCount,
+        })),
+      }));
+    },
 
     createCategory(name: string, parentId: number | null): number {
       return db.transaction(() => {
@@ -193,6 +323,7 @@ export function createCatalogService(db: Database) {
         part,
         attributes: listPartAttributes(db, id),
         aliases: listPartAliases(db, id),
+        tags: listPartTags(db, id),
         supplierParts: listSupplierParts(db, id),
         balances: listLocationBalances(db, id),
         movements: listPartMovements(db, id),

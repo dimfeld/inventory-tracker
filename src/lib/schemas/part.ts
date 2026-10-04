@@ -29,6 +29,8 @@ export interface PartInput {
   notes: string | null;
   attributes: AttributeInput[];
   aliases: string[];
+  /** Optional organization labels, lower case. */
+  tags: string[];
   supplierParts: SupplierPartInput[];
 }
 
@@ -39,7 +41,9 @@ export function normalizeAttributeKey(label: string): string {
 /**
  * Parse the part form. Repeated rows use parallel fields: `attribute_key`/`attribute_value`,
  * and `supplier_id`/`supplier_name`/`supplier_sku`/`supplier_url`/`supplier_purchase_unit`/
- * `supplier_pack_quantity`. Blank rows are ignored. Aliases are one per line.
+ * `supplier_pack_quantity`. Rows without an attribute value or supplier details are ignored, so
+ * the form can offer empty rows for the category's attributes. Aliases are one per line; tags
+ * are separated by commas.
  */
 export function parsePartForm(form: FormData): ParseResult<PartInput> {
   const errors: FieldErrors = {};
@@ -59,10 +63,10 @@ export function parsePartForm(form: FormData): ParseResult<PartInput> {
   const seenKeys = new Set<string>();
   attributeKeys.forEach((label, index) => {
     const value = attributeValues[index] ?? "";
-    if (!label && !value) return;
+    if (!value) return;
     const key = normalizeAttributeKey(label);
-    if (!key || !value) {
-      errors.attributes = "Each attribute needs a name and a value";
+    if (!key) {
+      errors.attributes = "Each attribute needs a name";
     } else if (seenKeys.has(key)) {
       errors.attributes = `Attribute "${label}" is listed more than once`;
     } else {
@@ -76,6 +80,15 @@ export function parsePartForm(form: FormData): ParseResult<PartInput> {
       text(form, "aliases")
         .split("\n")
         .map((alias) => alias.trim())
+        .filter(Boolean)
+    ),
+  ];
+
+  const tags = [
+    ...new Set(
+      text(form, "tags")
+        .split(",")
+        .map((tag) => tag.trim().toLowerCase())
         .filter(Boolean)
     ),
   ];
@@ -122,6 +135,7 @@ export function parsePartForm(form: FormData): ParseResult<PartInput> {
       notes: optionalText(form, "notes"),
       attributes,
       aliases,
+      tags,
       supplierParts,
     },
   };

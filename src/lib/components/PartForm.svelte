@@ -8,6 +8,7 @@
     notes: string | null;
     attributes: { label: string; rawValue: string }[];
     aliases: string[];
+    tags: string[];
     supplierParts: {
       id: number | null;
       supplier: string;
@@ -17,15 +18,23 @@
       packQuantity: number | null;
     }[];
   }
+
+  export interface AttributeOptions {
+    definitions: { key: string; label: string; canonicalUnit: string | null }[];
+    /** Attribute keys that apply to each category ID, including inherited ones. */
+    applicable: Record<number, string[]>;
+  }
 </script>
 
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { CategoryOption } from '#lib/categories.ts';
+  import { normalizeAttributeKey } from '#lib/schemas/part.ts';
   import { UNIT_CODES, UNITS } from '#lib/units.ts';
 
   interface Props {
     categories: CategoryOption[];
+    attributeOptions: AttributeOptions;
     initial?: PartFormValues;
     /** True when stock exists, so the base unit cannot change. */
     baseUnitLocked?: boolean;
@@ -34,8 +43,15 @@
     submitLabel: string;
   }
 
-  let { categories, initial, baseUnitLocked = false, message, errors, submitLabel }: Props =
-    $props();
+  let {
+    categories,
+    attributeOptions,
+    initial,
+    baseUnitLocked = false,
+    message,
+    errors,
+    submitLabel,
+  }: Props = $props();
 
   const emptySupplier = () => ({
     id: null,
@@ -51,6 +67,29 @@
   let attributes = $state(
     initial?.attributes.length ? initial.attributes.map((a) => ({ ...a })) : [{ label: '', rawValue: '' }]
   );
+  const definitions = $derived(new Map(attributeOptions.definitions.map((d) => [d.key, d])));
+
+  /**
+   * Offer a row for each attribute that applies to the category. Empty rows for attributes that
+   * no longer apply are removed; rows with values are kept.
+   */
+  function showApplicableRows(categoryId: number | null) {
+    const keys = categoryId === null ? [] : (attributeOptions.applicable[categoryId] ?? []);
+    const kept = attributes.filter((a) => a.rawValue || keys.includes(normalizeAttributeKey(a.label)));
+    const present = new Set(kept.map((a) => normalizeAttributeKey(a.label)));
+    for (const key of keys) {
+      if (!present.has(key)) kept.push({ label: definitions.get(key)?.label ?? key, rawValue: '' });
+    }
+    attributes = kept.length > 0 ? kept : [{ label: '', rawValue: '' }];
+  }
+  // svelte-ignore state_referenced_locally
+  showApplicableRows(initial?.categoryId ?? null);
+
+  function valuePlaceholder(label: string) {
+    const unit = definitions.get(normalizeAttributeKey(label))?.canonicalUnit;
+    return unit ? `Value, e.g. in ${unit}` : 'Value, e.g. M3';
+  }
+
   // svelte-ignore state_referenced_locally
   let supplierParts = $state(
     initial?.supplierParts.length ? initial.supplierParts.map((s) => ({ ...s })) : [emptySupplier()]
@@ -67,7 +106,11 @@
 
     <label class="block">
       <span class="text-sm">Category</span>
-      <select name="category_id" class="input">
+      <select
+        name="category_id"
+        class="input"
+        onchange={(e) => showApplicableRows(e.currentTarget.value ? Number(e.currentTarget.value) : null)}
+      >
         <option value="">(none)</option>
         {#each categories as category (category.id)}
           <option value={category.id} selected={category.id === initial?.categoryId}>
@@ -113,9 +156,18 @@
     {#each attributes as attribute, index (index)}
       <div class="mb-2 flex gap-2">
         <input name="attribute_key" placeholder="Name, e.g. Thread" bind:value={attribute.label} class="input" />
-        <input name="attribute_value" placeholder="Value, e.g. M3" bind:value={attribute.rawValue} class="input" />
+        <input
+          name="attribute_value"
+          placeholder={valuePlaceholder(attribute.label)}
+          bind:value={attribute.rawValue}
+          class="input"
+        />
       </div>
     {/each}
+    <p class="mb-2 text-sm text-gray-600">
+      The original text is kept. A thread such as M3x8 also sets the length.
+      Empty values are not saved and stay unknown.
+    </p>
     {#if errors?.attributes}<p class="text-sm text-red-700">{errors.attributes}</p>{/if}
     <button type="button" class="btn-secondary" onclick={() => attributes.push({ label: '', rawValue: '' })}>
       Add attribute
@@ -125,6 +177,11 @@
   <label class="block">
     <span class="text-sm">Aliases (one per line)</span>
     <textarea name="aliases" rows="2" class="input">{initial?.aliases.join('\n') ?? ''}</textarea>
+  </label>
+
+  <label class="block">
+    <span class="text-sm">Tags (comma separated, optional)</span>
+    <input name="tags" value={initial?.tags.join(', ') ?? ''} class="input" />
   </label>
 
   <fieldset class="rounded border p-3">

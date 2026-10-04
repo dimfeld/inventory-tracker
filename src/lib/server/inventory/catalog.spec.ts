@@ -5,8 +5,8 @@ import { createTestInventory, opId, partInput } from "./test-helpers";
 describe("catalog service", () => {
   it("creates a part with category, attributes, aliases, supplier references, and notes", () => {
     const { catalog } = createTestInventory();
-    const hardware = catalog.createCategory("Hardware", null);
-    const screws = catalog.createCategory("Screws", hardware);
+    const workshop = catalog.createCategory("Workshop", null);
+    const screws = catalog.createCategory("Screws", workshop);
 
     const id = catalog.createPart(
       partInput({
@@ -32,9 +32,9 @@ describe("catalog service", () => {
 
     const details = catalog.getPartDetails(id)!;
     expect(details.part).toMatchObject({ categoryName: "Screws", notes: "Black oxide" });
-    expect(details.attributes.map((a) => [a.key, a.rawValue, a.valueText])).toEqual([
-      ["length", "8 mm", "8 mm"],
-      ["thread", "M3", "M3"],
+    expect(details.attributes.map((a) => [a.key, a.rawValue, a.valueText, a.valueNumber])).toEqual([
+      ["length", "8 mm", null, 8],
+      ["thread", "M3", "M3", null],
     ]);
     expect(details.aliases).toEqual(["M3x8 SHCS"]);
     expect(details.supplierParts).toMatchObject([{ sku: "91290A113", packQuantity: 100 }]);

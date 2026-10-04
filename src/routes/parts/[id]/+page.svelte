@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { formatAttributeValue } from '#lib/attributes.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -65,8 +66,18 @@
     <dt class="text-gray-600">Manufacturer</dt><dd>{part.manufacturer ?? '—'}</dd>
     <dt class="text-gray-600">Part number</dt><dd>{part.partNumber ?? '—'}</dd>
     <dt class="text-gray-600">Aliases</dt><dd>{data.aliases.join(', ') || '—'}</dd>
+    <dt class="text-gray-600">Tags</dt><dd>{data.tags.join(', ') || '—'}</dd>
     {#each data.attributes as attribute (attribute.key)}
-      <dt class="text-gray-600">{attribute.label}</dt><dd>{attribute.rawValue}</dd>
+      {@const normalized = formatAttributeValue(attribute.normalization, attribute)}
+      <dt class="text-gray-600">{attribute.label}</dt>
+      <dd>
+        {attribute.rawValue}
+        {#if normalized === null && attribute.normalization}
+          <span class="text-gray-500">(not recognized; compared as unknown)</span>
+        {:else if normalized !== null && normalized !== attribute.rawValue}
+          <span class="text-gray-500">→ {normalized}</span>
+        {/if}
+      </dd>
     {/each}
   </dl>
   <div class="text-sm">

@@ -48,12 +48,15 @@ export interface AttributeDefinition {
   label: string;
   valueType: AttributeValueType;
   canonicalUnit: string | null;
+  /** Rule name from src/lib/attributes.ts, or null for plain text. */
+  normalization: string | null;
 }
 
 export interface PartAttribute {
   key: string;
   label: string;
   valueType: AttributeValueType;
+  normalization: string | null;
   rawValue: string;
   valueText: string | null;
   valueNumber: number | null;
@@ -106,22 +109,6 @@ export function insertCategory(db: Database, name: string, parentId: number | nu
   return row!.id;
 }
 
-export function listParts(db: Database, options: { includeArchived: boolean }): PartSummary[] {
-  return db
-    .query<PartSummary, [number]>(
-      `SELECT p.id, p.name, c.name AS categoryName, p.base_unit AS baseUnit, p.manufacturer,
-         p.part_number AS partNumber, p.archived_at AS archivedAt,
-         coalesce((SELECT sum(CASE WHEN m.to_location_id IS NOT NULL THEN m.quantity ELSE 0 END)
-                        - sum(CASE WHEN m.from_location_id IS NOT NULL THEN m.quantity ELSE 0 END)
-                   FROM stock_movements m WHERE m.part_id = p.id), 0) AS totalQuantity
-       FROM parts p
-       LEFT JOIN categories c ON c.id = p.category_id
-       WHERE ? OR p.archived_at IS NULL
-       ORDER BY p.archived_at IS NOT NULL, p.name COLLATE NOCASE`
-    )
-    .all(options.includeArchived ? 1 : 0);
-}
-
 export function getPart(db: Database, id: number): Part | null {
   return db
     .query<Part, [number]>(
@@ -160,11 +147,33 @@ export function setPartArchived(db: Database, id: number, archived: boolean): vo
   ).run(archived ? 1 : 0, id);
 }
 
+const DEFINITION_COLUMNS = `id, key, label, value_type AS valueType,
+  canonical_unit AS canonicalUnit, normalization`;
+
+export function listAttributeDefinitions(db: Database): AttributeDefinition[] {
+  return db
+    .query<AttributeDefinition, []>(
+      `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions ORDER BY label`
+    )
+    .all();
+}
+
+/** Attribute keys assigned directly to each category. Descendants inherit them. */
+export function listAttributeApplicability(db: Database): { categoryId: number; key: string }[] {
+  return db
+    .query<{ categoryId: number; key: string }, []>(
+      `SELECT a.category_id AS categoryId, d.key
+       FROM attribute_applicability a
+       JOIN attribute_definitions d ON d.id = a.attribute_id
+       ORDER BY d.label`
+    )
+    .all();
+}
+
 export function getAttributeDefinition(db: Database, key: string): AttributeDefinition | null {
   return db
     .query<AttributeDefinition, [string]>(
-      `SELECT id, key, label, value_type AS valueType, canonical_unit AS canonicalUnit
-       FROM attribute_definitions WHERE key = ?`
+      `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions WHERE key = ?`
     )
     .get(key);
 }
@@ -176,7 +185,7 @@ export function insertAttributeDefinition(
   return db
     .query<AttributeDefinition, typeof fields>(
       `INSERT INTO attribute_definitions (key, label, value_type) VALUES ($key, $label, $valueType)
-       RETURNING id, key, label, value_type AS valueType, canonical_unit AS canonicalUnit`
+       RETURNING ${DEFINITION_COLUMNS}`
     )
     .get(fields)!;
 }
@@ -184,7 +193,7 @@ export function insertAttributeDefinition(
 export function listPartAttributes(db: Database, partId: number): PartAttribute[] {
   return db
     .query<Omit<PartAttribute, "valueBoolean"> & { valueBoolean: number | null }, [number]>(
-      `SELECT d.key, d.label, d.value_type AS valueType, a.raw_value AS rawValue,
+      `SELECT d.key, d.label, d.value_type AS valueType, d.normalization, a.raw_value AS rawValue,
          a.value_text AS valueText, a.value_number AS valueNumber, a.value_boolean AS valueBoolean
        FROM part_attributes a
        JOIN attribute_definitions d ON d.id = a.attribute_id
@@ -239,6 +248,30 @@ export function replacePartAliases(db: Database, partId: number, aliases: string
   );
   for (const alias of aliases) {
     insert.run(partId, alias);
+  }
+}
+
+export function listPartTags(db: Database, partId: number): string[] {
+  return db
+    .query<{ tag: string }, [number]>("SELECT tag FROM part_tags WHERE part_id = ? ORDER BY tag")
+    .all(partId)
+    .map((row) => row.tag);
+}
+
+export function listAllTags(db: Database): string[] {
+  return db
+    .query<{ tag: string }, []>("SELECT DISTINCT tag FROM part_tags ORDER BY tag")
+    .all()
+    .map((row) => row.tag);
+}
+
+export function replacePartTags(db: Database, partId: number, tags: string[]): void {
+  db.run("DELETE FROM part_tags WHERE part_id = ?", [partId]);
+  const insert = db.query<unknown, [number, string]>(
+    "INSERT INTO part_tags (part_id, tag) VALUES (?, ?)"
+  );
+  for (const tag of tags) {
+    insert.run(partId, tag);
   }
 }
 

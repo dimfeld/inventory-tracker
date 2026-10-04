@@ -15,10 +15,12 @@ export const load: PageServerLoad = ({ params }) => {
       ...details.part,
       attributes: details.attributes,
       aliases: details.aliases,
+      tags: details.tags,
       supplierParts: details.supplierParts,
     },
     baseUnitLocked: catalog.hasMovements(details.part.id),
     categories: categoryOptions(catalog.listCategories()),
+    attributeOptions: catalog.attributeOptions(),
   };
 };
 

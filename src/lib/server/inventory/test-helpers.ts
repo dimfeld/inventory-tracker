@@ -27,6 +27,7 @@ export function partInput(overrides: Partial<PartInput> = {}): PartInput {
     notes: null,
     attributes: [],
     aliases: [],
+    tags: [],
     supplierParts: [],
     ...overrides,
   };

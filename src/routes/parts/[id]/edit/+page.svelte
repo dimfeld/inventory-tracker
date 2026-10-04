@@ -13,6 +13,7 @@
 <h1 class="mb-4 text-2xl font-semibold">Edit part</h1>
 <PartForm
   categories={data.categories}
+  attributeOptions={data.attributeOptions}
   initial={data.initial}
   baseUnitLocked={data.baseUnitLocked}
   message={form && 'message' in form ? form.message : undefined}

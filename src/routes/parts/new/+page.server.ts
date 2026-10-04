@@ -7,6 +7,7 @@ import type { Actions, PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = () => ({
   categories: categoryOptions(inventory().catalog.listCategories()),
+  attributeOptions: inventory().catalog.attributeOptions(),
 });
 
 export const actions: Actions = {
