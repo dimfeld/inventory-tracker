@@ -28,3 +28,9 @@ vite.config.ts.timestamp-*
 .tim/workspaces
 .rmfilter/reviews
 .rmfilter/config/tim.local.yml
+
+# Local SQLite database (DATABASE_PATH defaults to ./data/inventory.sqlite)
+/data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

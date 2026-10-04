@@ -1,54 +1,44 @@
-# sv
+# Inventory tracker
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A personal electronics and hardware inventory for one app instance on the LAN. It uses Bun, SvelteKit,
+TypeScript, and SQLite (`bun:sqlite`). The design is in `IMPLEMENTATION.md`.
 
-## Creating a project
+Catalog and stock workflows do not need an API key.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Configuration
 
-```sh
-# create a new project
-npx sv create my-app
-```
+Set these in the environment or in a `.env` file. The `dev`, `build`, `preview`, and `start` scripts read `.env`.
 
-To recreate this project with the same configuration:
+| Variable        | When it is read | Purpose                                                                                                                                                                        |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_PATH` | Run time        | SQLite database file. Default: `./data/inventory.sqlite`. Use a local disk outside `build/`. The directory is created if necessary.                                            |
+| `ORIGIN`        | Build time      | The URL that browsers use to open the app, for example `http://localhost:3000`. Set it when you serve the app over plain HTTP; otherwise form submissions fail the CSRF check. |
+| `HOST`, `PORT`  | Run time        | Listen address and port of the built server. Defaults: `0.0.0.0` and `3000`.                                                                                                   |
 
-```sh
-# recreate this project
-bun x sv@1.0.1 create --template minimal --types ts --add vitest="usages:unit,component" tailwindcss="plugins:none" sveltekit-adapter="adapter:node" experimental="features:async,remoteFunctions" --install bun ./
-```
+Database files (`/data`, `*.sqlite*`) are excluded from source control.
 
-## Adding features
-
-Add features to your project with `sv add`:
+## Develop
 
 ```sh
-npx sv add
+bun install
+bun run dev
 ```
 
-For example, to add Tailwind CSS:
+## Build and run under Bun
 
 ```sh
-npx sv add tailwindcss
+ORIGIN=http://localhost:3000 bun run build
+DATABASE_PATH=./data/inventory.sqlite PORT=3000 bun run start
 ```
 
-## Developing
+`bun run start` runs `bun ./build/index.js`. The app applies pending migrations from
+`src/lib/server/db/migrations/` when it opens the database, so a restart after an update is enough.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Checks
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+bun run check                             # types
+bun run lint
+bun --bun vitest --run --project server   # SQLite-backed unit tests
+bun run build
 ```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
