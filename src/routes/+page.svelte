@@ -8,4 +8,5 @@
   <li><a href="/parts/new" class="text-blue-700 hover:underline">New part</a></li>
   <li><a href="/parts/categories" class="text-blue-700 hover:underline">Categories</a></li>
   <li><a href="/locations" class="text-blue-700 hover:underline">Storage locations</a></li>
+  <li><a href="/projects" class="text-blue-700 hover:underline">Projects</a>: BOMs and part choices</li>
 </ul>

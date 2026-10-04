@@ -81,7 +81,10 @@ const BOOLEAN_VALUES: Record<string, boolean> = { yes: true, true: true, no: fal
  * Convert attribute text to the typed value its definition expects. Keeps the raw text.
  * Text that a normalization rule cannot read keeps no typed value.
  */
-function typedValue(definition: AttributeDefinition, input: AttributeInput): PartAttributeValue {
+export function typedAttributeValue(
+  definition: AttributeDefinition,
+  input: AttributeInput
+): PartAttributeValue {
   const value: PartAttributeValue = {
     attributeId: definition.id,
     rawValue: input.value,
@@ -139,7 +142,7 @@ export function createCatalogService(db: Database) {
           label: attribute.label,
           valueType: "text",
         });
-      return typedValue(definition, attribute);
+      return typedAttributeValue(definition, attribute);
     });
     replacePartAttributes(db, partId, values);
   }
