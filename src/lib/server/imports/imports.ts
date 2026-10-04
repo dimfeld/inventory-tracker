@@ -69,7 +69,7 @@ import { ExtractionError, type ExtractionUsage, type Extractor } from "./extract
 import { normalizeOutput, type NormalizedImport } from "./normalize";
 import { PROMPT_VERSION, sourcePrompt, systemPrompt } from "./prompt";
 import { OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
-import { csvTable, defaultCsvSettings, sourceRows } from "./source";
+import { csvTable, defaultCsvSettings, formatCsv, sourceRows } from "./source";
 
 export type ImportService = ReturnType<typeof createImportService>;
 
@@ -82,6 +82,19 @@ export interface LineEdit {
 }
 
 export type ParseOutcome = { ok: true; lineCount: number } | { ok: false; error: string };
+
+export interface NewImport {
+  kind: ImportKind;
+  sourceType: SourceType;
+  sourceText: string;
+}
+
+export interface CsvOrderBatchResult {
+  ids: number[];
+  skipped: { supplier: string; reference: string }[];
+  /** False when the CSV does not have usable supplier and order-reference columns. */
+  batched: boolean;
+}
 
 export interface CommitResult {
   orderId: number | null;
@@ -460,18 +473,98 @@ export function createImportService(db: Database) {
     return { orderId: null, projectId };
   }
 
+  function createDraft(input: NewImport, header: ImportHeader = EMPTY_HEADER): number {
+    const csvSettings =
+      input.sourceType === "csv" ? defaultCsvSettings(sourceRows("csv", input.sourceText)) : null;
+    return insertImport(db, {
+      ...input,
+      sourceHash: sourceHash(input.sourceText),
+      csvSettings,
+      header,
+    });
+  }
+
+  function mapCsvColumns(id: number): number {
+    const record = requireOpen(id);
+    const { rows, csv } = sourceView(record);
+    if (!csv) throw new InventoryError("Column mapping needs a CSV source");
+    const normalized = normalizeOutput(
+      record.kind,
+      loadCatalogContext(db),
+      outputFromColumns(record.kind, rows, csv.settings)
+    );
+    saveProposals(record, normalized, { modelId: null, usage: null, versioned: false });
+    return normalized.lines.length;
+  }
+
   return {
     listImports: () => listImports(db),
 
     /** Save the source as a draft. Nothing is sent anywhere. */
-    createImport(input: { kind: ImportKind; sourceType: SourceType; sourceText: string }): number {
-      const csvSettings =
-        input.sourceType === "csv" ? defaultCsvSettings(sourceRows("csv", input.sourceText)) : null;
-      return insertImport(db, {
-        ...input,
-        sourceHash: sourceHash(input.sourceText),
-        csvSettings,
-        header: EMPTY_HEADER,
+    createImport(input: NewImport): number {
+      return createDraft(input);
+    },
+
+    /**
+     * Split extension CSV into one draft per supplier order and skip existing references. If a
+     * row cannot be identified, save one ordinary draft so no source row is lost.
+     */
+    createCsvOrderBatch(input: NewImport): CsvOrderBatchResult {
+      const fallback = (): CsvOrderBatchResult => ({
+        ids: [createDraft(input)],
+        skipped: [],
+        batched: false,
+      });
+      if (input.kind !== "order" || input.sourceType !== "csv") return fallback();
+
+      const rows = sourceRows("csv", input.sourceText);
+      const header = rows[0]?.cells ?? [];
+      const names = header.map((name) => name.trim().toLowerCase());
+      const supplierIndex = names.indexOf("supplier");
+      const referenceIndex = names.indexOf("order_reference");
+      const descriptionIndex = names.indexOf("description");
+      const dataRows = rows.slice(1);
+      if (
+        supplierIndex < 0 ||
+        referenceIndex < 0 ||
+        descriptionIndex < 0 ||
+        dataRows.length === 0
+      ) {
+        return fallback();
+      }
+
+      const groups = new Map<string, { supplier: string; reference: string; rows: string[][] }>();
+      for (const row of dataRows) {
+        const supplier = row.cells[supplierIndex]?.trim() ?? "";
+        const reference = row.cells[referenceIndex]?.trim() ?? "";
+        if (!supplier || !reference) return fallback();
+        const key = `${supplier.toLowerCase()}\u0000${reference.toLowerCase()}`;
+        const group = groups.get(key) ?? { supplier, reference, rows: [] };
+        group.rows.push(row.cells);
+        groups.set(key, group);
+      }
+
+      return inTransaction(() => {
+        const ids: number[] = [];
+        const skipped: CsvOrderBatchResult["skipped"] = [];
+        for (const group of groups.values()) {
+          if (listOrdersWithReference(db, group.supplier, group.reference, null).length > 0) {
+            skipped.push({ supplier: group.supplier, reference: group.reference });
+            continue;
+          }
+          const sourceText = formatCsv([header, ...group.rows]);
+          const id = createDraft(
+            { ...input, sourceText },
+            {
+              ...EMPTY_HEADER,
+              supplier: group.supplier,
+              reference: group.reference,
+            }
+          );
+          mapCsvColumns(id);
+          ids.push(id);
+        }
+        return { ids, skipped, batched: true };
       });
     },
 
@@ -547,16 +640,7 @@ export function createImportService(db: Database) {
 
     /** Lines from the owner's CSV column roles, without a model. Replaces the lines. */
     linesFromColumns(id: number): number {
-      const record = requireOpen(id);
-      const { rows, csv } = sourceView(record);
-      if (!csv) throw new InventoryError("Column mapping needs a CSV source");
-      const normalized = normalizeOutput(
-        record.kind,
-        loadCatalogContext(db),
-        outputFromColumns(record.kind, rows, csv.settings)
-      );
-      saveProposals(record, normalized, { modelId: null, usage: null, versioned: false });
-      return normalized.lines.length;
+      return mapCsvColumns(id);
     },
 
     updateHeader(id: number, header: ImportHeader): void {

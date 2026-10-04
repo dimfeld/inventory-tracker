@@ -19,6 +19,15 @@
 
 <h1 class="mb-4 text-2xl font-semibold">Imports</h1>
 
+{#if data.batch}
+  <p class="mb-4 rounded bg-blue-50 p-3 text-sm text-blue-900">
+    Created {data.batch.created} new order {data.batch.created === 1 ? 'import' : 'imports'}.
+    {#if data.batch.skipped > 0}
+      Skipped {data.batch.skipped} {data.batch.skipped === 1 ? 'order' : 'orders'} that already exist.
+    {/if}
+  </p>
+{/if}
+
 <section class="mb-8 max-w-2xl">
   <h2 class="mb-2 font-semibold">New import</h2>
   <p class="mb-2 text-sm text-gray-600">

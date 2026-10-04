@@ -164,8 +164,12 @@ export function listImports(db: Database): ImportSummary[] {
       `SELECT i.id, i.kind, i.source_type AS sourceType, i.parse_state AS parseState,
          i.commit_state AS commitState, i.order_id AS orderId, i.project_id AS projectId,
          (SELECT count(*) FROM import_lines l WHERE l.import_id = i.id) AS lineCount,
-         substr(ltrim(i.source_text), 1, instr(ltrim(i.source_text) || char(10), char(10)) - 1)
-           AS title,
+         coalesce(
+           nullif(trim(json_extract(i.header, '$.supplier') || ' ' ||
+             coalesce(json_extract(i.header, '$.reference'), '')), ''),
+           substr(ltrim(i.source_text), 1,
+             instr(ltrim(i.source_text) || char(10), char(10)) - 1)
+         ) AS title,
          i.created_at AS createdAt
        FROM imports i ORDER BY i.id DESC`
     )

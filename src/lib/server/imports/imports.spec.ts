@@ -47,6 +47,96 @@ async function parsedOrder() {
 }
 
 describe("order import", () => {
+  it("maps extension CSV headers without a model", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: `supplier,order_reference,description,quantity,purchase_unit,pack_quantity,unit,manufacturer,part_number,supplier_sku,unit_price,currency,notes
+DigiKey,DK-12345,Precision resistor,5,each,1,pcs,Yageo,RC0805,123-ND,0.42,USD,Product page`,
+    });
+
+    const source = review(ctx, id).source;
+    expect(source.csv?.settings.roles).toEqual([
+      "supplier",
+      "order_reference",
+      "description",
+      "quantity",
+      "purchase_unit",
+      "pack_quantity",
+      "unit",
+      "manufacturer",
+      "part_number",
+      "supplier_sku",
+      "unit_price",
+      "currency",
+      "notes",
+    ]);
+    expect(ctx.imports.linesFromColumns(id)).toBe(1);
+
+    const mapped = review(ctx, id);
+    expect(mapped.record.header).toEqual({
+      supplier: "DigiKey",
+      reference: "DK-12345",
+      projectId: null,
+      projectName: null,
+      notes: null,
+    });
+    expect(mapped.lines[0].fields).toMatchObject({
+      description: "Precision resistor",
+      quantity: "5",
+      purchaseUnit: "each",
+      packQuantity: "1",
+      unit: "pcs",
+      manufacturer: "Yageo",
+      partNumber: "RC0805",
+      supplierSku: "123-ND",
+      unitPrice: "0.42",
+      currency: "USD",
+      notes: "Product page",
+    });
+  });
+
+  it("splits extension CSV by order and skips references that already exist", () => {
+    const ctx = createTestImports();
+    ctx.orders.createOrder({
+      supplier: "AliExpress",
+      reference: "AE-1",
+      expectedOn: null,
+      trackingUrl: null,
+      notes: null,
+    });
+    const sourceText = `supplier,order_reference,description,quantity,purchase_unit,pack_quantity,unit,supplier_sku,unit_price,currency,notes
+aliexpress,AE-1,Already imported,1,each,1,pcs,100,1.00,USD,
+AliExpress,AE-2,"Connector, blue",2,each,1,pcs,200,2.00,USD,First line
+AliExpress,AE-2,Connector red,1,each,1,pcs,201,3.00,USD,Second line
+AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
+
+    const result = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText,
+    });
+
+    expect(result).toMatchObject({
+      batched: true,
+      skipped: [{ supplier: "aliexpress", reference: "AE-1" }],
+    });
+    expect(result.ids).toHaveLength(2);
+    const drafts = result.ids.map((id) => review(ctx, id));
+    expect(drafts.map((draft) => draft.record.header.reference)).toEqual(["AE-2", "AE-3"]);
+    expect(drafts.map((draft) => draft.source.csv?.dataRows.length)).toEqual([2, 1]);
+    expect(drafts.map((draft) => draft.lines.length)).toEqual([2, 1]);
+    expect(ctx.imports.listImports().map((item) => item.title)).toEqual([
+      "AliExpress AE-3",
+      "AliExpress AE-2",
+    ]);
+    expect(review(ctx, result.ids[0]).lines.map((line) => line.fields.description)).toEqual([
+      "Connector, blue",
+      "Connector red",
+    ]);
+  });
+
   it("parses into reviewable proposals without creating inventory records", async () => {
     const ctx = createTestImports();
     const before = inventoryCounts(ctx.db);

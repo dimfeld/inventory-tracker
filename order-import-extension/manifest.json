@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Inventory Order Import",
+  "version": "0.1.0",
+  "description": "Copy order lines from supported supplier pages as CSV.",
+  "permissions": ["activeTab", "clipboardWrite", "scripting"],
+  "action": {
+    "default_title": "Copy order CSV",
+    "default_popup": "popup.html"
+  }
+}

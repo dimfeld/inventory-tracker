@@ -1,0 +1,194 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 430px;
+  min-height: 230px;
+  margin: 0;
+  color: #172126;
+  background: #f5f2ea;
+}
+
+main {
+  padding: 18px;
+}
+
+header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: #116466;
+  font-size: 25px;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0 0 3px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
+#site,
+#status {
+  color: #5b6669;
+  line-height: 1.4;
+}
+
+button {
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: #116466;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0b5052;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #e1a326;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#status {
+  min-height: 39px;
+  padding-top: 10px;
+}
+
+#status.error {
+  color: #a02b25;
+}
+
+#status.success {
+  color: #116039;
+}
+
+#preview {
+  margin-top: 14px;
+  border-top: 1px solid #d4d0c7;
+  padding-top: 12px;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+button.secondary {
+  width: auto;
+  min-height: 30px;
+  padding: 0 11px;
+  color: #116466;
+  background: transparent;
+  border: 1px solid #7c9695;
+  font-size: 12px;
+}
+
+button.secondary:hover {
+  background: #e5ebe7;
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  height: 150px;
+  resize: vertical;
+  border: 1px solid #aaa79f;
+  border-radius: 7px;
+  padding: 9px;
+  color: #283234;
+  background: #fff;
+  font:
+    11px/1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    color: #ecf1ef;
+    background: #202727;
+  }
+
+  #site,
+  #status {
+    color: #b9c3c1;
+  }
+
+  #status.error {
+    color: #ffaaa2;
+  }
+
+  #status.success {
+    color: #81d6a4;
+  }
+
+  #preview {
+    border-color: #475250;
+  }
+
+  button.secondary {
+    color: #9bd0ce;
+  }
+
+  button.secondary:hover {
+    background: #293837;
+  }
+
+  textarea {
+    border-color: #52615f;
+    color: #e7efed;
+    background: #151b1b;
+  }
+}

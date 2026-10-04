@@ -117,12 +117,15 @@ export function emptyLineFields(description = ""): ImportLineFields {
 /** Roles the owner can give CSV columns. Several columns can form the description. */
 export const COLUMN_ROLES = [
   "ignore",
+  "supplier",
+  "order_reference",
   "description",
   "quantity",
   "unit",
   "purchase_unit",
   "pack_quantity",
   "unit_price",
+  "currency",
   "manufacturer",
   "part_number",
   "supplier_sku",
@@ -134,12 +137,15 @@ export type ColumnRole = (typeof COLUMN_ROLES)[number];
 
 export const COLUMN_ROLE_LABELS: Record<ColumnRole, string> = {
   ignore: "Ignore",
+  supplier: "Supplier",
+  order_reference: "Order reference",
   description: "Description",
   quantity: "Quantity",
   unit: "Unit",
   purchase_unit: "Purchase unit",
   pack_quantity: "Pack size",
   unit_price: "Unit price",
+  currency: "Currency",
   manufacturer: "Manufacturer",
   part_number: "Manufacturer part number",
   supplier_sku: "Supplier SKU",

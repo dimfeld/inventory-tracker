@@ -54,10 +54,15 @@ export function outputFromColumns(
     notes: stated(record.cell("notes")),
   });
 
+  const common = (role: ColumnRole) => {
+    const values = [...new Set(records.map((record) => record.cell(role)).filter(Boolean))];
+    return values.length === 1 ? stated(values[0]) : null;
+  };
+
   if (kind === "order") {
     return {
-      supplier: null,
-      reference: null,
+      supplier: common("supplier"),
+      reference: common("order_reference"),
       lines: records.map((record) => ({
         ...shared(record),
         purchaseQuantity: wholeNumber(record.cell("quantity")),
@@ -65,7 +70,7 @@ export function outputFromColumns(
         packQuantity: wholeNumber(record.cell("pack_quantity")),
         baseUnit: stated(record.cell("unit")),
         unitPrice: stated(record.cell("unit_price")),
-        currency: null,
+        currency: stated(record.cell("currency")),
       })),
     };
   }
