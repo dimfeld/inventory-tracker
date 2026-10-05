@@ -74,7 +74,8 @@
   {#if m}<span class="ml-1 rounded bg-gray-100 px-1 text-xs text-gray-600">{m}</span>{/if}
 {/snippet}
 
-<form method="POST" action="?/saveLine" use:enhance class="rounded border border-gray-200 p-3">
+<!-- No reset after a save: it would clear the resolution and every field the save did not change. -->
+<form method="POST" action="?/saveLine" use:enhance={() => ({ update }) => update({ reset: false })} class="rounded border border-gray-200 p-3">
   <input type="hidden" name="line_id" value={line.id} />
   <div class="mb-2 flex flex-wrap items-baseline gap-2">
     <h3 class="font-semibold">Line {number}</h3>
