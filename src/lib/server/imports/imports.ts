@@ -340,7 +340,8 @@ export function createImportService(db: Database) {
       baseUnit: fields.unit as Unit,
       manufacturer: fields.manufacturer,
       partNumber: fields.partNumber,
-      notes: fields.notes,
+      // BOM line notes describe the project use, so they stay on the BOM row only.
+      notes: record.kind === "order" ? fields.notes : null,
       attributes: fields.attributes.map((a) => ({
         key: normalizeAttributeKey(a.key),
         label: a.key,

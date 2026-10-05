@@ -206,6 +206,7 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
       fields: {
         description: "M3 × 10 socket head screw",
         packQuantity: "100",
+        notes: "Black oxide",
         attributes: [
           { key: "thread", value: "M3" },
           { key: "length", value: "10" },
@@ -243,6 +244,7 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
         .attributes.map((a) => a.key)
         .sort()
     ).toEqual(["head", "length", "thread"]);
+    expect(ctx.catalog.getPartDetails(newPart)!.part.notes).toBe("Black oxide");
 
     const after = inventoryCounts(ctx.db);
     expect(after).toEqual({
@@ -490,6 +492,46 @@ describe("BOM import", () => {
       2
     );
   });
+
+  it.each(["new", "existing"] as const)(
+    "keeps line notes on the BOM row only, for a %s project",
+    async (target) => {
+      const ctx = await parsedBom(bomSections, "text");
+      const { id } = ctx;
+      if (target === "existing") {
+        const projectId = ctx.projects.createProject({
+          name: "Lamp v2",
+          status: "active",
+          notes: null,
+          links: [],
+        });
+        ctx.imports.updateHeader(id, {
+          supplier: null,
+          reference: null,
+          projectId,
+          projectName: null,
+          notes: null,
+        });
+      }
+      const screwNotes = ctx.catalog.getPartDetails(ctx.parts.screw)!.part.notes;
+      edit(ctx, id, 0, { fields: { notes: "Use the long ones" } });
+      edit(ctx, id, 1, { resolution: "new", fields: { notes: "Place near U1" } });
+      edit(ctx, id, 2, { fields: { notes: "Any LDO" } });
+      expect(review(ctx, id).lines.flatMap((l) => l.problems)).toEqual([]);
+
+      const { projectId } = ctx.imports.commit(id, opId());
+      const createdPartId = review(ctx, id).lines[1].createdPartId!;
+      expect(ctx.catalog.getPartDetails(createdPartId)!.part.notes).toBeNull();
+      expect(ctx.catalog.getPartDetails(ctx.parts.screw)!.part.notes).toBe(screwNotes);
+      const rows = listBomLines(ctx.db, projectId!);
+      expect(rows.map((r) => [r.partId, r.notes])).toEqual([
+        [ctx.parts.screw, "Use the long ones"],
+        [createdPartId, "Place near U1"],
+        [null, "Any LDO"],
+        [ctx.parts.resistor4k7, null],
+      ]);
+    }
+  );
 
   it("does not invent groups for a flat BOM", async () => {
     const ctx = await parsedBom(bomFlat, "csv");
