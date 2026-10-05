@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import type { BomLineInput, ProjectInput } from "#lib/schemas/project.ts";
 import { commitmentReceipts } from "#lib/server/inventory/commitments.ts";
 import { createReceiptService } from "#lib/server/inventory/receipts.ts";
@@ -5,6 +6,7 @@ import { storageReservations } from "#lib/server/inventory/reservations.ts";
 import { createTestInventory } from "#lib/server/inventory/test-helpers.ts";
 import { bomAllocationGuard } from "./allocations";
 import { createCommitmentService } from "./commitments";
+import { createEstimateService } from "./estimates";
 import { createProjectService, type ProjectServiceOptions } from "./projects";
 import { createShoppingService } from "./shopping";
 import { createAllocationService } from "./stock-allocations";
@@ -49,5 +51,24 @@ export function createTestAllocations() {
     allocations: createAllocationService(inventory.db),
     commitments: createCommitmentService(inventory.db),
     shopping: createShoppingService(inventory.db),
+    estimates: createEstimateService(inventory.db),
+  };
+}
+
+/**
+ * Stock movements, reservations, incoming commitments, and order line quantities, to show that
+ * an operation leaves them unchanged.
+ */
+export function stockAndCommitments(db: Database) {
+  return {
+    movements: db.query("SELECT * FROM stock_movements ORDER BY id").all(),
+    reservations: db.query("SELECT * FROM reservations ORDER BY id").all(),
+    commitments: db.query("SELECT * FROM incoming_commitments ORDER BY id").all(),
+    orderLines: db
+      .query(
+        `SELECT id, part_id, quantity, received_quantity, damaged_quantity, cancelled_quantity
+         FROM order_lines ORDER BY id`
+      )
+      .all(),
   };
 }

@@ -13,6 +13,7 @@ import {
   insertOrder,
   insertOrderLine,
   listIncomingLines,
+  listLineCostFields,
   listOrderLines,
   listOrderReceipts,
   listOrders,
@@ -24,7 +25,8 @@ import {
   type Order,
   type OrderLine,
 } from "#lib/server/db/orders.ts";
-import { packConversion } from "#lib/orders.ts";
+import { parseCurrency, totalByCurrency } from "#lib/money.ts";
+import { orderLineCost, packConversion } from "#lib/orders.ts";
 import type { OrderInput, OrderLineInput } from "#lib/schemas/order.ts";
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
@@ -52,7 +54,8 @@ export type OrderService = ReturnType<typeof createOrderService>;
 
 /**
  * Purchase orders: manual entry, purchase and delivery state, line corrections, and outstanding
- * supply. Nothing here changes stock; only the receipt service adds stock. Corrections and
+ * supply. Nothing here changes stock; only the receipt service adds stock. Line prices and
+ * actual purchase costs never change stock, reservations, or commitments. Corrections and
  * cancellations that lower a line's outstanding supply reduce its incoming project
  * commitments in the same transaction and return how many were reduced.
  */
@@ -86,14 +89,21 @@ export function createOrderService(db: Database) {
     if (part.archivedAt) {
       throw new InventoryError(`${part.name} is archived. Restore it before ordering it.`);
     }
-    if (fields.unitPrice !== null && !fields.currency) {
-      throw new InventoryError("Enter the currency of the price");
+    if (fields.unitPrice !== null && parseCurrency(fields.currency) !== fields.currency) {
+      throw new InventoryError("Enter the currency of the price as a three-letter code");
     }
     return packConversion(fields.purchaseQuantity, fields.packQuantity);
   }
 
   return {
-    listOrders: () => listOrders(db),
+    /** Orders with their actual purchase cost totals per currency. */
+    listOrders() {
+      const costs = Map.groupBy(listLineCostFields(db), (line) => line.orderId);
+      return listOrders(db).map((order) => ({
+        ...order,
+        costs: totalByCurrency((costs.get(order.id) ?? []).map(orderLineCost)),
+      }));
+    },
 
     /** Parts that can be added to an order: every part that is not archived. */
     partOptions: () =>
@@ -116,10 +126,11 @@ export function createOrderService(db: Database) {
         ),
         (line) => line.receiptId
       );
-      const lines = listOrderLines(db, id);
+      const lines = listOrderLines(db, id).map((line) => ({ ...line, cost: orderLineCost(line) }));
       return {
         order,
         lines,
+        costs: totalByCurrency(lines.map((line) => line.cost)),
         commitments: listOrderLineCommitments(
           db,
           lines.map((line) => line.id)

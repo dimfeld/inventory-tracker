@@ -1,6 +1,7 @@
 import { getDb } from "#lib/server/db/index.ts";
 import { bomAllocationGuard } from "./allocations";
 import { createCommitmentService } from "./commitments";
+import { createEstimateService } from "./estimates";
 import { createProjectService } from "./projects";
 import { createShoppingService } from "./shopping";
 import { createAllocationService } from "./stock-allocations";
@@ -9,6 +10,7 @@ let service: ReturnType<typeof createProjectService> | undefined;
 let allocationService: ReturnType<typeof createAllocationService> | undefined;
 let commitmentService: ReturnType<typeof createCommitmentService> | undefined;
 let shoppingService: ReturnType<typeof createShoppingService> | undefined;
+let estimateService: ReturnType<typeof createEstimateService> | undefined;
 
 /** The project service bound to the app database. */
 export function projects() {
@@ -32,4 +34,10 @@ export function commitments() {
 export function shopping() {
   shoppingService ??= createShoppingService(getDb());
   return shoppingService;
+}
+
+/** Read-only project cost estimates from recorded purchase prices. */
+export function estimates() {
+  estimateService ??= createEstimateService(getDb());
+  return estimateService;
 }

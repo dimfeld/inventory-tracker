@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatMoney } from "#lib/money.ts";
 import { describePackConversion, packConversion } from "#lib/orders.ts";
 import { getBalance, listPartMovements } from "#lib/server/db/movements.ts";
 import { getOrderLine } from "#lib/server/db/orders.ts";
@@ -316,5 +317,50 @@ describe("supplier reference warning", () => {
     });
     expect(repeat.sameReference.map((o) => o.id)).toEqual([ctx.orderId]);
     expect(ctx.orders.getOrderDetails(repeat.id)).not.toBeNull();
+  });
+});
+
+describe("actual purchase costs", () => {
+  it("totals each currency separately and counts unpriced lines as unknown", () => {
+    const ctx = createTestInventory();
+    const screw = ctx.catalog.createPart(partInput());
+    const nut = ctx.catalog.createPart(partInput({ name: "M3 nut" }));
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Mixed", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [
+        lineInput(screw, { purchaseQuantity: 2, unitPrice: "5.00", currency: "USD" }),
+        lineInput(nut, { purchaseQuantity: 1, unitPrice: "3.5", currency: "EUR" }),
+        lineInput(nut, { purchaseQuantity: 3, unitPrice: "0.25", currency: "USD" }),
+        lineInput(screw),
+      ]
+    );
+    const details = ctx.orders.getOrderDetails(id)!;
+    expect(details.lines.map((l) => l.cost && formatMoney(l.cost))).toEqual([
+      "10.00 USD",
+      "3.5 EUR",
+      "0.75 USD",
+      null,
+    ]);
+    expect(details.costs.totals.map(formatMoney)).toEqual(["10.75 USD", "3.5 EUR"]);
+    expect(details.costs.unknownCount).toBe(1);
+    const listed = ctx.orders.listOrders().find((o) => o.id === id)!;
+    expect(listed.costs).toEqual(details.costs);
+  });
+
+  it("does not charge cancelled quantity but still charges damaged stock", () => {
+    const ctx = setup((id) => [
+      lineInput(id, { purchaseQuantity: 3, unitPrice: "4.00", currency: "USD" }),
+    ]);
+    receive(ctx, 90, { damaged: 10 });
+    ctx.orders.cancelRemainder(ctx.orderId, ctx.lineId);
+    const details = ctx.orders.getOrderDetails(ctx.orderId)!;
+    expect(formatMoney(details.lines[0].cost!)).toBe("4.00 USD");
+  });
+
+  it("rejects a currency that is not a three-letter code", () => {
+    const ctx = setup();
+    expect(() =>
+      ctx.orders.addLine(ctx.orderId, lineInput(ctx.screw, { unitPrice: "1", currency: "$" }))
+    ).toThrow(InventoryError);
   });
 });

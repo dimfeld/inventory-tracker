@@ -1,4 +1,5 @@
 import type { CommitmentAssignment } from "#lib/commitments.ts";
+import { parseCurrency } from "#lib/money.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 import { today } from "./stock";
 
@@ -20,7 +21,7 @@ export interface OrderLineInput {
   purchaseUnit: string;
   /** Base units of the part in one purchase unit. */
   packQuantity: number;
-  /** Price of one purchase unit as an exact decimal string. */
+  /** Price of one purchase unit as an exact decimal string. Excludes shipping and tax. */
   unitPrice: string | null;
   currency: string | null;
   notes: string | null;
@@ -117,8 +118,13 @@ export function parseOrderLineForm(form: FormData): ParseResult<OrderLineInput> 
 
   const unitPrice = optionalText(form, "unit_price");
   if (unitPrice !== null && !PRICE.test(unitPrice)) errors.unit_price = "Enter a price";
-  const currency = optionalText(form, "currency")?.toUpperCase() ?? null;
-  if (unitPrice !== null && currency === null) errors.currency = "Enter the currency";
+  const currencyText = optionalText(form, "currency");
+  const currency = parseCurrency(currencyText);
+  if (unitPrice !== null && currency === null) {
+    errors.currency = currencyText
+      ? "Enter the currency as a three-letter code, such as USD"
+      : "Enter the currency";
+  }
 
   return result(errors, () => ({
     partId: partId!,

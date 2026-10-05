@@ -182,6 +182,68 @@ export function listOrders(db: Database): OrderSummary[] {
     .all();
 }
 
+/** Price and quantities of an order line, for its actual purchase cost. */
+export interface LineCostFields {
+  orderId: number;
+  unitPrice: string | null;
+  currency: string | null;
+  quantity: number;
+  cancelledQuantity: number;
+  packQuantity: number;
+}
+
+/** Price and quantities of every order line. */
+export function listLineCostFields(db: Database): LineCostFields[] {
+  return db
+    .query<LineCostFields, []>(
+      `SELECT order_id AS orderId, unit_price AS unitPrice, currency, quantity,
+         cancelled_quantity AS cancelledQuantity, pack_quantity AS packQuantity
+       FROM order_lines ORDER BY id`
+    )
+    .all();
+}
+
+/** A priced line of a placed or shipped order. */
+export interface PricedPurchase {
+  orderLineId: number;
+  orderId: number;
+  supplier: string;
+  reference: string | null;
+  placedOn: string | null;
+  partId: number;
+  baseUnit: string;
+  purchaseUnit: string;
+  packQuantity: number;
+  unitPrice: string;
+  currency: string;
+}
+
+/**
+ * The most recent priced line of a placed or shipped order for each of the given parts. Draft
+ * orders are not purchases. Recency is placed date, then order ID, then line ID.
+ */
+export function listLatestPricedPurchases(db: Database, partIds: number[]): PricedPurchase[] {
+  return db
+    .query<PricedPurchase & { rank: number }, [string]>(
+      `SELECT * FROM (
+         SELECT ol.id AS orderLineId, o.id AS orderId, o.supplier, o.reference,
+           o.placed_on AS placedOn, ol.part_id AS partId, p.base_unit AS baseUnit,
+           ol.purchase_unit AS purchaseUnit, ol.pack_quantity AS packQuantity,
+           ol.unit_price AS unitPrice, ol.currency,
+           row_number() OVER (
+             PARTITION BY ol.part_id ORDER BY o.placed_on DESC, o.id DESC, ol.id DESC
+           ) AS rank
+         FROM order_lines ol
+         JOIN orders o ON o.id = ol.order_id
+         JOIN parts p ON p.id = ol.part_id
+         WHERE o.status IN ('placed', 'shipped') AND ol.unit_price IS NOT NULL
+           AND ol.part_id IN (SELECT value FROM json_each(?))
+       ) WHERE rank = 1`
+    )
+    .all(JSON.stringify(partIds))
+    .map(({ rank: _rank, ...purchase }) => purchase);
+}
+
 /** Other orders from the same supplier with the same reference, ignoring case. */
 export function listOrdersWithReference(
   db: Database,

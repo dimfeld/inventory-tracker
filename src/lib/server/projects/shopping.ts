@@ -71,7 +71,7 @@ export interface ShoppingProject {
  * The part a requirement resolves to: its exact part, or its only approved choice. A
  * requirement with no choice or several choices is ambiguous.
  */
-function resolvedPart(line: BomLine, choices: BomPartChoice[]) {
+export function resolvedPart(line: BomLine, choices: BomPartChoice[]) {
   // An exact part's requirement is in the part's base unit.
   if (line.partId !== null) return { id: line.partId, name: line.partName!, baseUnit: line.unit };
   if (choices.length !== 1) return null;

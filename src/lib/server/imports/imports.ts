@@ -12,6 +12,7 @@ import {
   type Resolution,
   type SourceType,
 } from "#lib/imports.ts";
+import { parseCurrency } from "#lib/money.ts";
 import { describePackConversion } from "#lib/orders.ts";
 import { normalizeAttributeKey, type PartInput } from "#lib/schemas/part.ts";
 import type { BomLineInput } from "#lib/schemas/project.ts";
@@ -140,7 +141,9 @@ export function lineProblems(kind: ImportKind, line: LineEdit, part: Part | null
       problems.push("Enter the pack size: how many base units one purchase unit holds");
     }
     if (f.unitPrice !== null && !DECIMAL.test(f.unitPrice)) problems.push("Price must be a number");
-    if (f.unitPrice !== null && !f.currency) problems.push("Enter the currency of the price");
+    if (f.unitPrice !== null && !parseCurrency(f.currency)) {
+      problems.push("Enter the currency of the price as a three-letter code, such as USD");
+    }
     return problems;
   }
 
@@ -416,7 +419,7 @@ export function createImportService(db: Database) {
           purchaseUnit: f.purchaseUnit!,
           packQuantity: Number(f.packQuantity),
           unitPrice: f.unitPrice,
-          currency: f.unitPrice === null ? null : (f.currency?.toUpperCase() ?? null),
+          currency: f.unitPrice === null ? null : parseCurrency(f.currency),
           notes: f.notes,
         });
         recordLineCommit(db, line.id, { createdPartId, orderLineId, bomLineId: null });

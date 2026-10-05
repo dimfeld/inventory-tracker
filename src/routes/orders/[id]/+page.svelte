@@ -1,7 +1,9 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import OrderFields from '#lib/components/OrderFields.svelte';
+  import MoneyTotals from '#lib/components/MoneyTotals.svelte';
   import OrderLineFields from '#lib/components/OrderLineFields.svelte';
+  import { formatMoney } from '#lib/money.ts';
   import { DELIVERY_LABELS, describePackConversion } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
@@ -117,7 +119,13 @@
             <td class="py-1">
               <a href="/parts/{line.partId}" class="text-blue-700 hover:underline">{line.partName}</a>
               {#if line.supplierSku}<div class="text-xs text-gray-600">SKU {line.supplierSku}</div>{/if}
-              {#if line.unitPrice}<div class="text-xs text-gray-600">{line.unitPrice} {line.currency} per {line.purchaseUnit}</div>{/if}
+              {#if line.cost}
+                <div class="text-xs text-gray-600">
+                  {line.unitPrice} {line.currency} per {line.purchaseUnit} · actual cost {formatMoney(line.cost)}
+                </div>
+              {:else}
+                <div class="text-xs text-gray-500">No price</div>
+              {/if}
               {#if line.notes}<div class="text-xs text-gray-600">{line.notes}</div>{/if}
               {#each commitmentsByLine.get(line.id) ?? [] as commitment (commitment.id)}
                 <div class="text-xs">
@@ -159,6 +167,10 @@
         {/each}
       </tbody>
     </table>
+    <p class="mb-3 text-sm">
+      <span class="text-gray-600">Actual purchase cost (goods only, excludes shipping and tax):</span>
+      <MoneyTotals costs={data.costs} unknownLabel="no price" />
+    </p>
   {/if}
 
   <details class="max-w-xl rounded border p-3" open={data.lines.length === 0}>

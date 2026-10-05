@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MoneyTotals from '#lib/components/MoneyTotals.svelte';
   import { DELIVERY_LABELS } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
@@ -28,6 +29,10 @@
   <p class="mb-4 text-gray-600">No orders yet.</p>
 {/if}
 
+{#if data.orders.length > 0}
+  <p class="mb-2 text-sm text-gray-600">Actual costs are goods only; they exclude shipping and tax.</p>
+{/if}
+
 {#each groups as group (group.title)}
   {#if group.orders.length > 0}
     <section class="mb-6">
@@ -41,6 +46,7 @@
             <th>Expected</th>
             <th>Delivery</th>
             <th class="text-right">Outstanding lines</th>
+            <th class="text-right">Actual cost</th>
           </tr>
         </thead>
         <tbody>
@@ -52,6 +58,7 @@
               <td>{order.expectedOn ?? '—'}</td>
               <td>{DELIVERY_LABELS[order.deliveryState]}</td>
               <td class="text-right">{order.openLineCount} of {order.lineCount}</td>
+              <td class="text-right"><MoneyTotals costs={order.costs} unknownLabel="no price" /></td>
             </tr>
           {/each}
         </tbody>

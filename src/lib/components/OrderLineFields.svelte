@@ -66,7 +66,7 @@
     <input name="supplier_sku" value={line?.supplierSku ?? ''} class="input" />
   </label>
   <label class="block">
-    <span class="text-sm">Price per purchase unit (optional)</span>
+    <span class="text-sm">Price per purchase unit, excl. shipping and tax (optional)</span>
     <input name="unit_price" inputmode="decimal" value={line?.unitPrice ?? ''} class="input" />
   </label>
   <label class="block">

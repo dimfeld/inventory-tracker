@@ -1,3 +1,4 @@
+import { money, multiply, type Money } from "./money";
 import { formatQuantity, UnitError } from "./units";
 
 export const ORDER_STATUSES = ["draft", "placed", "shipped"] as const;
@@ -53,5 +54,26 @@ export function describePackConversion(line: {
   return (
     `${line.purchaseQuantity} ${line.purchaseUnit} × ${formatQuantity(line.packQuantity, line.baseUnit)}` +
     ` = ${formatQuantity(total, line.baseUnit)}`
+  );
+}
+
+/**
+ * Actual purchase cost of an order line: the price of one purchase unit × the ordered base
+ * quantity that was not cancelled ÷ the pack size. Damaged stock was still paid for. The price
+ * is the goods price only, so the cost excludes shipping and tax. Null when the line has no
+ * price.
+ */
+export function orderLineCost(line: {
+  unitPrice: string | null;
+  currency: string | null;
+  quantity: number;
+  cancelledQuantity: number;
+  packQuantity: number;
+}): Money | null {
+  if (line.unitPrice === null || line.currency === null) return null;
+  return multiply(
+    money(line.unitPrice, line.currency),
+    line.quantity - line.cancelledQuantity,
+    line.packQuantity
   );
 }
