@@ -24,7 +24,13 @@
 
   export interface BomFormOptions {
     categories: { id: number; path: string }[];
-    definitions: { key: string; label: string; valueType: string; canonicalUnit: string | null }[];
+    definitions: {
+      key: string;
+      label: string;
+      valueType: string;
+      canonicalUnit: string | null;
+      normalization: string | null;
+    }[];
     /** Attribute keys that apply to each category ID, including inherited ones. */
     applicable: Record<number, string[]>;
     /** Attribute keys a generic requirement in each category must specify. */
@@ -36,6 +42,7 @@
 
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { attributeUnitsHint, previewMeasurement } from '#lib/attributes.ts';
   import { COMPARISON_LABELS, CONSTRAINT_COMPARISONS } from '#lib/projects.ts';
   import { UNIT_CODES, UNITS } from '#lib/units.ts';
 
@@ -75,8 +82,9 @@
   }
 
   function placeholder(key: string) {
-    const unit = definitions.get(key)?.canonicalUnit;
-    return unit ? `e.g. in ${unit}` : 'Value';
+    const definition = definitions.get(key);
+    const units = definition ? attributeUnitsHint(definition) : null;
+    return units ? `Value in ${units}` : 'Value';
   }
 </script>
 
@@ -174,6 +182,11 @@
     <legend class="px-1 text-sm font-semibold">Constraints</legend>
     <!-- Fields are parallel lists, so every row submits every field. -->
     {#each rows as row, index (index)}
+      {@const rule = definitions.get(row.key)?.normalization ?? null}
+      {@const preview = [row.value, row.comparison === 'range' ? row.maxValue : null]
+        .map((value) => previewMeasurement(rule, value ?? ''))
+        .filter(Boolean)
+        .join(' to ')}
       <div class="mb-2 grid gap-2 sm:grid-cols-4">
         <select name="constraint_key" bind:value={row.key} class="input">
           <option value="">Attribute</option>
@@ -196,6 +209,7 @@
           bind:value={row.maxValue}
           class="input"
         />
+        {#if preview}<p class="text-sm text-gray-600 sm:col-span-4">{preview}</p>{/if}
       </div>
     {/each}
     <p class="mb-2 text-sm text-gray-600">

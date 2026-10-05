@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  attributeUnitsHint,
   expandAttributes,
   formatAttributeValue,
+  millimetresToInches,
   normalizeAttributeValue,
   parseThreadDesignation,
+  previewMeasurement,
   type NormalizationRule,
 } from "./attributes";
 
@@ -51,6 +54,14 @@ describe("attribute normalization", () => {
     expect(number("length", "M3x8")).toBe(8);
   });
 
+  it("reads equal lengths in mm and inches as the same canonical value", () => {
+    for (const raw of ["25.4 mm", "25.4", "1 in", '1"', "1in", "2.54 cm"]) {
+      expect(number("length", raw), raw).toBe(25.4);
+    }
+    expect(number("length", "1/8 in")).toBeNull();
+    expect(number("length", "0.125 in")).toBe(3.175);
+  });
+
   it("normalizes metric threads and splits combined designations", () => {
     for (const raw of ["M3", "m3", "M 3", "M3x0.5", "M3x8", "M3 x 8 mm", "M3x0.5x8"]) {
       expect(text("thread", raw), raw).toBe("M3");
@@ -80,7 +91,7 @@ describe("attribute normalization", () => {
     expect(format("capacitance", 100_000)).toBe("100 nF");
     expect(format("capacitance", 4_700_000)).toBe("4.7 µF");
     expect(format("power", 0.25)).toBe("250 mW");
-    expect(format("length", 2.54)).toBe("2.54 mm");
+    expect(format("length", 2.54)).toBe("2.54 mm · 0.1 in");
     expect(format("percent", 1)).toBe("1%");
     expect(formatAttributeValue("thread", { valueText: "M3", valueNumber: null })).toBe("M3");
   });
@@ -94,5 +105,32 @@ describe("attribute normalization", () => {
     const length = { key: "length", label: "Length", value: "10 mm" };
     expect(expandAttributes([thread, length])).toEqual([thread, length]);
     expect(expandAttributes([{ ...thread, value: "M3" }])).toHaveLength(1);
+  });
+});
+
+describe("length units", () => {
+  it("converts mm to inches exactly when possible, else to the precision of the stored value", () => {
+    expect(millimetresToInches(25.4)).toEqual({ inches: 1, exact: true });
+    expect(millimetresToInches(3.175)).toEqual({ inches: 0.125, exact: true });
+    expect(millimetresToInches(0.3)).toEqual({ inches: 0.012, exact: false });
+    expect(millimetresToInches(8)).toEqual({ inches: 0.31, exact: false });
+    expect(millimetresToInches(12.7)).toEqual({ inches: 0.5, exact: true });
+  });
+
+  it("shows both units for an entered length and nothing converted for unreadable text", () => {
+    expect(previewMeasurement("length", "25.4 mm")).toBe("25.4 mm · 1 in");
+    expect(previewMeasurement("length", "1 in")).toBe("25.4 mm · 1 in");
+    expect(previewMeasurement("length", '0.1"')).toBe("2.54 mm · 0.1 in");
+    expect(previewMeasurement("length", "8")).toBe("8 mm · ≈0.31 in");
+    expect(previewMeasurement("length", "long")).toBe("not recognized");
+    expect(previewMeasurement("length", " ")).toBeNull();
+    // Only rules that accept a choice of units get a preview.
+    expect(previewMeasurement("resistance", "4k7")).toBeNull();
+  });
+
+  it("names the accepted input units", () => {
+    expect(attributeUnitsHint({ normalization: "length", canonicalUnit: "mm" })).toBe("mm or in");
+    expect(attributeUnitsHint({ normalization: "voltage", canonicalUnit: "V" })).toBe("V");
+    expect(attributeUnitsHint({ normalization: "code", canonicalUnit: null })).toBeNull();
   });
 });

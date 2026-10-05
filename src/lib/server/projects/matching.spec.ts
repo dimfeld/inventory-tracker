@@ -60,7 +60,7 @@ describe("candidate matching", () => {
       [ids.m3x8PanScrew, "match"],
       [ids.unknownScrew, "unresolved"],
     ]);
-    expect(resolved[0].evidence).toContain("Length is 8 mm");
+    expect(resolved[0].evidence).toContain("Length is 8 mm · ≈0.31 in");
   });
 
   it("does not accept an exact identifier with a conflicting manufacturer, package, pitch, or voltage", () => {
@@ -91,7 +91,9 @@ describe("candidate matching", () => {
     const pitchLine = addLine({ partNumber: "B4B-XH-A", constraints: [equal("pitch", "2.54 mm")] });
     const wrongPitch = byPart(candidates(pitchLine).candidates, header)!;
     expect(wrongPitch.status).toBe("conflict");
-    expect(wrongPitch.conflicts).toEqual(["Pitch is 2.5 mm; requirement needs 2.54 mm"]);
+    expect(wrongPitch.conflicts).toEqual([
+      "Pitch is 2.5 mm · ≈0.098 in; requirement needs 2.54 mm · 0.1 in",
+    ]);
     expect(() =>
       projects.approveChoice(projectId, pitchLine, {
         partId: header,
@@ -113,6 +115,30 @@ describe("candidate matching", () => {
     ]);
   });
 
+  it("matches the same requirement whether a length is written in mm or inches", () => {
+    const { catalog, categories, addLine, candidates } = setup();
+    const inchScrew = catalog.createPart(
+      partInput({
+        name: "M3 screw, 1 inch",
+        categoryId: categories.screws,
+        attributes: [
+          { key: "thread", label: "Thread", value: "M3" },
+          { key: "head", label: "Head", value: "pan" },
+          { key: "length", label: "Length", value: '1"' },
+        ],
+      })
+    );
+    for (const length of ["25.4 mm", "1 in"]) {
+      const lineId = addLine({
+        categoryId: categories.screws,
+        constraints: [equal("thread", "M3"), equal("head", "pan"), equal("length", length)],
+      });
+      const match = byPart(candidates(lineId).candidates, inchScrew);
+      expect(match, length).toMatchObject({ status: "match" });
+      expect(match!.evidence).toContain("Length is 25.4 mm · 1 in");
+    }
+  });
+
   it("finds parts by alias or supplier SKU and checks them like any candidate", () => {
     const { projects, projectId, ids, addLine, candidates } = setup();
     const skuLine = addLine({ description: "McMaster 91290A117", partNumber: "91290A117" });
@@ -130,7 +156,7 @@ describe("candidate matching", () => {
       {
         source: "alias",
         status: "conflict",
-        conflicts: ["Length is 12 mm; requirement needs 10 mm"],
+        conflicts: ["Length is 12 mm · ≈0.47 in; requirement needs 10 mm · ≈0.39 in"],
       },
     ]);
   });

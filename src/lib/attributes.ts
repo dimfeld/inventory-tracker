@@ -104,11 +104,13 @@ function parseScaled(
   return toNumber({ digits: value.digits, exponent: value.exponent - canonicalExponent });
 }
 
+const MM_PER_INCH: Decimal = { digits: "254", exponent: -1 };
+
 const LENGTH_UNITS: [string, Decimal][] = [
   ["mm", { digits: "1", exponent: 0 }],
   ["cm", { digits: "1", exponent: 1 }],
-  ["in", { digits: "254", exponent: -1 }],
-  ['"', { digits: "254", exponent: -1 }],
+  ["in", MM_PER_INCH],
+  ['"', MM_PER_INCH],
   ["m", { digits: "1", exponent: 3 }],
 ];
 
@@ -258,9 +260,67 @@ const DISPLAY_UNITS: Partial<Record<NormalizationRule, string>> = {
   capacitance: "F",
   voltage: "V",
   power: "W",
-  length: "mm",
   percent: "%",
 };
+
+/** Units the owner can choose between when entering a value, for rules that read more than one. */
+const INPUT_UNITS: Partial<Record<NormalizationRule, string[]>> = {
+  length: ["mm", "in"],
+};
+
+/** The units a rule reads, such as mm and in for lengths, or null when there is no choice. */
+function attributeInputUnits(rule: string | null): string[] | null {
+  return (isNormalizationRule(rule) && INPUT_UNITS[rule]) || null;
+}
+
+/** The units to show next to a value input, such as `mm or in`, or the canonical unit. */
+export function attributeUnitsHint(definition: {
+  normalization: string | null;
+  canonicalUnit: string | null;
+}): string | null {
+  return attributeInputUnits(definition.normalization)?.join(" or ") ?? definition.canonicalUnit;
+}
+
+/** The exact decimal digits of a number, as JavaScript writes it. */
+function decimalOf(value: number): Decimal {
+  const [mantissa, exponent = "0"] = String(value).split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  return { digits: whole + fraction, exponent: Number(exponent) - fraction.length };
+}
+
+/**
+ * Inches for a length in mm, and whether the conversion is exact.
+ *
+ * A mm value with d decimal places has a resolution of 10^-d mm. A step of 10^-(d+2) in is
+ * 0.254 × 10^-d mm, finer than that resolution, but a step of 10^-(d+1) in (2.54 × 10^-d mm) is
+ * coarser. So the result is rounded to d + 2 decimal places: the fewest that keep the precision
+ * of the stored value. A value entered in inches converts back exactly.
+ */
+export function millimetresToInches(mm: number): { inches: number; exact: boolean } {
+  const { digits, exponent } = decimalOf(mm);
+  const places = Math.max(0, -exponent) + 2;
+  // inches × 10^places = digits × 10^exponent × 10^places / 25.4
+  const shift = exponent + places - MM_PER_INCH.exponent;
+  const numerator = BigInt(digits) * 10n ** BigInt(shift);
+  const divisor = BigInt(MM_PER_INCH.digits);
+  const remainder = numerator % divisor;
+  // Round half up. Lengths are never negative.
+  const quotient = numerator / divisor + (2n * remainder >= divisor ? 1n : 0n);
+  return {
+    inches: toNumber({ digits: quotient.toString(), exponent: -places }),
+    exact: remainder === 0n,
+  };
+}
+
+/**
+ * A measurement in each unit the owner can enter it in, such as `25.4 mm · 1 in` or
+ * `8 mm · ≈0.31 in`. Null for rules without a choice of input units.
+ */
+export function measurementEquivalents(rule: string | null, valueNumber: number): string | null {
+  if (rule !== "length") return null;
+  const { inches, exact } = millimetresToInches(valueNumber);
+  return `${valueNumber} mm · ${exact ? "" : "≈"}${inches} in`;
+}
 
 /** Multiply by 10^shift using the decimal representation, not the binary value, to avoid artifacts. */
 function shiftDecimal(value: number, shift: number): number {
@@ -268,7 +328,7 @@ function shiftDecimal(value: number, shift: number): number {
   return Number(`${mantissa}e${Number(exponent) + shift}`);
 }
 
-/** Readable form of a typed value, such as `4.7 kΩ`, `100 nF`, or `8 mm`. */
+/** Readable form of a typed value, such as `4.7 kΩ`, `100 nF`, or `25.4 mm · 1 in`. */
 export function formatAttributeValue(
   rule: string | null,
   value: { valueText: string | null; valueNumber: number | null }
@@ -286,8 +346,20 @@ export function formatAttributeValue(
       scales.findLast(([, e]) => magnitude >= Number(`1e${e}`)) ?? scales[0];
     return `${shiftDecimal(number, -exponent)} ${prefix}${unit}`;
   }
+  if (rule === "length") return measurementEquivalents(rule, number);
   if (rule === "percent") return `${number}%`;
   return unit ? `${number} ${unit}` : String(number);
+}
+
+/**
+ * What an entered measurement will be stored as, such as `25.4 mm · 1 in` for `1"`, for rules
+ * that accept more than one unit. Entry forms show this before the value is saved. Text the rule
+ * cannot read gives `not recognized`, never a converted value.
+ */
+export function previewMeasurement(rule: string | null, raw: string): string | null {
+  if (!raw.trim() || !isNormalizationRule(rule) || !attributeInputUnits(rule)) return null;
+  const value = normalizeAttributeValue(rule, raw);
+  return (value && formatAttributeValue(rule, value)) ?? "not recognized";
 }
 
 /** The text that identifies a typed value in a filter (URL parameter or form value). */

@@ -222,11 +222,14 @@ export function createCatalogService(db: Database) {
     /** Attribute definitions and the keys that apply to each category (including inherited). */
     attributeOptions() {
       return {
-        definitions: listAttributeDefinitions(db).map(({ key, label, canonicalUnit }) => ({
-          key,
-          label,
-          canonicalUnit,
-        })),
+        definitions: listAttributeDefinitions(db).map(
+          ({ key, label, canonicalUnit, normalization }) => ({
+            key,
+            label,
+            canonicalUnit,
+            normalization,
+          })
+        ),
         applicable: applicableAttributeKeys(listCategories(db), listAttributeApplicability(db)),
       };
     },

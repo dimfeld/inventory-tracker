@@ -790,11 +790,14 @@ export function createImportService(db: Database) {
     reviewOptions() {
       return {
         categories: categoryOptions(listCategories(db)),
-        definitions: loadCatalogContext(db).definitions.map(({ key, label, canonicalUnit }) => ({
-          key,
-          label,
-          canonicalUnit,
-        })),
+        definitions: loadCatalogContext(db).definitions.map(
+          ({ key, label, canonicalUnit, normalization }) => ({
+            key,
+            label,
+            canonicalUnit,
+            normalization,
+          })
+        ),
         parts: searchParts(db, {
           text: null,
           categoryId: null,

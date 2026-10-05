@@ -20,7 +20,7 @@
   }
 
   export interface AttributeOptions {
-    definitions: { key: string; label: string; canonicalUnit: string | null }[];
+    definitions: { key: string; label: string; canonicalUnit: string | null; normalization: string | null }[];
     /** Attribute keys that apply to each category ID, including inherited ones. */
     applicable: Record<number, string[]>;
   }
@@ -28,6 +28,7 @@
 
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { attributeUnitsHint, previewMeasurement } from '#lib/attributes.ts';
   import type { CategoryOption } from '#lib/categories.ts';
   import { normalizeAttributeKey } from '#lib/schemas/part.ts';
   import { UNIT_CODES, UNITS } from '#lib/units.ts';
@@ -86,8 +87,9 @@
   showApplicableRows(initial?.categoryId ?? null);
 
   function valuePlaceholder(label: string) {
-    const unit = definitions.get(normalizeAttributeKey(label))?.canonicalUnit;
-    return unit ? `Value, e.g. in ${unit}` : 'Value, e.g. M3';
+    const definition = definitions.get(normalizeAttributeKey(label));
+    const units = definition ? attributeUnitsHint(definition) : null;
+    return units ? `Value in ${units}` : 'Value, e.g. M3';
   }
 
   // svelte-ignore state_referenced_locally
@@ -154,6 +156,8 @@
   <fieldset class="rounded border p-3">
     <legend class="px-1 text-sm font-semibold">Attributes</legend>
     {#each attributes as attribute, index (index)}
+      {@const rule = definitions.get(normalizeAttributeKey(attribute.label))?.normalization ?? null}
+      {@const preview = previewMeasurement(rule, attribute.rawValue)}
       <div class="mb-2 flex gap-2">
         <input name="attribute_key" placeholder="Name, e.g. Thread" bind:value={attribute.label} class="input" />
         <input
@@ -162,6 +166,9 @@
           bind:value={attribute.rawValue}
           class="input"
         />
+        {#if preview}
+          <span class="self-center text-sm whitespace-nowrap text-gray-600">{preview}</span>
+        {/if}
       </div>
     {/each}
     <p class="mb-2 text-sm text-gray-600">

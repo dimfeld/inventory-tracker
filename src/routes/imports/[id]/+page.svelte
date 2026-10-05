@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { attributeUnitsHint } from '#lib/attributes.ts';
   import { COLUMN_ROLE_LABELS, COLUMN_ROLES, KIND_LABELS, PROVENANCE_LABELS } from '#lib/imports.ts';
   import ImportLineForm from './ImportLineForm.svelte';
   import ParseForm from './ParseForm.svelte';
@@ -243,7 +244,8 @@
   </div>
   <datalist id="attribute-keys">
     {#each data.options.definitions as definition (definition.key)}
-      <option value={definition.key}>{definition.label}{definition.canonicalUnit ? ` (${definition.canonicalUnit})` : ''}</option>
+      {@const units = attributeUnitsHint(definition)}
+      <option value={definition.key}>{definition.label}{units ? ` (${units})` : ''}</option>
     {/each}
   </datalist>
   {#if !committed}

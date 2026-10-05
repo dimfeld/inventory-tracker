@@ -426,11 +426,12 @@ export function createProjectService(db: Database, options: ProjectServiceOption
       return {
         categories: categoryOptions(categories),
         definitions: listAttributeDefinitions(db).map(
-          ({ key, label, valueType, canonicalUnit }) => ({
+          ({ key, label, valueType, canonicalUnit, normalization }) => ({
             key,
             label,
             valueType,
             canonicalUnit,
+            normalization,
           })
         ),
         applicable: applicableAttributeKeys(categories, listAttributeApplicability(db)),
