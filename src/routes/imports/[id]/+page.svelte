@@ -2,11 +2,14 @@
   import { enhance } from '$app/forms';
   import { COLUMN_ROLE_LABELS, COLUMN_ROLES, KIND_LABELS, PROVENANCE_LABELS } from '#lib/imports.ts';
   import ImportLineForm from './ImportLineForm.svelte';
+  import ParseForm from './ParseForm.svelte';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
 
   const record = $derived(data.record);
+  // A parse request from this page is in flight; distinct from a stored 'parsing' state.
+  let parsing = $state(false);
   const committed = $derived(record.commitState === 'committed');
   const csv = $derived(data.source.csv);
   const blocking = $derived([
@@ -134,20 +137,9 @@
     </details>
     {@render message('source')}
 
-    <form method="POST" action="?/parse" use:enhance class="flex flex-wrap items-center gap-3">
-      <button class="btn" disabled={!data.parsingAvailable}>
-        {record.parseState === 'draft' ? 'Parse with GPT-6 Luna' : 'Parse again'}
-      </button>
-      <span class="text-sm text-gray-600">
-        {#if !data.parsingAvailable}
-          OPENAI_API_KEY is not set. Enter lines by hand{csv ? ' or map the CSV columns' : ''}.
-        {:else}
-          Sends the source to OpenAI and replaces the lines below.
-        {/if}
-      </span>
-    </form>
+    <ParseForm parsed={record.parseState !== 'draft'} parsingAvailable={data.parsingAvailable} hasCsv={!!csv} bind:pending={parsing} />
   {/if}
-  <p class="mt-1 text-sm">{STATE_TEXT[record.parseState]}</p>
+  {#if !parsing}<p class="mt-1 text-sm">{STATE_TEXT[record.parseState]}</p>{/if}
   {#if record.parseError}<p class="text-sm text-red-700">{record.parseError}</p>{/if}
   {@render message('parse')}
   {#if record.parsedAt}
