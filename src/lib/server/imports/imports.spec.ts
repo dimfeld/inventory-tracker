@@ -95,6 +95,7 @@ DigiKey,DK-12345,Precision resistor,5,each,1,pcs,Yageo,RC0805,123-ND,0.42,USD,Pr
       currency: "USD",
       notes: "Product page",
     });
+    expect(mapped.lines[0]).toMatchObject({ resolution: "new", partId: null });
   });
 
   it("splits extension CSV by order and skips references that already exist", () => {
@@ -171,28 +172,34 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
     );
 
     const [screw, pack, conflicting] = lines;
-    // Missing screw dimensions: unresolved, no part chosen, and the bag size is not assumed.
+    // Every line starts as a new catalog part, even when a candidate matches.
+    expect(lines.map((l) => [l.resolution, l.partId])).toEqual([
+      ["new", null],
+      ["new", null],
+      ["new", null],
+    ]);
+
+    // Missing screw dimensions: unresolved, and the bag size is not assumed.
     expect(screw.proposal!.unresolved).toEqual(
       expect.arrayContaining([...orderList.expected.lines[0].unresolved])
     );
-    expect(screw.resolution).toBeNull();
     expect(screw.problems).toContain(
       "Enter the pack size: how many base units one purchase unit holds"
     );
 
-    // Alternate resistor notation and pack quantity: matched to the 4.7k part.
+    // Alternate resistor notation and pack quantity: the 4.7k part is suggested, not chosen.
     expect(pack.fields).toMatchObject(orderList.expected.lines[1].fields);
     expect(pack.proposal!.provenance).toMatchObject(orderList.expected.lines[1].provenance);
-    expect(pack).toMatchObject({ resolution: "existing", partId: ctx.parts.resistor4k7 });
+    expect(pack.candidates.filter((c) => c.status === "match").map((c) => c.part.id)).toEqual([
+      ctx.parts.resistor4k7,
+    ]);
     expect(pack.conversion).toBe(orderList.expected.lines[1].conversion);
-    expect(pack.problems).toEqual([]);
 
     // Conflicting exact identifier: flagged, and not chosen automatically.
     expect(conflicting.fields).toMatchObject(orderList.expected.lines[2].fields);
     expect(conflicting.identifierConflicts).toEqual([
       expect.stringContaining(orderList.expected.lines[2].identifierConflict),
     ]);
-    expect(conflicting.resolution).toBeNull();
 
     expect(inventoryCounts(ctx.db)).toEqual(before);
   });
@@ -214,7 +221,9 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
         ],
       },
     });
-    // The owner trusts the description over the conflicting part number.
+    // The owner uses the suggested part, and trusts the description over the conflicting part
+    // number.
+    edit(ctx, id, 1, { resolution: "existing", partId: ctx.parts.resistor4k7 });
     edit(ctx, id, 2, { resolution: "existing", partId: ctx.parts.resistor4k7 });
     expect(review(ctx, id).lines.flatMap((l) => l.problems)).toEqual([]);
 
@@ -266,7 +275,7 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
     const ctx = await parsedOrder();
     const before = inventoryCounts(ctx.db);
     expect(() => ctx.imports.commit(ctx.id, opId())).toThrow(
-      "Line 1: Choose an existing part or create a new part"
+      "Line 1: Enter the pack size: how many base units one purchase unit holds"
     );
     expect(inventoryCounts(ctx.db)).toEqual(before);
     expect(getImport(ctx.db, ctx.id)!.commitState).toBe("open");
@@ -275,7 +284,8 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
   it("rolls back every record when a line fails during the commit", async () => {
     const ctx = await parsedOrder();
     const { id } = ctx;
-    edit(ctx, id, 0, { resolution: "new", fields: { packQuantity: "100" } });
+    edit(ctx, id, 0, { fields: { packQuantity: "100" } });
+    edit(ctx, id, 1, { resolution: "existing", partId: ctx.parts.resistor4k7 });
     edit(ctx, id, 2, { resolution: "existing", partId: ctx.parts.resistor4k7 });
     ctx.catalog.archivePart(ctx.parts.resistor4k7);
     const before = inventoryCounts(ctx.db);
@@ -290,6 +300,7 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
       partId: first.parts.screw,
       fields: { packQuantity: "100" },
     });
+    edit(first, first.id, 1, { resolution: "existing", partId: first.parts.resistor4k7 });
     edit(first, first.id, 2, { resolution: "existing", partId: first.parts.resistor4k7 });
     first.imports.commit(first.id, opId());
 
@@ -308,11 +319,26 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
       partId: first.parts.screw,
       fields: { packQuantity: "100" },
     });
+    edit(first, second, 1, { resolution: "existing", partId: first.parts.resistor4k7 });
     edit(first, second, 2, { resolution: "existing", partId: first.parts.resistor4k7 });
     const result = first.imports.commit(second, opId());
     expect(result.repeated).toBe(false);
     expect(first.orders.listOrders()).toHaveLength(2);
   });
+});
+
+describe("manual lines", () => {
+  it.each(["order", "project"] as const)(
+    "start a %s line as a new catalog part without creating one",
+    (kind) => {
+      const ctx = createTestImports();
+      const before = inventoryCounts(ctx.db);
+      const id = ctx.imports.createImport({ kind, sourceType: "text", sourceText: "M3 screws" });
+      ctx.imports.addLine(id);
+      expect(review(ctx, id).lines.map((l) => [l.resolution, l.partId])).toEqual([["new", null]]);
+      expect(inventoryCounts(ctx.db)).toEqual(before);
+    }
+  );
 });
 
 describe("failed parsing", () => {
@@ -417,21 +443,27 @@ describe("BOM import", () => {
     const groupName = (groupId: number | null) =>
       view.groups.find((g) => g.id === groupId)?.name ?? null;
     expect(view.lines.map((l) => groupName(l.groupId))).toEqual(bomSections.expected.lineGroups);
-    // Matching chose the catalog screw and resistor; the others stay requirements.
+    // Every line starts as a new catalog part; the catalog screw and resistor are suggested.
+    expect(view.lines.map((l) => l.resolution)).toEqual(["new", "new", "new", "new"]);
+    expect(view.lines[0].candidates.map((c) => c.part.id)).toContain(ctx.parts.screw);
+    expect(view.lines[3].candidates.map((c) => c.part.id)).toContain(ctx.parts.resistor4k7);
+
+    // Corrections: use the suggested parts, keep the others as requirements, rename a group,
+    // move the screw into a new group, and ungroup the regulator.
+    const [power, controller] = view.groups;
+    ctx.imports.renameGroup(id, controller.id, "Main board");
+    const enclosure = ctx.imports.addGroup(id, "Enclosure");
+    edit(ctx, id, 0, { groupId: enclosure, resolution: "existing", partId: ctx.parts.screw });
+    edit(ctx, id, 1, { resolution: "requirement" });
+    edit(ctx, id, 2, { groupId: null, resolution: "requirement" });
+    edit(ctx, id, 3, { resolution: "existing", partId: ctx.parts.resistor4k7 });
+    view = review(ctx, id);
     expect(view.lines.map((l) => [l.resolution, l.partId])).toEqual([
       ["existing", ctx.parts.screw],
       ["requirement", null],
       ["requirement", null],
       ["existing", ctx.parts.resistor4k7],
     ]);
-
-    // Corrections: rename a group, move the screw into a new group, ungroup the regulator.
-    const [power, controller] = view.groups;
-    ctx.imports.renameGroup(id, controller.id, "Main board");
-    const enclosure = ctx.imports.addGroup(id, "Enclosure");
-    edit(ctx, id, 0, { groupId: enclosure });
-    edit(ctx, id, 2, { groupId: null });
-    view = review(ctx, id);
     expect(view.lines.flatMap((l) => l.problems)).toEqual([]);
     expect(inventoryCounts(ctx.db)).toEqual(before);
 
@@ -514,9 +546,14 @@ describe("BOM import", () => {
         });
       }
       const screwNotes = ctx.catalog.getPartDetails(ctx.parts.screw)!.part.notes;
-      edit(ctx, id, 0, { fields: { notes: "Use the long ones" } });
-      edit(ctx, id, 1, { resolution: "new", fields: { notes: "Place near U1" } });
-      edit(ctx, id, 2, { fields: { notes: "Any LDO" } });
+      edit(ctx, id, 0, {
+        resolution: "existing",
+        partId: ctx.parts.screw,
+        fields: { notes: "Use the long ones" },
+      });
+      edit(ctx, id, 1, { fields: { notes: "Place near U1" } });
+      edit(ctx, id, 2, { resolution: "requirement", fields: { notes: "Any LDO" } });
+      edit(ctx, id, 3, { resolution: "existing", partId: ctx.parts.resistor4k7 });
       expect(review(ctx, id).lines.flatMap((l) => l.problems)).toEqual([]);
 
       const { projectId } = ctx.imports.commit(id, opId());
@@ -578,6 +615,7 @@ Power,1,AMS1117-3.3,SOT-223,U1`,
       ["4k7 0805", "1", "pcs", null],
       ["AMS1117-3.3 SOT-223", "1", "pcs", view.groups[0].id],
     ]);
+    expect(view.lines.map((l) => l.resolution)).toEqual(["new", "new", "new"]);
     expect(view.lines[0].proposal!.provenance).toMatchObject({
       quantity: "source",
       unit: "inferred",

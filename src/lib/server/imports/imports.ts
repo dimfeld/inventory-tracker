@@ -58,7 +58,6 @@ import {
   matchRequirement,
   requirementOf,
   SOURCE_LABELS,
-  type Candidate,
   type RequirementConstraint,
 } from "#lib/server/projects/matching.ts";
 import { createProjectService } from "#lib/server/projects/projects.ts";
@@ -262,13 +261,7 @@ export function createImportService(db: Database) {
     return { requirement, candidates };
   }
 
-  /** The single confirmed match, if there is exactly one. */
-  function soleMatch(candidates: Candidate[]): number | null {
-    const matches = candidates.filter((c) => c.status === "match");
-    return matches.length === 1 ? matches[0].part.id : null;
-  }
-
-  /** Replace the lines and groups with new proposals, and preselect sole matches. */
+  /** Replace the lines and groups with new proposals. Each line starts as a new catalog part. */
   function saveProposals(
     record: ImportRecord,
     normalized: NormalizedImport,
@@ -283,7 +276,6 @@ export function createImportService(db: Database) {
       }
       for (const line of normalized.lines) {
         const { proposal } = line;
-        const partId = soleMatch(lineCandidates(proposal.fields).candidates);
         insertLine(db, record.id, {
           groupId:
             proposal.groupName === null
@@ -293,9 +285,8 @@ export function createImportService(db: Database) {
           sourceExcerpt: line.sourceExcerpt,
           proposal,
           fields: proposal.fields,
-          resolution:
-            partId !== null ? "existing" : record.kind === "project" ? "requirement" : null,
-          partId,
+          resolution: "new",
+          partId: null,
         });
       }
       const extracted = Object.fromEntries(
@@ -667,7 +658,7 @@ export function createImportService(db: Database) {
         const line = edit ?? {
           fields: emptyLineFields(),
           groupId: null,
-          resolution: record.kind === "project" ? ("requirement" as const) : null,
+          resolution: "new" as const,
           partId: null,
         };
         checkEdit(record, line);
