@@ -53,9 +53,17 @@ async function readDetails(url) {
   }
 }
 
-async function collect(supplier, urls) {
+async function collect(supplier, urls, cancelled) {
   running = true;
-  const state = { running: true, supplier, done: 0, total: urls.length, rows: [], errors: [] };
+  const state = {
+    running: true,
+    supplier,
+    cancelled,
+    done: 0,
+    total: urls.length,
+    rows: [],
+    errors: [],
+  };
   await saveState(state);
   try {
     for (const url of urls) {
@@ -81,6 +89,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ started: false, error: "A run is already in progress." });
     return;
   }
-  collect(message.supplier, message.urls);
+  collect(message.supplier, message.urls, message.cancelled ?? 0);
   sendResponse({ started: true });
 });

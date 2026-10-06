@@ -78,11 +78,12 @@ async function showRun(state, { copy }) {
         .join("; ")}`
     : "";
   const stopped = stale ? " The run stopped before the end." : "";
+  const skipped = state.cancelled ? ` ${state.cancelled} cancelled skipped.` : "";
   if (state.rows.length === 0) {
     setStatus(`No order lines were read.${failed}${stopped}`, "error");
     return;
   }
-  const message = showRows(state.rows, state.supplier, `${failed}${stopped}`);
+  const message = showRows(state.rows, state.supplier, `${skipped}${failed}${stopped}`);
   if (copy) await navigator.clipboard.writeText(csvText.value);
   setStatus(
     `${message} ${copy ? "Copied to the clipboard. " : "Select Copy again to copy it. "}Review the preview before you import it.`,
@@ -105,16 +106,22 @@ async function extract() {
 
     if (!result?.ok) throw new Error(result?.error || "This page is not supported.");
     if (result.detailUrls) {
+      const skipped = result.cancelled
+        ? ` ${result.cancelled} cancelled ${result.cancelled === 1 ? "order is" : "orders are"} skipped.`
+        : "";
       if (result.detailUrls.length === 0) {
-        throw new Error("No orders were found. Make sure the order list is visible.");
+        throw new Error(
+          `No orders to read were found.${skipped} Make sure the order list is visible.`
+        );
       }
       const response = await chrome.runtime.sendMessage({
         type: "collect",
         supplier: result.supplier,
         urls: result.detailUrls,
+        cancelled: result.cancelled,
       });
       if (!response?.started) throw new Error(response?.error || "The run did not start.");
-      setStatus(`Reading order 1 of ${result.detailUrls.length}…`);
+      setStatus(`Reading order 1 of ${result.detailUrls.length}…${skipped}`);
       return;
     }
     if (result.rows.length === 0) {

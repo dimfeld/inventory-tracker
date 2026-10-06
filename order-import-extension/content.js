@@ -171,9 +171,21 @@
 
   // The order list shows only images for an order with several items, so the extension reads
   // each order's details page. On the list, return the details links for the background worker.
+  // The status of a cancelled order is "Canceled".
+  const CANCELLED = /cancel/i;
+
   function aliExpressDetailUrls() {
-    const links = [...document.querySelectorAll('.order-item a[href*="order/detail.html"]')];
-    return [...new Set(links.map((link) => link.href))];
+    const cards = [...document.querySelectorAll(".order-item")];
+    const open = cards.filter(
+      (card) => !CANCELLED.test(firstText(card, [".order-item-header-status-text"]))
+    );
+    const links = open.flatMap((card) => [
+      ...card.querySelectorAll('a[href*="order/detail.html"]'),
+    ]);
+    return {
+      urls: [...new Set(links.map((link) => link.href))],
+      cancelled: cards.length - open.length,
+    };
   }
 
   function extractAliExpressDetails() {
@@ -343,9 +355,13 @@
   try {
     const host = location.hostname;
     if (/aliexpress\./i.test(host)) {
-      if (document.querySelector(".order-detail-item"))
+      if (document.querySelector(".order-detail-item")) {
+        if (CANCELLED.test(firstText(document, [".order-status .order-block-title"])))
+          return { ok: false, error: "This order is cancelled, so it has nothing to import." };
         return { ok: true, supplier: "AliExpress", rows: extractAliExpressDetails() };
-      return { ok: true, supplier: "AliExpress", rows: [], detailUrls: aliExpressDetailUrls() };
+      }
+      const { urls, cancelled } = aliExpressDetailUrls();
+      return { ok: true, supplier: "AliExpress", rows: [], detailUrls: urls, cancelled };
     }
     if (/(^|\.)amazon\./i.test(host))
       return { ok: true, supplier: "Amazon", rows: extractAmazon() };
