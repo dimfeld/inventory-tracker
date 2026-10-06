@@ -3,6 +3,8 @@
   import { enhance } from '$app/forms';
   import { formatAttributeValue } from '#lib/attributes.ts';
   import { formatQuantity } from '#lib/units.ts';
+  import SearchSelect from '#lib/components/SearchSelect.svelte';
+  import { mergePart } from './merge.remote';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
@@ -54,6 +56,9 @@
   // svelte-ignore state_referenced_locally
   let stockLocationId = $state(data.balances[0]?.locationId ?? data.locations[0]?.id);
   let amountInput = $state<HTMLInputElement>();
+
+  let mergeDestinationId = $state('');
+  const mergeDestination = $derived(data.mergeTargets.find((p) => String(p.id) === mergeDestinationId));
 
   /** Open the stock form for one kind of change at one location, ready for the amount. */
   async function startStockChange(action: StockFormAction, locationId: number) {
@@ -273,4 +278,48 @@
       </tbody>
     </table>
   {/if}
+</section>
+
+<section class="mt-6">
+  <h2 class="section-title">Merge into another part</h2>
+  <div class="card max-w-xl space-y-3 text-sm">
+    <p class="text-gray-600">
+      Use this when this part is a duplicate. Its stock history, orders, project rows, and
+      reservations move to the part you choose, and then this part is deleted. The attributes,
+      aliases, tags, and supplier references of this part are not kept. Only parts with the same
+      base unit ({part.baseUnit}) can be chosen.
+    </p>
+    <form
+      {...mergePart.enhance(async ({ submit }) => {
+        if (confirm(`Move the records of this part to "${mergeDestination?.name}" and delete this part?`)) {
+          await submit();
+        }
+      })}
+      class="space-y-3"
+    >
+      <input {...mergePart.fields.sourceId.as('hidden', part.id)} />
+      <input {...mergePart.fields.destinationId.as('hidden', mergeDestinationId)} />
+      <p>
+        {#if mergeDestination}
+          Keep: {mergeDestination.name}{mergeDestination.partNumber ? ` (${mergeDestination.partNumber})` : ''}
+        {:else}
+          <span class="text-gray-600">No part chosen</span>
+        {/if}
+      </p>
+      <SearchSelect
+        label="Search for the part to keep"
+        placeholder="Search {data.mergeTargets.length} part(s)"
+        items={data.mergeTargets}
+        key={(target) => target.id}
+        text={(target) => `${target.name} ${target.partNumber ?? ''}`}
+        onselect={(target) => (mergeDestinationId = String(target.id))}
+      >
+        {#snippet option(target)}{target.name}{target.partNumber ? ` (${target.partNumber})` : ''}{/snippet}
+      </SearchSelect>
+      {#if mergePart.fields.allIssues()?.length}
+        <p class="msg-error">{mergePart.fields.allIssues()?.map((issue) => issue.message).join('. ')}</p>
+      {/if}
+      <button class="btn-danger" disabled={!mergeDestination || mergePart.pending > 0}>Merge and delete this part</button>
+    </form>
+  </div>
 </section>

@@ -323,3 +323,45 @@ export function findSupplierPart(
       .get(partId, supplier, sku)?.id ?? null
   );
 }
+
+/**
+ * Move every reference to part `sourceId` onto part `destinationId`, then delete the source.
+ * The source's own details (attributes, aliases, tags, supplier SKUs) are deleted, not moved.
+ * Both parts must use the same base unit, because the moved quantities are in that unit.
+ * Run it in a transaction.
+ */
+export function mergePartInto(db: Database, sourceId: number, destinationId: number): void {
+  const ids = { source: sourceId, destination: destinationId };
+  const run = (sql: string) => db.query<unknown, typeof ids>(sql).run(ids);
+  // Details that belong only to the source part.
+  db.run("DELETE FROM part_attributes WHERE part_id = ?", [sourceId]);
+  db.run("DELETE FROM part_aliases WHERE part_id = ?", [sourceId]);
+  db.run("DELETE FROM part_tags WHERE part_id = ?", [sourceId]);
+  db.run("DELETE FROM supplier_parts WHERE part_id = ?", [sourceId]);
+
+  // A BOM line that already approves the destination keeps that choice.
+  run(`DELETE FROM bom_part_choices WHERE part_id = $source AND bom_line_id IN
+       (SELECT bom_line_id FROM bom_part_choices WHERE part_id = $destination)`);
+  run("UPDATE bom_part_choices SET part_id = $destination WHERE part_id = $source");
+
+  // A reservation of both parts for the same line and location becomes one reservation.
+  run(`UPDATE reservations AS d
+     SET quantity = d.quantity + s.quantity, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     FROM reservations AS s
+     WHERE d.part_id = $destination AND s.part_id = $source
+       AND s.bom_line_id = d.bom_line_id AND s.location_id = d.location_id`);
+  run(`DELETE FROM reservations WHERE part_id = $source AND EXISTS
+       (SELECT 1 FROM reservations d WHERE d.part_id = $destination
+          AND d.bom_line_id = reservations.bom_line_id AND d.location_id = reservations.location_id)`);
+  run(`UPDATE reservations SET part_id = $destination,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE part_id = $source`);
+
+  run("UPDATE stock_movements SET part_id = $destination WHERE part_id = $source");
+  run("UPDATE order_lines SET part_id = $destination WHERE part_id = $source");
+  run("UPDATE bom_lines SET part_id = $destination WHERE part_id = $source");
+  run("UPDATE import_lines SET part_id = $destination WHERE part_id = $source");
+  run("UPDATE import_lines SET created_part_id = $destination WHERE created_part_id = $source");
+
+  db.run("DELETE FROM parts WHERE id = ?", [sourceId]);
+}

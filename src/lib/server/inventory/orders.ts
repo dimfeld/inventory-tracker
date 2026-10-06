@@ -4,7 +4,6 @@ import {
   deleteOrderLineCommitments,
   listOrderLineCommitments,
 } from "#lib/server/db/commitments.ts";
-import { searchParts } from "#lib/server/db/part-search.ts";
 import {
   addToLineTotals,
   deleteOrderLine,
@@ -123,16 +122,6 @@ export function createOrderService(db: Database) {
         delivery: orderDeliveryStatus(deliveries.get(order.id) ?? []),
       }));
     },
-
-    /** Parts that can be added to an order: every part that is not archived. */
-    partOptions: () =>
-      searchParts(db, {
-        text: null,
-        categoryId: null,
-        attributes: [],
-        tags: [],
-        includeArchived: false,
-      }).map(({ id, name, baseUnit, partNumber }) => ({ id, name, baseUnit, partNumber })),
 
     getOrderDetails(id: number) {
       const order = getOrder(db, id);

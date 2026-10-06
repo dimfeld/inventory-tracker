@@ -16,7 +16,7 @@ export const load: PageServerLoad = ({ params }) => {
   if (!details) error(404, "Order not found");
   return {
     ...details,
-    parts: inventory().orders.partOptions(),
+    parts: inventory().catalog.partOptions(),
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission returns the receipt it already created.

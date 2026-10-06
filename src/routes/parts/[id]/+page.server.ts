@@ -18,6 +18,9 @@ export const load: PageServerLoad = ({ params }) => {
   return {
     ...details,
     locations: locations.listStorageLocations(),
+    mergeTargets: catalog
+      .partOptions()
+      .filter((p) => p.id !== details.part.id && p.baseUnit === baseUnit),
     units: isUnit(baseUnit) ? compatibleUnits(baseUnit) : [],
     today: today(),
     // One ID per page load; a repeated submission of the same form is rejected.

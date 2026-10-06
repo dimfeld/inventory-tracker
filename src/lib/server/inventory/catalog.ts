@@ -17,6 +17,7 @@ import {
   listPartAttributes,
   listPartTags,
   listSupplierParts,
+  mergePartInto,
   replacePartAliases,
   replacePartAttributes,
   replacePartTags,
@@ -312,6 +313,37 @@ export function createCatalogService(db: Database) {
         saveDetails(id, input);
       })();
     },
+
+    /**
+     * Merge a duplicate part into another part. Stock history, orders, BOM rows, reservations,
+     * and import lines of the source move to the destination. The destination keeps its own
+     * details; the attributes, aliases, tags, and supplier SKUs of the source are deleted.
+     */
+    mergePart(sourceId: number, destinationId: number): void {
+      db.transaction(() => {
+        if (sourceId === destinationId) {
+          throw new InventoryError("A part cannot be merged into itself");
+        }
+        const source = requirePart(sourceId);
+        const destination = requirePart(destinationId);
+        if (source.baseUnit !== destination.baseUnit) {
+          throw new InventoryError(
+            `Both parts must use the same base unit, because quantities use it (${source.baseUnit} and ${destination.baseUnit})`
+          );
+        }
+        mergePartInto(db, sourceId, destinationId);
+      })();
+    },
+
+    /** Parts that can be chosen in a form: every part that is not archived. */
+    partOptions: () =>
+      searchParts(db, {
+        text: null,
+        categoryId: null,
+        attributes: [],
+        tags: [],
+        includeArchived: false,
+      }).map(({ id, name, baseUnit, partNumber }) => ({ id, name, baseUnit, partNumber })),
 
     /** Archive a part. It stays in movement history and can be restored. */
     archivePart(id: number): void {
