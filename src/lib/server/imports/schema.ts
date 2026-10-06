@@ -114,13 +114,6 @@ export const lineCleanupSchema = z.object({
   baseUnit: marked(
     "Unit the item is counted in for a new part: pcs, mm, m, g, mL, ...; null keeps the line's value"
   ),
-  match: z
-    .object({
-      partId: z.number().int().describe("ID of a part from the catalog list"),
-      reason: z.string().describe("Why this catalog part is the same item"),
-    })
-    .nullable()
-    .describe("The catalog part that is the same item, or null when no part is the same item"),
   unresolved: z
     .array(z.string())
     .describe("Fields that are missing, unclear, or contradictory, such as 'length'"),

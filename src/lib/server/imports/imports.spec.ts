@@ -523,7 +523,7 @@ ${line}`,
     return { ...ctx, id: ids[0], lineId: review(ctx, ids[0]).lines[0].id };
   }
 
-  const cleanup = (partId: number | null) => ({
+  const cleanup = () => ({
     description: "4.7k resistor 0805",
     category: { value: "Electronics / Passives / Resistors", provenance: "inferred" },
     attributes: [
@@ -534,22 +534,26 @@ ${line}`,
     purchaseUnit: null,
     packQuantity: null,
     baseUnit: null,
-    match: partId === null ? null : { partId, reason: "Same resistance, tolerance, and package" },
     unresolved: [],
   });
 
   it("cleans up the name, category, and attributes and matches a catalog part", async () => {
     const ctx = csvOrder();
     const before = inventoryCounts(ctx.db);
-    const extractor = fixtureExtractor(cleanup(ctx.parts.resistor4k7));
+    const extractor = fixtureExtractor(cleanup());
+    const classifier: Classifier = async () => ({
+      category: "Electronics / Passives / Resistors",
+      partId: ctx.parts.resistor4k7,
+    });
 
-    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor)).toEqual({
+    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor, classifier)).toEqual({
       ok: true,
       matchedPart: { id: ctx.parts.resistor4k7, name: "4.7k resistor 0805" },
     });
     expect(extractor.calls[0].kind).toBe("line_cleanup");
     expect(extractor.calls[0].prompt).toContain("RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM");
-    expect(extractor.calls[0].prompt).toContain('"name":"M3 × 8 pan head screw"');
+    // The catalog goes only to the classifier.
+    expect(extractor.calls[0].prompt).not.toContain("M3 × 8 pan head screw");
 
     const line = review(ctx, ctx.id).lines[0];
     expect(line.fields).toMatchObject({
@@ -584,7 +588,7 @@ ${line}`,
     );
 
     const extractor = fixtureExtractor({
-      ...cleanup(null),
+      ...cleanup(),
       purchaseUnit: { value: "pack", provenance: "inferred" },
       packQuantity: { value: 100, provenance: "source" },
       baseUnit: { value: "pieces", provenance: "inferred" },
@@ -612,26 +616,12 @@ ${line}`,
 
   it("keeps the purchase fields when the model gives null", async () => {
     const ctx = csvOrder();
-    await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor(cleanup(null)));
+    await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor(cleanup()));
     expect(review(ctx, ctx.id).lines[0].fields).toMatchObject({
       purchaseUnit: "each",
       packQuantity: "1",
       unit: "pcs",
     });
-  });
-
-  it("keeps the line a new part when the model names a part that is not in the catalog", async () => {
-    const ctx = csvOrder();
-    const outcome = await ctx.imports.cleanupLine(
-      ctx.id,
-      ctx.lineId,
-      fixtureExtractor(cleanup(9999))
-    );
-    expect(outcome).toEqual({ ok: true, matchedPart: null });
-    const line = review(ctx, ctx.id).lines[0];
-    expect([line.resolution, line.partId]).toEqual(["new", null]);
-    expect(line.fields.description).toBe("4.7k resistor 0805");
-    expect(line.proposal?.unresolved).toContain("Matched part 9999 is not in the catalog");
   });
 
   it("changes nothing when the call fails or the answer is invalid", async () => {
@@ -651,7 +641,7 @@ ${line}`,
     expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);
   });
 
-  it("uses Jev's category and match in place of the extractor's", async () => {
+  it("uses Jev's category in place of the extractor's and Jev's match", async () => {
     const ctx = csvOrder();
     const classifier = vi.fn<Classifier>(async () => ({
       category: "Hardware / Fasteners / Screws",
@@ -660,7 +650,7 @@ ${line}`,
     const outcome = await ctx.imports.cleanupLine(
       ctx.id,
       ctx.lineId,
-      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
+      fixtureExtractor(cleanup()),
       classifier
     );
     expect(outcome).toEqual({
@@ -678,12 +668,12 @@ ${line}`,
     expect([line.resolution, line.partId]).toEqual(["existing", ctx.parts.screw]);
   });
 
-  it("clears the extractor's category and match when Jev chooses none", async () => {
+  it("clears the extractor's category and matches no part when Jev chooses none", async () => {
     const ctx = csvOrder();
     const outcome = await ctx.imports.cleanupLine(
       ctx.id,
       ctx.lineId,
-      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
+      fixtureExtractor(cleanup()),
       async () => ({ category: null, partId: null })
     );
     expect(outcome).toEqual({ ok: true, matchedPart: null });
@@ -691,15 +681,12 @@ ${line}`,
     expect([line.fields.categoryId, line.resolution, line.partId]).toEqual([null, "new", null]);
   });
 
-  it("keeps the extractor's answers for the questions Jev did not ask", async () => {
+  it("keeps the extractor's category and matches no part without a classifier", async () => {
     const ctx = csvOrder();
-    const outcome = await ctx.imports.cleanupLine(
-      ctx.id,
-      ctx.lineId,
-      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
-      async () => ({ category: "Hardware / Fasteners / Screws" })
-    );
-    expect(outcome).toMatchObject({ ok: true, matchedPart: { id: ctx.parts.resistor4k7 } });
+    const outcome = await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor(cleanup()));
+    expect(outcome).toEqual({ ok: true, matchedPart: null });
+    const line = review(ctx, ctx.id).lines[0];
+    expect([line.fields.categoryId, line.resolution]).toEqual([ctx.categories.resistors, "new"]);
   });
 
   it("runs the extractor and Jev at the same time", async () => {
@@ -711,13 +698,13 @@ ${line}`,
       started.push("extractor");
       if (started.length === 2) release();
       await gate;
-      return { output: cleanup(null), modelId: MODEL_ID, usage: emptyUsage };
+      return { output: cleanup(), modelId: MODEL_ID, usage: emptyUsage };
     };
     const classifier: Classifier = async () => {
       started.push("classifier");
       if (started.length === 2) release();
       await gate;
-      return {};
+      return { category: null, partId: null };
     };
     expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor, classifier)).toMatchObject({
       ok: true,
@@ -729,14 +716,9 @@ ${line}`,
     const ctx = csvOrder();
     const original = review(ctx, ctx.id).lines[0];
     expect(
-      await ctx.imports.cleanupLine(
-        ctx.id,
-        ctx.lineId,
-        fixtureExtractor(cleanup(null)),
-        async () => {
-          throw new Error("rate limited");
-        }
-      )
+      await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor(cleanup()), async () => {
+        throw new Error("rate limited");
+      })
     ).toEqual({ ok: false, error: "Classification failed: rate limited" });
     const line = review(ctx, ctx.id).lines[0];
     expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);

@@ -202,7 +202,7 @@ Save the draft before calling the model. A failed parse leaves the source availa
 
 Save model ID, prompt version, schema version, and available usage data with the import. Test extraction with stored representative source/expected-result fixtures. Run ordinary tests with model responses replaced by fixtures; use explicit live checks to assess model behavior.
 
-AI clean up of an order line uses TypeSafe AI's Jev model (`@typesafe-ai/sdk`, `jev-latest`) for the category and the matching catalog part when `TYPESAFE_API_KEY` is set. It asks both choice questions in one request, at the same time as the GPT-6 Luna cleanup call, and its answers replace GPT-6 Luna's category and match. A question with more options than TypeSafe accepts (255) is not asked, and the GPT-6 Luna answer stays. Without the key, GPT-6 Luna answers all cleanup fields.
+AI clean up of an order line uses TypeSafe AI's Jev model (`@typesafe-ai/sdk`, `jev-latest`) for the category and the matching catalog part when `TYPESAFE_API_KEY` is set. GPT-6 Luna does not get the catalog parts and does not match parts. Jev runs at the same time as the GPT-6 Luna cleanup call, and its category replaces GPT-6 Luna's. A choice question accepts at most 255 options, so Jev gets one question for each chunk of 254 options plus a "none" option, and all questions go in one request. When more than one chunk chooses an option, a further request chooses between those options only. Without the key, GPT-6 Luna gives the category and no part is matched.
 
 Initial inputs are pasted text and CSV. PDF, image, spreadsheet, and URL imports are later options. They require separate extraction and source-review handling; do not make them prerequisites for the requested BOM parsing.
 

@@ -28,12 +28,15 @@ export const editLine = form(
         return { text: `Split into ${outcome.lineCount} lines. Check each line.` };
       }
 
-      const outcome = await imports().cleanupLine(importId, lineId, extractor(), classifier());
+      const jev = classifier();
+      const outcome = await imports().cleanupLine(importId, lineId, extractor(), jev);
       if (!outcome.ok) invalid(outcome.error);
       return {
         text: outcome.matchedPart
           ? `Cleaned up and matched to ${outcome.matchedPart.name}. Check the line.`
-          : "Cleaned up. No catalog part is the same item. Check the line.",
+          : jev
+            ? "Cleaned up. No catalog part is the same item. Check the line."
+            : "Cleaned up. Set TYPESAFE_API_KEY to match catalog parts. Check the line.",
       };
     } catch (error) {
       if (!isUserError(error)) throw error;

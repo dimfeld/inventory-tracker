@@ -87,13 +87,7 @@ import {
   type CleanupLine,
   type PromptPart,
 } from "./prompt";
-import {
-  lineCleanupSchema,
-  lineSplitSchema,
-  OUTPUT_SCHEMAS,
-  SCHEMA_VERSION,
-  type LineCleanupOutput,
-} from "./schema";
+import { lineCleanupSchema, lineSplitSchema, OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
 import { csvTable, defaultCsvSettings, formatCsv, sourceRows } from "./source";
 
 export type ImportService = ReturnType<typeof createImportService>;
@@ -228,12 +222,12 @@ async function extractLine(
   }
 }
 
-/** Classify a line, or give no classification when no classifier is configured. */
+/** Classify a line with the classifier, when one is configured. */
 async function classifyLine(
   classifier: Classifier | null,
   request: ClassificationRequest
-): Promise<{ ok: true; classification: LineClassification } | { ok: false; error: string }> {
-  if (!classifier) return { ok: true, classification: {} };
+): Promise<{ ok: true; classification: LineClassification | null } | { ok: false; error: string }> {
+  if (!classifier) return { ok: true, classification: null };
   try {
     return { ok: true, classification: await classifier(request) };
   } catch (error) {
@@ -242,27 +236,6 @@ async function classifyLine(
       error: `Classification failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-}
-
-/** The cleanup answer with the classifier's category and match in place of the extractor's. */
-function withClassification(
-  output: LineCleanupOutput,
-  classification: LineClassification
-): LineCleanupOutput {
-  const result = { ...output };
-  if (classification.category !== undefined) {
-    result.category =
-      classification.category === null
-        ? null
-        : { value: classification.category, provenance: "inferred" };
-  }
-  if (classification.partId !== undefined) {
-    result.match =
-      classification.partId === null
-        ? null
-        : { partId: classification.partId, reason: "Chosen by Jev" };
-  }
-  return result;
 }
 
 export function createImportService(db: Database) {
@@ -763,11 +736,11 @@ export function createImportService(db: Database) {
 
     /**
      * Ask the extractor to clean up one order line: a cleaner description, the category, the
-     * attributes, the purchase unit, pack size, and base unit when it can tell them, and the
-     * existing catalog part that is the same item. A classifier, when given, chooses the
-     * category and the matched part instead of the extractor. The line and its proposal
-     * change; a matched part makes the line commit as that part. A failed call or an invalid
-     * answer changes nothing.
+     * attributes, and the purchase unit, pack size, and base unit when it can tell them. The
+     * classifier, when configured, chooses the category instead of the extractor and the
+     * existing catalog part that is the same item. The line and its proposal change; a matched
+     * part makes the line commit as that part. A failed call or an invalid answer changes
+     * nothing.
      */
     async cleanupLine(
       id: number,
@@ -780,7 +753,6 @@ export function createImportService(db: Database) {
       const line = requireLine(id, lineId);
       const context = loadCatalogContext(db);
       const f = line.fields;
-      const parts = promptParts(context);
 
       const cleanupInput: CleanupLine = {
         supplier: record.header.supplier,
@@ -797,19 +769,15 @@ export function createImportService(db: Database) {
         baseUnit: f.unit,
       };
 
-      // Jev, when configured, chooses the category and the matched part instead of the
-      // extractor. Both calls run at the same time.
+      // The catalog parts are only for the classifier. Both calls run at the same time.
+      const parts = classifier ? promptParts(context) : [];
       const [call, classified] = await Promise.all([
         extractLine(
           extractor,
           {
             kind: "line_cleanup",
             system: cleanupSystemPrompt(context),
-            prompt: cleanupPrompt(
-              cleanupInput,
-              parts,
-              lineCandidates(f).candidates.map((c) => c.part.id)
-            ),
+            prompt: cleanupPrompt(cleanupInput),
           },
           "Cleanup"
         ),
@@ -821,18 +789,21 @@ export function createImportService(db: Database) {
       if (!parsed.success) {
         return { ok: false, error: "The model's answer did not match the cleanup schema" };
       }
-      const output = withClassification(parsed.data, classified.classification);
-      // Only a part from the list can be chosen; another ID is not a match.
-      const matched = parts.find((p) => p.id === output.match?.partId) ?? null;
+      const { classification } = classified;
+      const output = parsed.data;
+      if (classification) {
+        output.category =
+          classification.category === null
+            ? null
+            : { value: classification.category, provenance: "inferred" };
+      }
+      const matched = parts.find((p) => p.id === classification?.partId) ?? null;
 
       inTransaction(() => {
         requireOpen(id);
         // Apply to the line as it is now, in case it was saved during the call.
         const fresh = requireLine(id, lineId);
         const proposal = cleanupLine(context, fresh, output);
-        if (output.match && !matched) {
-          proposal.unresolved.push(`Matched part ${output.match.partId} is not in the catalog`);
-        }
         updateLineProposal(db, lineId, proposal);
         updateLine(db, lineId, {
           groupId: fresh.groupId,

@@ -35,16 +35,24 @@ const part = (id: number, name: string): PromptPart => ({
   attributes: [],
 });
 
-/** A fetch that records the request body and answers each question with the given label. */
-function fakeFetch(choices: Record<string, string>) {
+/**
+ * A fetch that records each request body. `answer` gives the label chosen for each question
+ * from the question's options.
+ */
+function fakeFetch(answer: (question: string, labels: string[]) => string) {
   const bodies: { model: string; state: unknown; questions: Record<string, any> }[] = [];
   const fetch = async (_input: unknown, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
     bodies.push(body);
     const answers = Object.fromEntries(
-      Object.keys(body.questions).map((key) => [
+      Object.entries(body.questions).map(([key, question]: [string, any]) => [
         key,
-        { type: "choice", choice: choices[key], confidence: 1, probabilities: {} },
+        {
+          type: "choice",
+          choice: answer(key, Object.keys(question.criteria)),
+          confidence: 1,
+          probabilities: {},
+        },
       ])
     );
     return new Response(
@@ -59,13 +67,19 @@ function fakeFetch(choices: Record<string, string>) {
   return Object.assign(fetch, { bodies });
 }
 
+/** Answer each question with the first of the given labels that it offers, or none. */
+const prefer =
+  (...labels: string[]) =>
+  (_question: string, options: string[]) =>
+    labels.find((label) => options.includes(label)) ?? "none";
+
 describe("Jev classifier", () => {
   it("is not available without an API key", () => {
     expect(createJevClassifier(null)).toBeNull();
   });
 
   it("asks for the category and the part in one request and maps the labels back", async () => {
-    const fetch = fakeFetch({ category: "category_7", part: "part_3" });
+    const fetch = fakeFetch(prefer("category_7", "part_3"));
     const classify = createJevClassifier("key", { fetch })!;
     const result = await classify({
       line,
@@ -77,12 +91,16 @@ describe("Jev classifier", () => {
     expect(fetch.bodies).toHaveLength(1);
     const { model, questions } = fetch.bodies[0];
     expect(model).toBe("jev-latest");
-    expect(Object.keys(questions.category.criteria)).toEqual(["category_5", "category_7", "none"]);
-    expect(Object.keys(questions.part.criteria)).toEqual(["part_2", "part_3", "none"]);
+    expect(Object.keys(questions.category_0.criteria)).toEqual([
+      "category_5",
+      "category_7",
+      "none",
+    ]);
+    expect(Object.keys(questions.part_0.criteria)).toEqual(["part_2", "part_3", "none"]);
   });
 
   it("gives null when Jev chooses none", async () => {
-    const fetch = fakeFetch({ category: "none", part: "none" });
+    const fetch = fakeFetch(prefer());
     const classify = createJevClassifier("key", { fetch })!;
     expect(
       await classify({
@@ -93,13 +111,34 @@ describe("Jev classifier", () => {
     ).toEqual({ category: null, partId: null });
   });
 
-  it("does not ask a question with more options than TypeSafe accepts", async () => {
-    const fetch = fakeFetch({ category: "category_5" });
+  it("splits a long option list into chunks and chooses between the chunks' choices", async () => {
+    // Three chunks of parts. The first and third chunks each choose a part, and the final
+    // round chooses part 600.
+    const fetch = fakeFetch(prefer("category_5", "part_600", "part_10"));
     const classify = createJevClassifier("key", { fetch })!;
-    const parts = Array.from({ length: MAX_CHOICE_OPTIONS }, (_, i) => part(i + 1, `Part ${i}`));
+    const parts = Array.from({ length: 600 }, (_, i) => part(i + 1, `Part ${i + 1}`));
     const result = await classify({ line, categories: [category(5, "Electronics")], parts });
 
-    expect(result).toEqual({ category: "Electronics" });
-    expect(Object.keys(fetch.bodies[0].questions)).toEqual(["category"]);
+    expect(result).toEqual({ category: "Electronics", partId: 600 });
+    expect(fetch.bodies).toHaveLength(2);
+    const [first, final] = fetch.bodies.map((body) => body.questions);
+    expect(Object.keys(first)).toEqual(["category_0", "part_0", "part_1", "part_2"]);
+    for (const question of Object.values(first)) {
+      expect(Object.keys(question.criteria).length).toBeLessThanOrEqual(MAX_CHOICE_OPTIONS);
+      expect(question.criteria).toHaveProperty("none");
+    }
+    expect(Object.keys(final)).toEqual(["part_0"]);
+    expect(Object.keys(final.part_0.criteria)).toEqual(["part_10", "part_600", "none"]);
+  });
+
+  it("needs no final round when only one chunk chooses an option", async () => {
+    const fetch = fakeFetch(prefer("part_300"));
+    const classify = createJevClassifier("key", { fetch })!;
+    const parts = Array.from({ length: 600 }, (_, i) => part(i + 1, `Part ${i + 1}`));
+    expect(await classify({ line, categories: [], parts })).toEqual({
+      category: null,
+      partId: 300,
+    });
+    expect(fetch.bodies).toHaveLength(1);
   });
 });
