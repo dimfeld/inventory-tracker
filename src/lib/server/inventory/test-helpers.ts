@@ -6,6 +6,7 @@ import { createLocationService } from "./locations";
 import { createOrderService } from "./orders";
 import { createReceiptService } from "./receipts";
 import { createStockService, type StockServiceOptions } from "./stock";
+import { createTaxonomyService } from "./taxonomy";
 
 export function createTestInventory(
   db: Database = openDatabase(":memory:"),
@@ -14,6 +15,7 @@ export function createTestInventory(
   return {
     db,
     catalog: createCatalogService(db),
+    taxonomy: createTaxonomyService(db),
     locations: createLocationService(db),
     stock: createStockService(db, options),
     orders: createOrderService(db),
