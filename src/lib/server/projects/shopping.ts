@@ -12,7 +12,7 @@ import {
   type ProjectComponent,
 } from "#lib/server/db/projects.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
-import { lineCoverage, loadAllocations } from "./coverage";
+import { absoluteQuantity, lineCoverage, loadAllocations } from "./coverage";
 import type { ComponentFilter } from "./projects";
 
 /** Which open projects and rows the list covers. */
@@ -22,7 +22,7 @@ export interface ShoppingSelection {
   component: ComponentFilter;
 }
 
-/** One requirement's need that no stock or committed order covers, in `unit`. */
+/** One requirement's remaining need (required minus used), in `unit`. */
 export interface ShoppingRequirement {
   projectId: number;
   projectName: string;
@@ -34,16 +34,20 @@ export interface ShoppingRequirement {
 }
 
 /**
- * Supply that could cover a resolved part but is not assigned to any requirement, in the
- * part's base unit. It is a suggestion only: reserve stock or commit incoming supply to count
- * it as coverage.
+ * How an item's need is covered, in the item's `unit`. The parts add up to the need:
+ * need = reserved + freeStock + committed + freeOrdered + toBuy.
  */
-export interface SupplySuggestion {
-  baseUnit: string;
-  /** Storage stock minus every project's reservations. */
-  available: number;
-  /** Outstanding order supply minus every project's commitments. */
-  uncommittedIncoming: number;
+export interface ShoppingCoverage {
+  /** Stock picked or reserved for the requirements. */
+  reserved: number;
+  /** Unreserved storage stock of the part or its approved parts, as much as the item can use. */
+  freeStock: number;
+  /** Order supply committed to the requirements. */
+  committed: number;
+  /** Uncommitted order supply of the part or its approved parts, as much as the item can use. */
+  freeOrdered: number;
+  /** The need that no stock or order covers: what to buy. */
+  toBuy: number;
 }
 
 export interface ShoppingItem {
@@ -51,13 +55,17 @@ export interface ShoppingItem {
   /** The resolved part, or null for a requirement without one, which is never combined. */
   partId: number | null;
   label: string;
-  /** Total need of the requirements, in `unit`. */
+  /** Total remaining need of the requirements, in `unit`. */
   quantity: number;
   unit: string;
   /** For an item without a resolved part: the approved choices, if there are several. */
   choices: string[];
   requirements: ShoppingRequirement[];
-  suggestion: SupplySuggestion | null;
+  /**
+   * For an item without a resolved part, free stock and orders are not known, so they stay 0
+   * and `toBuy` is the need that the requirements' own stock and commitments do not cover.
+   */
+  coverage: ShoppingCoverage;
 }
 
 export interface ShoppingProject {
@@ -98,14 +106,15 @@ export function createShoppingService(db: Database) {
       }));
   }
 
-  function suggestions(partIds: number[]): Map<number, Omit<SupplySuggestion, "baseUnit">> {
-    const result = new Map(partIds.map((id) => [id, { available: 0, uncommittedIncoming: 0 }]));
+  /** Storage stock and order supply of each part that no project holds, in the base unit. */
+  function freeSupply(partIds: number[]): Map<number, { stock: number; ordered: number }> {
+    const result = new Map(partIds.map((id) => [id, { stock: 0, ordered: 0 }]));
     for (const stock of listStorageStock(db, partIds)) {
-      result.get(stock.partId)!.available += Math.max(stock.balance - stock.reserved, 0);
+      result.get(stock.partId)!.stock += Math.max(stock.balance - stock.reserved, 0);
     }
     const committed = committedByOrderLine(db);
     for (const incoming of listIncomingLines(db, partIds)) {
-      result.get(incoming.partId)!.uncommittedIncoming += Math.max(
+      result.get(incoming.partId)!.ordered += Math.max(
         incoming.outstanding - (committed.get(incoming.orderLineId) ?? 0),
         0
       );
@@ -118,9 +127,11 @@ export function createShoppingService(db: Database) {
     openProjects,
 
     /**
-     * Needed-not-ordered quantities of the selected projects' rows. Rows that resolve to the
-     * same part and unit are combined with a per-requirement breakdown; other rows stay
-     * separate items.
+     * What the selected projects' rows need to buy beyond all stock and orders, committed or
+     * not. Rows that resolve to the same part and unit are combined with a per-requirement
+     * breakdown; other rows stay separate items. Free stock and orders of a row's resolved part
+     * and its approved parts count once across items, stock first. Only items with something
+     * to buy are listed.
      */
     getShoppingList(selection: ShoppingSelection): ShoppingItem[] {
       const projects = openProjects().filter(
@@ -129,6 +140,9 @@ export function createShoppingService(db: Database) {
       const filter = selection.component;
       const items = new Map<string, ShoppingItem>();
       const partUnits = new Map<number, string>();
+      // Parts whose free supply may cover each resolved item: the resolved part first, then
+      // the other parts approved for its rows.
+      const supplyParts = new Map<string, number[]>();
 
       for (const project of projects) {
         const componentNames = new Map(project.components.map((c) => [c.id, c.name]));
@@ -145,7 +159,11 @@ export function createShoppingService(db: Database) {
 
         for (const line of lines) {
           const coverage = lineCoverage(line, allocations.get(line.id) ?? []);
-          if (coverage.neededNotOrdered === 0) continue;
+          const remaining = Math.max(coverage.required - coverage.used, 0);
+          if (remaining === 0) continue;
+          const reserved = Math.min(coverage.picked + coverage.reserved, remaining);
+          const committed = Math.min(coverage.ordered, remaining - reserved);
+
           const lineChoices = choices.get(line.id) ?? [];
           const part = resolvedPart(line, lineChoices);
           const key = part ? `part:${part.id}:${coverage.unit}` : `line:${line.id}`;
@@ -159,12 +177,23 @@ export function createShoppingService(db: Database) {
               unit: coverage.unit,
               choices: part ? [] : lineChoices.map((c) => c.partName),
               requirements: [],
-              suggestion: null,
+              coverage: { reserved: 0, freeStock: 0, committed: 0, freeOrdered: 0, toBuy: 0 },
             };
             items.set(key, item);
           }
-          if (part) partUnits.set(part.id, part.baseUnit);
-          item.quantity += coverage.neededNotOrdered;
+          if (part) {
+            partUnits.set(part.id, part.baseUnit);
+            const ids = supplyParts.get(key) ?? [part.id];
+            for (const choice of lineChoices) {
+              partUnits.set(choice.partId, choice.baseUnit);
+              if (!ids.includes(choice.partId)) ids.push(choice.partId);
+            }
+            supplyParts.set(key, ids);
+          }
+          item.quantity += remaining;
+          item.coverage.reserved += reserved;
+          item.coverage.committed += committed;
+          item.coverage.toBuy += coverage.neededNotOrdered;
           item.requirements.push({
             projectId: project.id,
             projectName: project.name,
@@ -172,21 +201,47 @@ export function createShoppingService(db: Database) {
               line.componentId === null ? null : (componentNames.get(line.componentId) ?? null),
             lineId: line.id,
             lineDescription: line.description,
-            quantity: coverage.neededNotOrdered,
+            quantity: remaining,
             unit: coverage.unit,
           });
         }
       }
 
-      const supply = suggestions([...partUnits.keys()]);
-      return [...items.values()].map((item) =>
-        item.partId === null
-          ? item
-          : {
-              ...item,
-              suggestion: { baseUnit: partUnits.get(item.partId)!, ...supply.get(item.partId)! },
-            }
+      // Free supply of each part not yet counted against an item, in the smallest unit.
+      const free = new Map(
+        [...freeSupply([...partUnits.keys()])].map(([partId, supply]) => {
+          const baseUnit = partUnits.get(partId)!;
+          return [
+            partId,
+            {
+              stock: absoluteQuantity(supply.stock, baseUnit),
+              ordered: absoluteQuantity(supply.ordered, baseUnit),
+            },
+          ];
+        })
       );
+      for (const item of items.values()) {
+        if (item.partId === null) continue;
+        const size = absoluteQuantity(1, item.unit);
+        let open = item.coverage.toBuy * size;
+        let fromStock = 0;
+        let fromOrders = 0;
+        // Stock of every allowed part first, then orders.
+        for (const kind of ["stock", "ordered"] as const) {
+          for (const partId of supplyParts.get(item.key)!) {
+            const supply = free.get(partId)!;
+            const taken = Math.min(supply[kind], open);
+            supply[kind] -= taken;
+            open -= taken;
+            if (kind === "stock") fromStock += taken;
+            else fromOrders += taken;
+          }
+        }
+        item.coverage.freeStock = fromStock / size;
+        item.coverage.freeOrdered = fromOrders / size;
+        item.coverage.toBuy = open / size;
+      }
+      return [...items.values()].filter((item) => item.coverage.toBuy > 0);
     },
   };
 }

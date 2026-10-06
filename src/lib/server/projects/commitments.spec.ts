@@ -506,7 +506,7 @@ describe("shopping list", () => {
     const component = ctx.projects.createComponent(projectC, { name: "Controller", notes: null });
     const lineC = ctx.projects.createBomLine(
       projectC,
-      lineInput({ partId: ctx.screw, amount: "4", componentId: component })
+      lineInput({ partId: ctx.screw, amount: "14", componentId: component })
     );
     const generic = ctx.projects.createBomLine(
       projectC,
@@ -519,18 +519,20 @@ describe("shopping list", () => {
 
     const items = ctx.shopping.getShoppingList({ projectIds: null, component: null });
     const screws = items.find((item) => item.partId === ctx.screw)!;
+    // A and B reserve all 20 screws; the uncommitted order covers 10 of the 17 still open.
     expect(screws).toMatchObject({
-      quantity: 7,
+      quantity: 37,
       unit: "pcs",
-      suggestion: { baseUnit: "pcs", available: 0, uncommittedIncoming: 10 },
+      coverage: { reserved: 20, freeStock: 0, committed: 0, freeOrdered: 10, toBuy: 7 },
     });
     expect(screws.requirements).toEqual([
-      expect.objectContaining({ projectName: "B", lineId: ctx.lineB, quantity: 3 }),
+      expect.objectContaining({ projectName: "A", lineId: ctx.lineA, quantity: 8 }),
+      expect.objectContaining({ projectName: "B", lineId: ctx.lineB, quantity: 15 }),
       expect.objectContaining({
         projectName: "C",
         componentName: "Controller",
         lineId: lineC,
-        quantity: 4,
+        quantity: 14,
       }),
     ]);
     // Unresolved requirements stay separate items, even with the same description.
@@ -557,10 +559,81 @@ describe("shopping list", () => {
     expect(only([ctx.projectA])).toMatchObject([
       {
         partId: ctx.screw,
-        quantity: 22,
-        suggestion: { available: 0, uncommittedIncoming: 7 },
+        quantity: 30,
+        coverage: { reserved: 8, freeStock: 0, committed: 0, freeOrdered: 7, toBuy: 15 },
       },
     ]);
     expect(coverage(ctx, ctx.projectB, ctx.lineB)).toMatchObject({ reserved: 12, ordered: 3 });
+  });
+
+  it("buys only what free stock and uncommitted orders do not cover", () => {
+    const ctx = setup();
+    const nut = ctx.catalog.createPart(partInput({ name: "M3 nut" }));
+    ctx.stock.recordOpeningStock({
+      operationId: opId(),
+      partId: nut,
+      locationId: ctx.drawer,
+      amount: "20",
+      unit: "pcs",
+      occurredOn: DAY,
+    });
+    const { id: orderId } = ctx.orders.createOrder(
+      {
+        supplier: "Bolt Depot",
+        reference: "BD-2",
+        expectedOn: null,
+        trackingUrl: null,
+        notes: null,
+      },
+      [
+        {
+          partId: nut,
+          supplierSku: null,
+          purchaseQuantity: 150,
+          purchaseUnit: "pcs",
+          packQuantity: 1,
+          unitPrice: null,
+          currency: null,
+          notes: null,
+        },
+      ]
+    );
+    ctx.orders.markPlaced(orderId, DAY);
+    ctx.projects.createBomLine(ctx.projectA, lineInput({ partId: nut, amount: "120" }));
+    ctx.projects.createBomLine(ctx.projectB, lineInput({ partId: nut, amount: "80" }));
+
+    const items = ctx.shopping.getShoppingList({ projectIds: null, component: null });
+    expect(items.find((item) => item.partId === nut)).toMatchObject({
+      quantity: 200,
+      coverage: { reserved: 0, freeStock: 20, committed: 0, freeOrdered: 150, toBuy: 30 },
+    });
+  });
+
+  it("counts free supply of a row's approved substitute", () => {
+    const ctx = setup();
+    const placeholder = ctx.catalog.createPart(partInput({ name: "Weatherstrip" }));
+    const tape = ctx.catalog.createPart(partInput({ name: "Weatherstrip tape" }));
+    ctx.stock.recordOpeningStock({
+      operationId: opId(),
+      partId: tape,
+      locationId: ctx.drawer,
+      amount: "6",
+      unit: "pcs",
+      occurredOn: DAY,
+    });
+    const line = ctx.projects.createBomLine(
+      ctx.projectA,
+      lineInput({ partId: placeholder, amount: "10" })
+    );
+    ctx.projects.approveChoice(ctx.projectA, line, {
+      partId: tape,
+      substitute: true,
+      note: "Same item",
+    });
+
+    const items = ctx.shopping.getShoppingList({ projectIds: null, component: null });
+    expect(items.find((item) => item.partId === placeholder)).toMatchObject({
+      coverage: { freeStock: 6, freeOrdered: 0, toBuy: 4 },
+    });
   });
 });

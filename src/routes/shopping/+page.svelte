@@ -17,6 +17,20 @@
   <title>Shopping list</title>
 </svelte:head>
 
+{#snippet coveredBy(item: (typeof data.items)[number])}
+  {@const fmt = (quantity: number) => formatQuantity(quantity, item.unit)}
+  {@const parts = [
+    ['Reserved', item.coverage.reserved],
+    ['In stock, not reserved', item.coverage.freeStock],
+    ['Ordered, committed', item.coverage.committed],
+    ['Ordered, not committed', item.coverage.freeOrdered],
+  ].filter(([, quantity]) => Number(quantity) > 0)}
+  <div class="text-gray-600">Need {fmt(item.quantity)}</div>
+  {#each parts as [label, quantity] (label)}
+    <div class="text-gray-600">{label} {fmt(Number(quantity))}</div>
+  {/each}
+{/snippet}
+
 {#snippet breakdown(item: (typeof data.items)[number])}
   <ul class="text-xs text-gray-700">
     {#each item.requirements as requirement (requirement.lineId)}
@@ -33,9 +47,9 @@
 
 <h1 class="page-title mb-2">Shopping list</h1>
 <p class="mb-4 text-sm text-gray-600">
-  What the selected projects need beyond their used, picked, and reserved stock and committed orders.
-  Excluding a project only hides its rows; its reservations and commitments stay. Unreserved stock
-  and uncommitted orders are suggestions; reserve or commit them on a row to count them.
+  What to buy so that the selected projects are covered by stock and orders, committed or not.
+  Stock and orders that no project holds count once, stock first. Excluding a project only hides
+  its rows; its reservations and commitments stay and are not counted for other projects.
 </p>
 
 <form method="GET" class="card mb-6 space-y-3 text-sm">
@@ -75,7 +89,7 @@
 </form>
 
 {#if data.items.length === 0}
-  <p class="text-gray-600">Nothing is needed beyond stock and committed orders.</p>
+  <p class="text-gray-600">Nothing to buy. Stock and orders cover the selected projects.</p>
 {/if}
 
 {#if resolved.length > 0}
@@ -85,9 +99,8 @@
       <thead>
         <tr>
           <th>Part</th>
-          <th class="text-right">Needed, not ordered</th>
-          <th class="text-right">Unreserved stock</th>
-          <th class="text-right">Uncommitted orders</th>
+          <th class="text-right">To buy</th>
+          <th>Covered by</th>
           <th>Requirements</th>
         </tr>
       </thead>
@@ -95,11 +108,10 @@
         {#each resolved as item (item.key)}
           <tr>
             <td><a href="/parts/{item.partId}" class="link font-medium sm:font-normal">{item.label}</a></td>
-            <td data-label="Needed" class="text-right font-medium">{formatQuantity(item.quantity, item.unit)}</td>
-            <td data-label="Unreserved stock" class="text-right">{item.suggestion ? formatQuantity(item.suggestion.available, item.suggestion.baseUnit) : '—'}</td>
-            <td data-label="Uncommitted orders" class="text-right">
-              {item.suggestion ? formatQuantity(item.suggestion.uncommittedIncoming, item.suggestion.baseUnit) : '—'}
+            <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
+              {formatQuantity(item.coverage.toBuy, item.unit)}
             </td>
+            <td data-label="Covered by" class="whitespace-nowrap"><div>{@render coveredBy(item)}</div></td>
             <td data-label="For"><div>{@render breakdown(item)}</div></td>
           </tr>
         {/each}
@@ -112,18 +124,22 @@
   <section class="mb-6">
     <h2 class="section-title mb-1">Requirements without one chosen part</h2>
     <p class="mb-2 text-sm text-gray-600">
-      These are not combined, because they could be different parts. Approve one part for a row to
-      combine it with identical requirements.
+      These are not combined, because they could be different parts. Free stock and orders are not
+      counted, because the part is not known. Approve one part for a row to combine it with
+      identical requirements and count them.
     </p>
     <table class="data-table stack-table">
       <thead>
-        <tr><th>Requirement</th><th class="text-right">Needed, not ordered</th><th>Approved parts</th><th>Row</th></tr>
+        <tr><th>Requirement</th><th class="text-right">To buy</th><th>Covered by</th><th>Approved parts</th><th>Row</th></tr>
       </thead>
       <tbody>
         {#each unresolved as item (item.key)}
           <tr>
             <td class="font-medium sm:font-normal">{item.label}</td>
-            <td data-label="Needed" class="text-right font-medium">{formatQuantity(item.quantity, item.unit)}</td>
+            <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
+              {formatQuantity(item.coverage.toBuy, item.unit)}
+            </td>
+            <td data-label="Covered by" class="whitespace-nowrap"><div>{@render coveredBy(item)}</div></td>
             <td data-label="Approved">{item.choices.join(', ') || 'None yet'}</td>
             <td data-label="Row"><div>{@render breakdown(item)}</div></td>
           </tr>

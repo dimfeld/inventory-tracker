@@ -315,8 +315,10 @@
         </thead>
         <tbody>
           {#each section.lines as line (line.id)}
+            <!-- No quick approval once the exact part or a substitute is approved. -->
             {@const approveExact =
-              line.partId !== null && !line.choices.some((choice) => choice.partId === line.partId)}
+              line.partId !== null &&
+              !line.choices.some((choice) => choice.partId === line.partId || choice.substitute)}
             <tr>
               <td>
                 <a href="{base}/lines/{line.id}" class="link font-medium">{line.description}</a>
