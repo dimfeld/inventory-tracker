@@ -12,6 +12,7 @@ import {
   type SourceType,
 } from "#lib/imports.ts";
 import * as z from "zod";
+import { formId, formText, optionalFormText } from "./form";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
 export interface NewImportInput {
@@ -85,21 +86,6 @@ export function parseHeaderForm(form: FormData): ParseResult<ImportHeader> {
     notes: optionalText(form, "notes"),
   }));
 }
-
-const formText = z
-  .string()
-  .optional()
-  .transform((value) => value?.trim() ?? "");
-const optionalFormText = formText.transform((value) => value || null);
-
-/** A positive integer ID from a form field, or null when it is empty. */
-const formId = (message: string) =>
-  formText.transform((value, ctx) => {
-    if (value === "") return null;
-    if (/^\d+$/.test(value) && Number(value) > 0) return Number(value);
-    ctx.addIssue({ code: "custom", message });
-    return z.NEVER;
-  });
 
 /** What a submission of the review line form does. */
 export const LINE_INTENTS = ["save", "remove", "cleanup", "split"] as const;

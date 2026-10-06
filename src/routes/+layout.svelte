@@ -10,8 +10,7 @@
     { href: '/orders', label: 'Orders' },
     { href: '/shopping', label: 'Shopping' },
     { href: '/imports', label: 'Imports' },
-    { href: '/locations', label: 'Locations' },
-    { href: '/parts/categories', label: 'Categories' },
+    { href: '/settings', label: 'Settings' },
   ];
 
   /** The nav entry for the current page: the longest matching prefix. */

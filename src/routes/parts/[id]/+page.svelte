@@ -182,7 +182,7 @@
     <h2 class="section-title">Change stock</h2>
     {#if data.locations.length === 0}
       <p class="text-gray-600">
-        <a href="/locations" class="link">Add a storage location</a> first.
+        <a href="/settings/locations" class="link">Add a storage location</a> first.
       </p>
     {:else}
       {@const fb = feedback(stockForm.action)}

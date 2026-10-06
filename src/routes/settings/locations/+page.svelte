@@ -9,7 +9,7 @@
   <title>Locations</title>
 </svelte:head>
 
-<h1 class="page-title mb-4">Storage locations</h1>
+<h2 class="section-title mb-2">Storage locations</h2>
 
 {#if data.locations.length === 0}
   <p class="mb-4 text-gray-600">No locations yet.</p>

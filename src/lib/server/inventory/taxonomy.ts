@@ -84,6 +84,28 @@ export function createTaxonomyService(db: Database) {
   }
 
   return {
+    /**
+     * Every category with its full path, the attribute keys assigned to it directly, and how
+     * many parts, child categories, and BOM rows use it.
+     */
+    listCategories() {
+      const categories = listCategories(db);
+      const byId = new Map(categories.map((c) => [c.id, c]));
+      const keys = new Map(listAttributeDefinitions(db).map((d) => [d.id, d.key]));
+      const assigned = Map.groupBy(listAttributeAssignments(db), (a) => a.categoryId);
+      return categoryOptions(categories).map(({ id, path }) => ({
+        id,
+        path,
+        name: byId.get(id)!.name,
+        parentId: byId.get(id)!.parentId,
+        attributes: (assigned.get(id) ?? []).map((a) => ({
+          key: keys.get(a.attributeId)!,
+          required: a.required,
+        })),
+        ...countCategoryUses(db, id),
+      }));
+    },
+
     /** Every attribute definition with its usage and the categories it is assigned to. */
     listAttributes() {
       const usage = new Map(listAttributeUsage(db).map((u) => [u.attributeId, u]));

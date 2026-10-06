@@ -40,7 +40,7 @@
   <p class="text-gray-600">Nothing is outstanding on this order.</p>
 {:else if data.storageLocations.length === 0}
   <p class="text-gray-600">
-    <a href="/locations" class="text-blue-700 underline">Create a storage location</a> to receive items into.
+    <a href="/settings/locations" class="text-blue-700 underline">Create a storage location</a> to receive items into.
   </p>
 {:else}
   {#key data.operationId}
