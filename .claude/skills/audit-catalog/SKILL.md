@@ -21,6 +21,10 @@ Do not write SQL against the prod database.
   or an existing attribute. Never guess a dimension or a type. If the evidence is not clear,
   leave the value out and list it as an open question.
 - Do not delete a category or attribute that is in use. The services refuse this anyway.
+- **Never show part IDs to the user** (for example "part 58" or "parts 103–116"). The IDs
+  mean nothing to the user. Always refer to a part by its name; for a large group, name the
+  group clearly (for example "the 12 Grade 12.9 hex socket cap screws"). Use IDs only inside
+  the plan file.
 - `apply` makes a backup in `~/.local/share/inventory-tracker/backups/` before it writes.
   Always tell the user the backup path.
 
@@ -45,7 +49,8 @@ To see one attribute's values in detail: `catalog.ts values KEY`.
 
 ### 2. Find problems and opportunities
 
-Check each of these and collect concrete proposals with part IDs and values:
+Check each of these and collect concrete proposals with the affected parts and values (keep the IDs
+for the plan):
 
 **Categories**
 - Parts without a category, and parts in a parent category that fit a child category.
@@ -75,7 +80,7 @@ Check each of these and collect concrete proposals with part IDs and values:
 ### 3. Ask the user
 
 Present the proposals in groups (categories, new attributes, value standardization, missing
-values), with a short reason and the affected parts for each. Then use AskUserQuestion, with
+values), with a short reason and the affected parts, by name, for each. Then use AskUserQuestion, with
 `multiSelect: true` where the user can choose several proposals. If there are too many
 proposals for one question, ask group by group. Accept free-text changes from the user's
 "Other" answers. If the user approves nothing, stop.
