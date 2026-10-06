@@ -51,9 +51,8 @@
 <p class="mb-2 text-sm"><a href="/imports" class="text-blue-700 hover:underline">← Imports</a></p>
 <h1 class="mb-1 text-2xl font-semibold">{KIND_LABELS[record.kind]} import</h1>
 <p class="mb-4 text-sm text-gray-600">
-  Parsing sends the submitted source text to OpenAI (model gpt-6-luna). Line cleanup sends that line and the catalog
-  part list. Saving drafts, entering lines by hand, mapping
-  CSV columns, and committing stay on this server.
+  AI parsing sends the submitted source text to OpenAI. AI clean up sends that line and the catalog part list. Saving
+  drafts, entering lines by hand, mapping CSV columns, and committing stay on this server.
 </p>
 
 {#if committed}

@@ -8,7 +8,7 @@ export const variables = defineEnvVars({
   },
   OPENAI_API_KEY: {
     description:
-      "OpenAI API key for parsing imports with GPT-6 Luna. Optional: without it, imports use manual entry or CSV column mapping.",
+      "OpenAI API key for AI parsing and clean up of imports. Optional: without it, imports use manual entry or CSV column mapping.",
     schema: (value) => value || null,
   },
 });

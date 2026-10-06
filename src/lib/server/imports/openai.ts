@@ -1,5 +1,5 @@
 /**
- * GPT-6 Luna extraction through the Vercel AI SDK. Server-only: the API key never leaves the
+ * AI extraction through the Vercel AI SDK. Server-only: the API key never leaves the
  * server. No tools are given to the model, so it can only return data.
  */
 import { createOpenAI } from "@ai-sdk/openai";

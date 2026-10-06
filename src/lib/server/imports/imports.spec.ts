@@ -7,7 +7,7 @@ import * as bomFlat from "./fixtures/bom-flat";
 import * as bomSections from "./fixtures/bom-sections";
 import * as orderList from "./fixtures/order-list";
 import type { LineEdit } from "./imports";
-import { createOpenAIExtractor } from "./openai";
+import { createOpenAIExtractor, MODEL_ID } from "./openai";
 import { PROMPT_VERSION } from "./prompt";
 import { SCHEMA_VERSION } from "./schema";
 import { createTestImports, fixtureExtractor, inventoryCounts } from "./test-helpers";
@@ -319,7 +319,7 @@ Amazon,111-3,Seal foam tape,1`;
     const { record, lines, sameReference } = review(ctx, id);
     expect(record).toMatchObject({
       parseState: "parsed",
-      modelId: "gpt-6-luna",
+      modelId: MODEL_ID,
       promptVersion: PROMPT_VERSION,
       schemaVersion: SCHEMA_VERSION,
       inputTokens: 1200,

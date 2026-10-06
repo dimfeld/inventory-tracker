@@ -24,7 +24,7 @@ export interface ExtractionResult {
 }
 
 /**
- * Turns a source into structured output. The app uses GPT-6 Luna (see openai.ts); tests use
+ * Turns a source into structured output. The app uses the OpenAI model in openai.ts; tests use
  * stored fixture answers. An extractor only returns data; it has no access to the inventory.
  */
 export type Extractor = (request: ExtractionRequest) => Promise<ExtractionResult>;

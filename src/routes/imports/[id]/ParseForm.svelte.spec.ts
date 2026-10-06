@@ -42,8 +42,8 @@ vi.mock("$app/forms", () => ({
 }));
 
 const status = () => page.getByRole("status");
-const button = () => page.getByRole("button", { name: "Parse with GPT-6 Luna" });
-const waiting = /Parsing with GPT-6 Luna… This can take a minute/;
+const button = () => page.getByRole("button", { name: "Parse with AI" });
+const waiting = /Parsing with AI… This can take a minute/;
 
 describe("ParseForm.svelte", () => {
   beforeEach(() => {

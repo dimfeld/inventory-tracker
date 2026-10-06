@@ -9,9 +9,9 @@ import { getImport } from "#lib/server/db/imports.ts";
 import { createOpenAIExtractor, MODEL_ID } from "./openai";
 import { createTestImports, inventoryCounts } from "./test-helpers";
 
-describe.skipIf(!process.env.LIVE_IMPORT_CHECK)("live GPT-6 Luna extraction", () => {
+describe.skipIf(!process.env.LIVE_IMPORT_CHECK)("live AI extraction", () => {
   it(
-    "parses an order list through the Vercel AI SDK with gpt-6-luna",
+    "parses an order list through the Vercel AI SDK with the configured model",
     { timeout: 120_000 },
     async () => {
       const apiKey = process.env.OPENAI_API_KEY;
@@ -53,7 +53,7 @@ describe.skipIf(!process.env.LIVE_IMPORT_CHECK)("live GPT-6 Luna extraction", ()
       );
 
       expect(outcome.ok).toBe(true);
-      expect(record.modelId).toMatch(/^gpt-6-luna/);
+      expect(record.modelId).toMatch(new RegExp(`^${MODEL_ID}`));
       expect(lines.length).toBeGreaterThan(0);
       expect(inventoryCounts(ctx.db)).toEqual(before);
     }

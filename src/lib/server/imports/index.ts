@@ -11,7 +11,7 @@ export function imports() {
   return service;
 }
 
-/** The GPT-6 Luna extractor with the server's API key, if one is configured. */
+/** The AI extractor with the server's API key, if one is configured. */
 export function extractor() {
   return createOpenAIExtractor(OPENAI_API_KEY);
 }
