@@ -15,9 +15,9 @@
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test:unit": "bun --bun vitest",
+    "test:unit": "bun --bun node_modules/vitest/vitest.mjs",
     "test": "bun run test:unit -- --run",
-    "check:live-import": "LIVE_IMPORT_CHECK=1 bun --bun --env-file .env vitest --run --project server src/lib/server/imports/live-check.spec.ts",
+    "check:live-import": "LIVE_IMPORT_CHECK=1 bun --bun --env-file .env node_modules/vitest/vitest.mjs --run --project server src/lib/server/imports/live-check.spec.ts",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
