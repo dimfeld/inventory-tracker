@@ -157,17 +157,12 @@ export const actions: Actions = {
     if (!("repeated" in result)) return result;
     redirect(
       303,
-      result.orderId !== null ? `/orders/${result.orderId}` : `/projects/${result.projectId}`
+      result.orderId !== null
+        ? `/orders/${result.orderId}`
+        : result.projectId !== null
+          ? `/projects/${result.projectId}`
+          : "/imports"
     );
-  },
-
-  skipOrder: async ({ request, params }) => {
-    const operationId = text(await request.formData(), "operation_id");
-    if (!operationId)
-      return fail(400, { action: "commit", message: "Missing operation ID; reload the page" });
-    const result = runAction("commit", () => imports().skipOrder(Number(params.id), operationId));
-    if (!("repeated" in result)) return result;
-    redirect(303, "/imports");
   },
 
   discard: async ({ params }) => {

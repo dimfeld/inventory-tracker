@@ -831,28 +831,6 @@ export function createImportService(db: Database) {
      * lines, or the project's components and BOM rows. A repeated commit returns the recorded
      * result and creates nothing. No stock movement is recorded.
      */
-    /**
-     * Close an order import without creating an order, for an order with nothing to track. The
-     * import keeps the supplier and reference, so the order is not imported again.
-     */
-    skipOrder(id: number, operationId: string): CommitResult {
-      return inTransaction(() => {
-        const record = requireImport(id);
-        if (record.commitState === "committed") {
-          return { orderId: record.orderId, projectId: record.projectId, repeated: true };
-        }
-        if (record.kind !== "order")
-          throw new InventoryError("Only an order import can be skipped");
-        if (!record.header.supplier || !record.header.reference) {
-          throw new InventoryError(
-            "Enter the supplier and the order reference, so that the order is not imported again"
-          );
-        }
-        recordCommit(db, id, { operationId, orderId: null, projectId: null });
-        return { orderId: null, projectId: null, repeated: false };
-      });
-    },
-
     commit(id: number, operationId: string): CommitResult {
       return inTransaction(() => {
         const record = requireImport(id);
@@ -860,6 +838,17 @@ export function createImportService(db: Database) {
           return { orderId: record.orderId, projectId: record.projectId, repeated: true };
         }
         const lines = listLines(db, id);
+        // An order import whose lines were all removed records the supplier order as handled
+        // without creating an order, so a later import of it is skipped.
+        if (lines.length === 0 && record.kind === "order") {
+          if (!record.header.supplier || !record.header.reference) {
+            throw new InventoryError(
+              "Enter the supplier and the order reference, so that the order is not imported again"
+            );
+          }
+          recordCommit(db, id, { operationId, orderId: null, projectId: null });
+          return { orderId: null, projectId: null, repeated: false };
+        }
         if (lines.length === 0) throw new InventoryError("Add at least one line before committing");
         const problems = [
           ...headerProblems(record),

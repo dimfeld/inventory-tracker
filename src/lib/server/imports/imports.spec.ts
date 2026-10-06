@@ -256,8 +256,9 @@ Amazon,111-3,Seal foam tape,1`;
     const { orderId } = ctx.imports.commit(kept, opId());
     expect(ctx.orders.getOrderDetails(orderId!)!.lines).toHaveLength(1);
 
-    // Nothing in the second order is tracked: no order is created.
-    expect(ctx.imports.skipOrder(skipped, opId())).toMatchObject({ orderId: null });
+    // Nothing in the second order is tracked: with every line removed, no order is created.
+    for (const line of review(ctx, skipped).lines) ctx.imports.removeLine(skipped, line.id);
+    expect(ctx.imports.commit(skipped, opId())).toMatchObject({ orderId: null });
     expect(ctx.orders.listOrders().map((order) => order.reference)).toEqual(["111-1"]);
 
     // A repeated run skips the committed, skipped, and still open orders.
@@ -270,14 +271,14 @@ Amazon,111-3,Seal foam tape,1`;
     expect(second.ids.map((id) => review(ctx, id).record.header.reference)).toEqual(["111-4"]);
   });
 
-  it("needs a supplier order reference to skip an order", () => {
+  it("needs a supplier order reference to commit an order without lines", () => {
     const ctx = createTestImports();
     const id = ctx.imports.createImport({
       kind: "order",
       sourceType: "text",
       sourceText: "1 bag of M3 screws",
     });
-    expect(() => ctx.imports.skipOrder(id, opId())).toThrow("order reference");
+    expect(() => ctx.imports.commit(id, opId())).toThrow("order reference");
   });
 
   it("parses into reviewable proposals without creating inventory records", async () => {
