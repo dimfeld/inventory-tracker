@@ -26,9 +26,28 @@ export interface CommitOption {
   quantity: number;
 }
 
+/**
+ * The part of a line's `neededNotOrdered` quantity that free supply could cover, in the
+ * coverage unit. Each quantity counts once: stock first, then orders, and the rest is
+ * `notOrdered`. Free supply is not held for the line, so other lines may count it too.
+ */
+export interface UncommittedSupply {
+  /** Storage stock of allowed parts that no line has reserved. */
+  inStock: number;
+  /** Outstanding order supply of allowed parts that no line has committed. */
+  ordered: number;
+  notOrdered: number;
+}
+
 export interface LineSupplyOptions {
   reserve: ReserveOption[];
   commit: CommitOption[];
+  uncommitted: UncommittedSupply;
+}
+
+/** A quantity of `baseUnit` in the coverage unit. */
+function inCoverageUnit(quantity: number, baseUnit: string, coverage: LineCoverage): number {
+  return absoluteQuantity(quantity, baseUnit) / absoluteQuantity(1, coverage.unit);
 }
 
 /** A coverage quantity as a whole amount of `baseUnit`, rounded down so it never exceeds the need. */
@@ -49,11 +68,13 @@ export function listSupplyOptions(
     Object.entries(coverage).map(([key, lineCoverage]) => {
       const lineId = Number(key);
       const reserve: ReserveOption[] = [];
+      let freeStock = 0;
       if (lineCoverage.uncovered > 0) {
         for (const part of allocations().getLineStock(projectId, lineId).parts) {
           if (!part.allowed || part.archived) continue;
           const need = wholeOf(lineCoverage.uncovered, lineCoverage, part.baseUnit);
           for (const stock of part.storage) {
+            freeStock += inCoverageUnit(Math.max(stock.available, 0), part.baseUnit, lineCoverage);
             const quantity = Math.min(stock.available, need);
             if (quantity <= 0) continue;
             reserve.push({
@@ -69,8 +90,10 @@ export function listSupplyOptions(
       }
 
       const commit: CommitOption[] = [];
+      let freeOrdered = 0;
       if (lineCoverage.neededNotOrdered > 0) {
         for (const option of commitments().listIncomingOptions(projectId, lineId)) {
+          freeOrdered += inCoverageUnit(option.uncommitted, option.baseUnit, lineCoverage);
           const need = wholeOf(lineCoverage.neededNotOrdered, lineCoverage, option.baseUnit);
           const quantity = Math.min(option.uncommitted, need);
           if (quantity <= 0) continue;
@@ -87,7 +110,11 @@ export function listSupplyOptions(
           });
         }
       }
-      return [lineId, { reserve, commit }];
+
+      const inStock = Math.min(freeStock, lineCoverage.neededNotOrdered);
+      const ordered = Math.min(freeOrdered, lineCoverage.neededNotOrdered - inStock);
+      const notOrdered = lineCoverage.neededNotOrdered - inStock - ordered;
+      return [lineId, { reserve, commit, uncommitted: { inStock, ordered, notOrdered } }];
     })
   );
 }

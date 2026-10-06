@@ -109,23 +109,28 @@
   {/each}
 {/snippet}
 
-{#snippet stockCell(coverage: (typeof data.coverage)[number])}
+{#snippet stockCell(coverage: (typeof data.coverage)[number], free: (typeof data.supply)[number]['uncommitted'])}
   {@const fmt = (quantity: number) => formatQuantity(quantity, coverage.unit)}
   {@const counts = [
     ['Used', coverage.used],
     ['Picked', coverage.picked],
     ['Reserved', coverage.reserved],
-    ['Ordered', coverage.ordered],
+    ['Ordered, committed', coverage.ordered],
   ].filter(([, quantity]) => Number(quantity) > 0)}
   {#each counts as [label, quantity] (label)}
     <div>{label} {fmt(Number(quantity))}</div>
   {/each}
-  {#if coverage.neededNotOrdered > 0}
-    <div class="font-semibold text-amber-700">Needed, not ordered {fmt(coverage.neededNotOrdered)}</div>
-  {:else if counts.length === 0}
-    <div class="text-gray-500">Nothing needed</div>
-  {:else}
-    <div class="text-green-700">Covered</div>
+  {#if free.inStock > 0}<div class="text-amber-700">In stock, not reserved {fmt(free.inStock)}</div>{/if}
+  {#if free.ordered > 0}<div class="text-amber-700">Ordered, not committed {fmt(free.ordered)}</div>{/if}
+  {#if free.notOrdered > 0}
+    <div class="font-semibold text-red-700">Not ordered {fmt(free.notOrdered)}</div>
+  {/if}
+  {#if coverage.neededNotOrdered === 0}
+    {#if counts.length === 0}
+      <div class="text-gray-500">Nothing needed</div>
+    {:else}
+      <div class="text-green-700">Covered</div>
+    {/if}
   {/if}
   {#if coverage.excess > 0}<div class="text-red-700">Excess {fmt(coverage.excess)}</div>{/if}
   {#each coverage.parts as part (part.partId)}
@@ -322,7 +327,7 @@
               </td>
               <td data-label="Quantity" class="whitespace-nowrap">{formatQuantity(line.quantity, line.unit)}</td>
               <td data-label="Stock" class="sm:whitespace-nowrap">
-                <div>{@render stockCell(data.coverage[line.id])}</div>
+                <div>{@render stockCell(data.coverage[line.id], data.supply[line.id].uncommitted)}</div>
                 {@render supplyActions(line)}
               </td>
               <td data-label="Requirement">
