@@ -161,6 +161,7 @@
         row.description,
         row.quantity,
         row.product_url,
+        row.notes,
       ].join("\u001f");
       if (seen.has(key)) return false;
       seen.add(key);
@@ -168,99 +169,50 @@
     });
   }
 
-  function extractAliExpress() {
-    const sourceUrl = location.href;
-    const blocks = topLevel(
-      nodesForFirstSelector(document, [
-        ".order-item",
-        ".order-item-wraper",
-        "[data-pl=order-card]",
-        "[class*=order--card]",
-      ])
-    );
+  // The order list shows only images for an order with several items, so the extension reads
+  // each order's details page. On the list, return the details links for the background worker.
+  function aliExpressDetailUrls() {
+    const links = [...document.querySelectorAll('.order-item a[href*="order/detail.html"]')];
+    return [...new Set(links.map((link) => link.href))];
+  }
+
+  function extractAliExpressDetails() {
+    const info = (label) =>
+      text([...document.querySelectorAll(".info-row")].find((row) => label.test(text(row))));
+    const reference =
+      matchText(info(/ref\. number/i), [/(\d{6,})/]) ||
+      matchText(location.href, [/[?&]orderId=(\d+)/i]);
+    const date = matchText(info(/order placed on/i), [/order placed on:?\s*(.+)$/i]);
     const rows = [];
 
-    for (const block of blocks) {
-      const blockText = text(block);
-      const reference =
-        orderReference(blockText) ||
-        matchText(first(block, ['a[href*="orderId="]'])?.href, [/[?&]orderId=(\d+)/i]);
-      const date = orderDate(blockText);
-      const items = nodesForFirstSelector(block, [
-        ".order-item-content-body",
-        ".product-right",
-        "[class*=order-item-content-item]",
-        "[class*=order--item]",
-      ]);
-
-      for (const item of items.length ? topLevel(items) : [block]) {
-        const itemText = text(item);
-        const link = first(item, [
-          ".order-item-content-info-name a",
-          'a[href*="/item/"]',
-          'a[href*="/product/"]',
-        ]);
-        const description =
-          firstText(item, [
-            ".order-item-content-info-name [title]",
-            ".baobei-name[title]",
-            ".order-item-content-info-name",
-            "[class*=item-title]",
-            "[class*=product-title]",
-          ]) ||
-          clean(link?.getAttribute("title")) ||
-          text(link);
-        const skuText = firstText(item, [
-          ".order-item-content-info-sku",
-          "[class*=item-sku]",
-          "[class*=sku-info]",
-        ]);
-        const priceText = firstText(item, [
-          ".order-item-content-info-number > div:first-child",
-          ".product-amount span:first-child",
-          "[class*=item-price]",
-          "[class*=price]",
-        ]);
-        const parsedMoney = money(priceText);
+    for (const store of document.querySelectorAll(".order-detail-item")) {
+      const storeName = firstText(store, [".store-name"]);
+      for (const item of store.querySelectorAll(".order-detail-item-content")) {
+        const link = first(item, [".item-title a", 'a[href*="/item/"]']);
         const productUrl = absoluteUrl(link?.getAttribute("href"));
+        const option = firstText(item, [".item-sku-attr"]);
+        const parsedMoney = money(firstText(item, [".item-price > div", ".item-price"]));
         rows.push(
-          baseRow("AliExpress", sourceUrl, {
+          baseRow("AliExpress", location.href, {
             order_reference: reference,
             order_date: date,
             supplier_sku: aliItemId(productUrl),
-            description,
-            quantity:
-              quantity(
-                firstText(item, [
-                  ".order-item-content-info-number-quantity",
-                  ".product-amount",
-                  "[class*=quantity]",
-                ])
-              ) ||
-              quantity(itemText) ||
-              "1",
+            description: firstText(item, [".item-title"]) || text(link),
+            quantity: quantity(firstText(item, [".item-price-quantity"])) || "1",
             unit_price: parsedMoney.amount,
             currency: parsedMoney.currency,
             product_url: productUrl,
             notes: lineNotes({
               productUrl,
-              extra: skuText && `Option: ${skuText.replace(/^(?:sku|variation)\s*:?\s*/i, "")}`,
+              extra: [option && `Option: ${option}`, storeName && `Store: ${storeName}`]
+                .filter(Boolean)
+                .join("; "),
             }),
           })
         );
       }
     }
     return dedupe(rows);
-  }
-
-  function amazonOrderId(card) {
-    const slot =
-      card.getAttribute("data-csa-c-slot-id") || card.getAttribute("data-order-id") || "";
-    return (
-      matchText(slot, [/order-card[.:]([A-Z0-9-]{10,})$/i]) ||
-      orderReference(text(card)) ||
-      matchText(first(card, ['a[href*="orderID="]'])?.href, [/[?&]orderID=([A-Z0-9-]+)/i])
-    );
   }
 
   // The order details page labels its fields with data-component attributes.
@@ -390,8 +342,11 @@
 
   try {
     const host = location.hostname;
-    if (/aliexpress\./i.test(host))
-      return { ok: true, supplier: "AliExpress", rows: extractAliExpress() };
+    if (/aliexpress\./i.test(host)) {
+      if (document.querySelector(".order-detail-item"))
+        return { ok: true, supplier: "AliExpress", rows: extractAliExpressDetails() };
+      return { ok: true, supplier: "AliExpress", rows: [], detailUrls: aliExpressDetailUrls() };
+    }
     if (/(^|\.)amazon\./i.test(host))
       return { ok: true, supplier: "Amazon", rows: extractAmazon() };
     return { ok: false, error: "Open an AliExpress or Amazon order page first." };

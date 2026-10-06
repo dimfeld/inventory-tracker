@@ -13,6 +13,8 @@ DigiKey does not need the extension. On a DigiKey order page, select **Copy to c
 
 ## Use
 
+On an AliExpress order list, the list shows only images for an order with several items. The extension therefore opens each loaded order's details page in a background tab, reads it, and closes it. Select **View orders** on the list first to load more orders. The run continues if the popup closes; open the popup again to see the result.
+
 1. Sign in to a supported store.
 2. Open an order details page. On Amazon, the order details page also shows the price of each item; the order history page does not. Make sure the order lines that you need are visible. Expand collapsed orders when applicable.
 3. Select the extension icon.
