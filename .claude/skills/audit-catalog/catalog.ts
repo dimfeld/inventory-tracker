@@ -125,7 +125,7 @@ function run(operation: Operation): string {
     }
     case "createAttribute": {
       const { op: _op, key, ...fields } = operation;
-      taxonomy.createAttribute(key, fields);
+      taxonomy.createAttribute(key, { normalization: null, canonicalUnit: null, ...fields });
       return `created attribute ${key}`;
     }
     case "updateAttribute": {
