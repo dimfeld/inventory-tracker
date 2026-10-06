@@ -158,7 +158,16 @@ describe("outstanding supply", () => {
     );
     ctx.orders.markPlaced(second, DAY);
     ctx.orders.markShipped(second, DAY);
-    expect(incoming(ctx)).toMatchObject([{ placed: 100, shipped: 30 }]);
+    expect(incoming(ctx)).toMatchObject([
+      {
+        placed: 100,
+        shipped: 30,
+        lines: [
+          { orderLineId: ctx.lineId, status: "placed", outstanding: 100 },
+          { orderId: second, status: "shipped", outstanding: 30 },
+        ],
+      },
+    ]);
   });
 
   it("leaves the remainder after a partial receipt and drops fully received lines", () => {

@@ -25,6 +25,7 @@ import {
   updateOrder,
   updateOrderLine,
   updateOrderState,
+  type IncomingLine,
   type Order,
   type OrderLine,
 } from "#lib/server/db/orders.ts";
@@ -35,13 +36,17 @@ import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
 
-/** Placed and shipped outstanding supply of one part, in its base unit. */
+/**
+ * Placed and shipped outstanding supply of one part, in its base unit, with the order lines that
+ * hold it, earliest expected first.
+ */
 export interface IncomingSummary {
   partId: number;
   partName: string;
   baseUnit: string;
   placed: number;
   shipped: number;
+  lines: IncomingLine[];
 }
 
 export interface SaveOrderResult {
@@ -320,6 +325,7 @@ export function createOrderService(db: Database) {
         shipped: lines
           .filter((l) => l.status === "shipped")
           .reduce((sum, l) => sum + l.outstanding, 0),
+        lines,
       }));
     },
   };

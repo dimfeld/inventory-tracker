@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import { assignInSequence } from '#lib/commitments.ts';
   import { describePackConversion, type DeliveryState } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
@@ -101,10 +102,14 @@
 </script>
 
 <form
+  id="receive-line-{line.id}"
   method="POST"
   action="?/receiveLine"
   use:enhance
-  class="card space-y-2 text-sm {line.deliveryState === 'awaiting_review' ? 'border-amber-300 bg-amber-50' : ''}"
+  class="card space-y-2 text-sm {line.deliveryState === 'awaiting_review' ? 'border-amber-300 bg-amber-50' : ''} {page.url
+    .hash === `#receive-line-${line.id}`
+    ? 'ring-2 ring-blue-600'
+    : ''}"
 >
   <input type="hidden" name="operation_id" value={operationId} />
   <input type="hidden" name="received_on" value={today} />
