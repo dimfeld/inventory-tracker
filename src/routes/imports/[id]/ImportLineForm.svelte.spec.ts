@@ -7,7 +7,9 @@ import ImportLineForm from "./ImportLineForm.svelte";
 
 // Stands in for SvelteKit's enhance, including its default handling of a result:
 // a successful action resets the form unless the callback asks it not to.
-const requests = vi.hoisted(() => [] as { finish: (ok: boolean) => Promise<void> }[]);
+const requests = vi.hoisted(
+  () => [] as { submitter: HTMLElement | null; finish: (ok: boolean) => Promise<void> }[]
+);
 
 vi.mock("$app/forms", () => ({
   enhance(form: HTMLFormElement, submit: SubmitFunction = () => {}) {
@@ -22,6 +24,7 @@ vi.mock("$app/forms", () => ({
         cancel: () => {},
       });
       requests.push({
+        submitter: event.submitter,
         finish: async (ok) => {
           const result: ActionResult = ok
             ? { type: "success", status: 200, location: "" }
@@ -148,5 +151,44 @@ describe("ImportLineForm.svelte", () => {
       .element(page.getByText("Saving the line and sending it to OpenAI"))
       .not.toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Save line" })).toBeEnabled();
+  });
+
+  it("searches the catalog candidates and submits the chosen one as the existing part", async () => {
+    const candidate = (id: number, name: string, status: "match" | "conflict") => ({
+      part: { id, name },
+      status,
+      sourceLabel: "attributes",
+      conflicts: status === "conflict" ? ["package differs"] : [],
+      unresolved: [],
+    });
+    const base = props(saved);
+    render(ImportLineForm, {
+      ...base,
+      line: {
+        ...base.line,
+        candidates: [
+          candidate(1, "10k resistor 0805", "match"),
+          candidate(2, "10k resistor 0603", "conflict"),
+          candidate(3, "4.7k resistor 0805", "match"),
+        ],
+      },
+    });
+
+    await expect.element(page.getByText("(2 match, 1 conflict)")).toBeInTheDocument();
+    const search = page.getByRole("combobox", { name: /Search catalog candidates/ });
+    await search.fill("10k 0603");
+    await expect
+      .element(page.getByRole("listbox").getByRole("option"))
+      .toHaveTextContent(/10k resistor 0603/);
+    await expect.element(page.getByText("package differs")).toBeInTheDocument();
+
+    await search.fill("10k");
+    await page
+      .getByRole("listbox")
+      .getByRole("option", { name: /10k resistor 0805/ })
+      .click();
+    expect(requests).toHaveLength(1);
+    const submitter = requests[0].submitter as HTMLButtonElement;
+    expect([submitter.name, submitter.value]).toEqual(["choose_part", "1"]);
   });
 });

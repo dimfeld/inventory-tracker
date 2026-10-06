@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import SearchSelect from '#lib/components/SearchSelect.svelte';
   import { PROVENANCE_LABELS, type ImportKind, type ImportLineFields, type LineProposal } from '#lib/imports.ts';
 
   interface Props {
@@ -45,6 +46,7 @@
 
   /** True while a cleanup request of this line is in flight. */
   let cleaning = $state(false);
+  let choosePart = $state<HTMLButtonElement>()!;
 
   // The form owns this after the initial value.
   // svelte-ignore state_referenced_locally
@@ -240,23 +242,35 @@
   {#if line.conversion}<p class="mt-2 text-sm">Supplies {line.conversion}</p>{/if}
 
   {#if line.candidates.length > 0}
-    <div class="mt-2 text-sm">
-      <p class="font-semibold">Catalog candidates</p>
-      <ul class="space-y-1">
-        {#each line.candidates as candidate (candidate.part.id)}
-          <li>
+    {@const counts = Object.entries(Object.groupBy(line.candidates, (c) => c.status)).map(
+      ([status, list]) => `${list!.length} ${status}`
+    )}
+    <div class="mt-2 max-w-2xl text-sm">
+      <p><span class="font-semibold">Catalog candidates</span> <span class="text-gray-500">({counts.join(', ')})</span></p>
+      {#if !readonly}
+        <SearchSelect
+          label="Search catalog candidates of line {number}"
+          placeholder="Search {line.candidates.length} candidate(s) to use as the existing part"
+          items={line.candidates}
+          key={(c) => c.part.id}
+          text={(c) => `${c.part.name} ${c.status} ${c.sourceLabel}`}
+          onselect={(c) => {
+            choosePart.value = String(c.part.id);
+            choosePart.form?.requestSubmit(choosePart);
+          }}
+        >
+          {#snippet option(candidate)}
             <span class={STATUS_CLASSES[candidate.status]}>{candidate.status}</span>
-            <a href="/parts/{candidate.part.id}" class="text-blue-700 hover:underline">{candidate.part.name}</a>
+            {candidate.part.name}
             <span class="text-gray-500">(found by {candidate.sourceLabel})</span>
-            {#if !readonly}
-              <button name="choose_part" value={candidate.part.id} class="btn-secondary ml-2 text-xs">Use this part</button>
-            {/if}
             {#if candidate.conflicts.length + candidate.unresolved.length > 0}
-              <div class="text-gray-600">{[...candidate.conflicts, ...candidate.unresolved].join('; ')}</div>
+              <div class="text-xs text-gray-600">{[...candidate.conflicts, ...candidate.unresolved].join('; ')}</div>
             {/if}
-          </li>
-        {/each}
-      </ul>
+          {/snippet}
+        </SearchSelect>
+        <!-- Choosing a candidate submits the form with this button, like a click on it. -->
+        <button bind:this={choosePart} name="choose_part" value="" hidden tabindex="-1" aria-hidden="true">Use this part</button>
+      {/if}
     </div>
   {/if}
 
