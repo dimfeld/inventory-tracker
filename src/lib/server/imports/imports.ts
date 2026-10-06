@@ -505,17 +505,21 @@ export function createImportService(db: Database) {
 
     /**
      * Split extension CSV into one draft per supplier order and skip existing references. If a
-     * row cannot be identified, save one ordinary draft so no source row is lost.
+     * row cannot be identified, save one ordinary draft so no source row is lost. That draft
+     * gets lines from its columns when they include a description, such as a DigiKey copy.
      */
     createCsvOrderBatch(input: NewImport): CsvOrderBatchResult {
-      const fallback = (): CsvOrderBatchResult => ({
-        ids: [createDraft(input)],
-        skipped: [],
-        batched: false,
-      });
-      if (input.kind !== "order" || input.sourceType !== "csv") return fallback();
-
+      if (input.kind !== "order" || input.sourceType !== "csv") {
+        return { ids: [createDraft(input)], skipped: [], batched: false };
+      }
       const rows = sourceRows("csv", input.sourceText);
+      const fallback = (): CsvOrderBatchResult =>
+        inTransaction(() => {
+          const id = createDraft(input);
+          if (defaultCsvSettings(rows).roles.includes("description")) mapCsvColumns(id);
+          return { ids: [id], skipped: [], batched: false };
+        });
+
       const header = rows[0]?.cells ?? [];
       const names = header.map((name) => name.trim().toLowerCase());
       const supplierIndex = names.indexOf("supplier");

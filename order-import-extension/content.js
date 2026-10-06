@@ -388,127 +388,13 @@
     return dedupe(rows);
   }
 
-  function normalizedHeader(value) {
-    return clean(value)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
-  }
-
-  function columnIndex(headers, names) {
-    return headers.findIndex((header) =>
-      names.some((name) => header === name || header.includes(name))
-    );
-  }
-
-  function extractDigiKeyTable(table, order) {
-    const headerRow =
-      table.querySelector("thead tr") ||
-      [...table.querySelectorAll("tr")].find((row) => row.querySelector("th"));
-    if (!headerRow) return [];
-    const headers = [...headerRow.children].map((cell) => normalizedHeader(cell.textContent));
-    const columns = {
-      quantity: columnIndex(headers, ["quantity", "qty ordered", "qty"]),
-      sku: columnIndex(headers, ["digikey part number", "digi key part number", "part number"]),
-      mpn: columnIndex(headers, ["manufacturer part number", "manufacturer pn", "mfr part"]),
-      description: columnIndex(headers, ["description", "product description"]),
-      price: columnIndex(headers, ["unit price", "price each"]),
-      reference: columnIndex(headers, ["customer reference", "reference"]),
-    };
-    if (columns.description < 0 || (columns.sku < 0 && columns.mpn < 0)) return [];
-
-    const rows = [];
-    for (const tr of table.querySelectorAll("tbody tr")) {
-      const cells = [...tr.children];
-      const cell = (index) => (index >= 0 ? text(cells[index]) : "");
-      const link = first(tr, ['a[href*="/en/products/detail/"]', 'a[href*="/product-detail/"]']);
-      const parsedMoney = money(cell(columns.price));
-      const customerReference = cell(columns.reference);
-      const description = [
-        cell(columns.description),
-        customerReference && `Customer reference: ${customerReference}`,
-      ]
-        .filter(Boolean)
-        .join(" — ");
-      const productUrl = absoluteUrl(link?.getAttribute("href"));
-      rows.push(
-        baseRow("DigiKey", location.href, {
-          ...order,
-          supplier_sku: cell(columns.sku),
-          part_number: cell(columns.mpn),
-          description,
-          quantity: cell(columns.quantity).match(/\d+(?:\.\d+)?/)?.[0] || "",
-          purchase_unit: "each",
-          pack_quantity: "1",
-          unit: "pcs",
-          unit_price: parsedMoney.amount,
-          currency: parsedMoney.currency,
-          product_url: productUrl,
-          notes: lineNotes({ productUrl }),
-        })
-      );
-    }
-    return rows;
-  }
-
-  function extractDigiKey() {
-    const pageText = text(document.body);
-    const order = {
-      order_reference: orderReference(pageText),
-      order_date: orderDate(pageText),
-    };
-    const tableRows = [...document.querySelectorAll("table")].flatMap((table) =>
-      extractDigiKeyTable(table, order)
-    );
-    if (tableRows.length) return dedupe(tableRows);
-
-    const rows = [];
-    const items = topLevel(
-      nodesForFirstSelector(document, [
-        '[data-testid*="line-item"]',
-        "[class*=order-line-item]",
-        "[class*=orderLineItem]",
-      ])
-    );
-    for (const item of items) {
-      const itemText = text(item);
-      const link = first(item, ['a[href*="/en/products/detail/"]', 'a[href*="/product-detail/"]']);
-      const price = money(
-        firstText(item, ["[class*=unit-price]", "[data-testid*=unit-price]", "[class*=price]"])
-      );
-      const productUrl = absoluteUrl(link?.getAttribute("href"));
-      rows.push(
-        baseRow("DigiKey", location.href, {
-          ...order,
-          supplier_sku: firstText(item, ["[data-testid*=part-number]", "[class*=part-number]"]),
-          part_number: firstText(item, [
-            "[data-testid*=manufacturer-part]",
-            "[class*=manufacturer-part]",
-          ]),
-          description:
-            firstText(item, ["[data-testid*=description]", "[class*=description]"]) || text(link),
-          quantity: quantity(itemText),
-          purchase_unit: "each",
-          pack_quantity: "1",
-          unit: "pcs",
-          unit_price: price.amount,
-          currency: price.currency,
-          product_url: productUrl,
-          notes: lineNotes({ productUrl }),
-        })
-      );
-    }
-    return dedupe(rows);
-  }
-
   try {
     const host = location.hostname;
     if (/aliexpress\./i.test(host))
       return { ok: true, supplier: "AliExpress", rows: extractAliExpress() };
-    if (/digikey\./i.test(host)) return { ok: true, supplier: "DigiKey", rows: extractDigiKey() };
     if (/(^|\.)amazon\./i.test(host))
       return { ok: true, supplier: "Amazon", rows: extractAmazon() };
-    return { ok: false, error: "Open an AliExpress, DigiKey, or Amazon order page first." };
+    return { ok: false, error: "Open an AliExpress or Amazon order page first." };
   } catch (error) {
     return {
       ok: false,

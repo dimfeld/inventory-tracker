@@ -17,7 +17,6 @@ const COLUMNS = [
 
 const SUPPORTED_HOSTS = [
   [/aliexpress\./i, "AliExpress"],
-  [/digikey\./i, "DigiKey"],
   [/(^|\.)amazon\./i, "Amazon"],
 ];
 
@@ -99,7 +98,7 @@ activeTab()
     siteText.textContent = match ? `${match[1]} page detected` : "Unsupported page";
     extractButton.disabled = !match;
     if (!match) {
-      setStatus("Open an AliExpress, DigiKey, or Amazon order page first.", "error");
+      setStatus("Open an AliExpress or Amazon order page first.", "error");
     }
   })
   .catch(() => {

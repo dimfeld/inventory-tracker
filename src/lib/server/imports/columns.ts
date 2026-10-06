@@ -7,12 +7,29 @@ import type { CsvRow } from "#lib/csv.ts";
 import type { ColumnRole, CsvSettings, ImportKind } from "#lib/imports.ts";
 import { InventoryError } from "#lib/server/inventory/errors.ts";
 import type { MarkedValue, OrderOutput, ProjectOutput } from "./schema";
-import { csvTable } from "./source";
+import { csvTable, supplierExport } from "./source";
 
 const stated = (value: string | undefined): MarkedValue =>
   value ? { value, provenance: "source" } : null;
 
+const inferred = (value: string): MarkedValue => ({ value, provenance: "inferred" });
+
 const WHOLE = /^\d+$/;
+
+const SYMBOLS: Record<string, string> = { $: "USD", US$: "USD", "€": "EUR", "£": "GBP" };
+
+/**
+ * A price cell such as "$8.95000" as its amount and the currency its symbol implies. A cell
+ * that is not a symbol and a number stays as written, so review shows it.
+ */
+function priceCell(value: string | undefined) {
+  const match = value?.match(/^(US\$|[$€£])\s*(\d[\d,]*(?:\.\d+)?)$/);
+  if (!match) return { price: stated(value), currency: null };
+  return {
+    price: { value: match[2].replaceAll(",", ""), provenance: "normalized" as const },
+    currency: inferred(SYMBOLS[match[1]]),
+  };
+}
 
 function wholeNumber(value: string | undefined) {
   return value && WHOLE.test(value)
@@ -29,6 +46,7 @@ export function outputFromColumns(
     throw new InventoryError("Choose at least one description column");
   }
   const { dataRows } = csvTable(rows, settings);
+  const known = settings.hasHeader ? supplierExport(rows[0]?.cells ?? []) : null;
   const records = dataRows
     .map((row) => {
       const cells = (role: ColumnRole) =>
@@ -61,18 +79,24 @@ export function outputFromColumns(
 
   if (kind === "order") {
     return {
-      supplier: common("supplier"),
+      supplier: common("supplier") ?? (known && inferred(known.supplier)),
       reference: common("order_reference"),
       placedOn: common("order_date"),
-      lines: records.map((record) => ({
-        ...shared(record),
-        purchaseQuantity: wholeNumber(record.cell("quantity")),
-        purchaseUnit: stated(record.cell("purchase_unit")),
-        packQuantity: wholeNumber(record.cell("pack_quantity")),
-        baseUnit: stated(record.cell("unit")),
-        unitPrice: stated(record.cell("unit_price")),
-        currency: stated(record.cell("currency")),
-      })),
+      lines: records.map((record) => {
+        const { price, currency } = priceCell(record.cell("unit_price"));
+        return {
+          ...shared(record),
+          purchaseQuantity: wholeNumber(record.cell("quantity")),
+          purchaseUnit:
+            stated(record.cell("purchase_unit")) ?? (known && inferred(known.purchaseUnit)),
+          packQuantity:
+            wholeNumber(record.cell("pack_quantity")) ??
+            (known && { value: known.packQuantity, provenance: "inferred" as const }),
+          baseUnit: stated(record.cell("unit")) ?? (known && inferred(known.baseUnit)),
+          unitPrice: price,
+          currency: stated(record.cell("currency")) ?? currency,
+        };
+      }),
     };
   }
 

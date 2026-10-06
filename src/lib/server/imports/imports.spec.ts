@@ -138,6 +138,72 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
     ]);
   });
 
+  it("maps a DigiKey order copy into one draft with lines", () => {
+    const ctx = createTestImports();
+    const row = (...cells: string[]) => cells.join("\t");
+    const result = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: [
+        row(
+          "Index",
+          "DigiKey Part #",
+          "Manufacturer Part Number",
+          "Manufacturer",
+          "Description",
+          "Customer Reference",
+          "Quantity",
+          "Backorder",
+          "Unit Price",
+          "Extended Price"
+        ),
+        row(
+          "1",
+          "4526-BB830-ND",
+          "BB830",
+          "BusBoard",
+          "BREADBOARD 830PT",
+          "",
+          "2",
+          "0",
+          "$8.95000",
+          "$17.90"
+        ),
+        row(
+          "2",
+          "S7018-ND",
+          "PPTC201LFBN-RC",
+          "Sullins",
+          "CONN HDR 20POS",
+          "FEMALE HEADERS",
+          "4",
+          "0",
+          "$1.15000",
+          "$4.60"
+        ),
+        row("", "", "", "", "", "", "", "", "Subtotal", "$22.50"),
+      ].join("\r\n"),
+    });
+
+    expect(result).toMatchObject({ batched: false, skipped: [] });
+    const draft = review(ctx, result.ids[0]);
+    expect(draft.record.header.supplier).toBe("DigiKey");
+    expect(draft.lines.map((line) => line.fields)).toMatchObject([
+      {
+        description: "BREADBOARD 830PT",
+        quantity: "2",
+        purchaseUnit: "each",
+        packQuantity: "1",
+        supplierSku: "4526-BB830-ND",
+        partNumber: "BB830",
+        manufacturer: "BusBoard",
+        unitPrice: "8.95000",
+        currency: "USD",
+      },
+      { description: "CONN HDR 20POS", supplierSku: "S7018-ND", notes: "FEMALE HEADERS" },
+    ]);
+  });
+
   it("takes the order date from extension CSV and places the order on commit", () => {
     const ctx = createTestImports();
     const result = ctx.imports.createCsvOrderBatch({

@@ -7,8 +7,11 @@ export interface CsvRow {
 /**
  * Parse comma-separated text: quoted fields may contain commas, doubled quotes, and line
  * breaks. Blank lines are skipped. Cells keep their text without surrounding whitespace.
+ * Text whose first line has a tab is tab-separated, as copied from a spreadsheet or from
+ * DigiKey's order page.
  */
 export function parseCsv(text: string): CsvRow[] {
+  const separator = /^[^\n]*\t/.test(text.trimStart()) ? "\t" : ",";
   const rows: CsvRow[] = [];
   let cells: string[] = [];
   let cell = "";
@@ -38,7 +41,7 @@ export function parseCsv(text: string): CsvRow[] {
     } else if (char === '"' && cell.trim() === "") {
       quoted = true;
       cell = "";
-    } else if (char === ",") {
+    } else if (char === separator) {
       cells.push(cell.trim());
       cell = "";
     } else if (char === "\n") {

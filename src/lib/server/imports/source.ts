@@ -1,5 +1,5 @@
 import { parseCsv, type CsvRow } from "#lib/csv.ts";
-import { isColumnRole, type CsvSettings, type SourceType } from "#lib/imports.ts";
+import { isColumnRole, type ColumnRole, type CsvSettings, type SourceType } from "#lib/imports.ts";
 
 /**
  * The rows of a source with their line numbers, which are the row numbers used as evidence.
@@ -28,7 +28,34 @@ export function csvTable(rows: CsvRow[], settings: CsvSettings) {
   return { columns, dataRows: settings.hasHeader ? rows.slice(1) : rows };
 }
 
-/** Default CSV settings: a header row, with exact role names selected automatically. */
+/** Column names of supplier exports that mean a role. Names are compared in lower case. */
+const COLUMN_ALIASES: Record<string, ColumnRole> = {
+  "digikey part #": "supplier_sku",
+  "manufacturer part number": "part_number",
+  "unit price": "unit_price",
+  "customer reference": "notes",
+};
+
+/** A supplier's own export, known by its header, and what it implies for each line. */
+export interface SupplierExport {
+  supplier: string;
+  purchaseUnit: string;
+  packQuantity: number;
+  baseUnit: string;
+}
+
+/** DigiKey's "Copy to clipboard" on an order page. DigiKey sells single pieces. */
+export function supplierExport(header: string[]): SupplierExport | null {
+  const names = header.map((name) => name.trim().toLowerCase());
+  return names.includes("digikey part #")
+    ? { supplier: "DigiKey", purchaseUnit: "each", packQuantity: 1, baseUnit: "pcs" }
+    : null;
+}
+
+/**
+ * Default CSV settings: a header row, with role names and known supplier column names
+ * selected automatically.
+ */
 export function defaultCsvSettings(rows: CsvRow[]): CsvSettings {
   const width = Math.max(0, ...rows.map((r) => r.cells.length));
   const header = rows[0]?.cells ?? [];
@@ -36,7 +63,7 @@ export function defaultCsvSettings(rows: CsvRow[]): CsvSettings {
     hasHeader: true,
     roles: Array.from({ length: width }, (_, index) => {
       const name = header[index]?.trim().toLowerCase() ?? "";
-      return isColumnRole(name) ? name : "ignore";
+      return isColumnRole(name) ? name : (COLUMN_ALIASES[name] ?? "ignore");
     }),
   };
 }
