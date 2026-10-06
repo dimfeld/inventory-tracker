@@ -139,7 +139,7 @@ describe("ImportLineForm.svelte", () => {
   it("shows a cleanup in progress and blocks other submissions until it finishes", async () => {
     render(ImportLineForm, { ...props(saved), kind: "order" as const, cleanupAvailable: true });
 
-    await page.getByRole("button", { name: "Clean up with GPT-6 Luna" }).click();
+    await page.getByRole("button", { name: "AI Clean up" }).click();
     await expect.element(page.getByText("Saving the line and sending it to OpenAI")).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Save line" })).toBeDisabled();
 

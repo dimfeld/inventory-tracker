@@ -110,7 +110,7 @@ export const actions: Actions = {
     });
   },
 
-  /** Save the line's edits, then let GPT-6 Luna clean up its name, category, and attributes. */
+  /** Save the line's edits, then let the model clean up its name, category, and attributes. */
   cleanupLine: async ({ request, params }) => {
     const form = await request.formData();
     const lineId = idField(form, "line_id");

@@ -37,7 +37,7 @@
     };
     groups: { id: number; name: string }[];
     feedback: { ok: boolean; text: string } | null;
-    /** True when the server can call GPT-6 Luna to clean up the line. */
+    /** True when the server can call the model to clean up the line. */
     cleanupAvailable?: boolean;
   }
 
@@ -279,7 +279,7 @@
           disabled={!cleanupAvailable || cleaning}
           title={cleanupAvailable ? undefined : 'OPENAI_API_KEY is not set'}
         >
-          Clean up with GPT-6 Luna
+          AI Clean up
         </button>
       {/if}
       <span role="status" class="flex items-center gap-2 text-sm">
