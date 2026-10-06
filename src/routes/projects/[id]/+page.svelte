@@ -3,6 +3,7 @@
   import { describeConstraint, PROJECT_STATUSES } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
+  import { approvePart } from './choices.remote';
 
   let { data, form }: PageProps = $props();
 
@@ -52,6 +53,18 @@
       {/each}
     </tbody>
   </table>
+{/snippet}
+
+{#snippet approveExactPart(line: (typeof data.sections)[number]['lines'][number])}
+  {@const approve = approvePart.for(line.id)}
+  {@const issues = approve.fields.allIssues()}
+  <form {...approve} class="flex items-center gap-2">
+    <input {...approve.fields.projectId.as('hidden', project.id)} />
+    <input {...approve.fields.lineId.as('hidden', line.id)} />
+    <input {...approve.fields.partId.as('hidden', line.partId!)} />
+    <button class="btn-secondary" aria-label="Approve {line.partName}" disabled={approve.pending > 0}>Approve</button>
+  </form>
+  {#if issues?.length}<p class="text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>{/if}
 {/snippet}
 
 {#snippet stockCell(coverage: (typeof data.coverage)[number])}
@@ -255,6 +268,8 @@
         </thead>
         <tbody>
           {#each section.lines as line (line.id)}
+            {@const approveExact =
+              line.partId !== null && !line.choices.some((choice) => choice.partId === line.partId)}
             <tr>
               <td>
                 <a href="{base}/lines/{line.id}" class="link font-medium">{line.description}</a>
@@ -284,6 +299,9 @@
               </td>
               <td data-label="Approved">
                 <div>
+                  {#if approveExact}
+                    {@render approveExactPart(line)}
+                  {/if}
                   {#each line.choices as choice (choice.id)}
                     <div>
                       <a href="/parts/{choice.partId}" class="link">{choice.partName}</a>
@@ -293,7 +311,9 @@
                       {/if}
                     </div>
                   {:else}
-                    <a href="{base}/lines/{line.id}" class="text-amber-700 hover:underline">Choose a part</a>
+                    {#if !approveExact}
+                      <a href="{base}/lines/{line.id}" class="text-amber-700 hover:underline">Choose a part</a>
+                    {/if}
                   {/each}
                 </div>
               </td>
