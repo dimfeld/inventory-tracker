@@ -3,7 +3,7 @@
   import { describeConstraint, PROJECT_STATUSES } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
-  import { approvePart } from './choices.remote';
+  import { approvePart, commitIncoming, reserveStock } from './lines.remote';
 
   let { data, form }: PageProps = $props();
 
@@ -65,6 +65,48 @@
     <button class="btn-secondary" aria-label="Approve {line.partName}" disabled={approve.pending > 0}>Approve</button>
   </form>
   {#if issues?.length}<p class="text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>{/if}
+{/snippet}
+
+{#snippet supplyActions(line: (typeof data.sections)[number]['lines'][number])}
+  {@const supply = data.supply[line.id]}
+  {#each supply.reserve as option (`${option.partId}-${option.locationId}`)}
+    {@const reserve = reserveStock.for(`${line.id}-${option.partId}-${option.locationId}`)}
+    {@const issues = reserve.fields.allIssues()}
+    <form {...reserve} class="mt-1 flex flex-wrap items-center gap-x-2">
+      <input {...reserve.fields.projectId.as('hidden', project.id)} />
+      <input {...reserve.fields.lineId.as('hidden', line.id)} />
+      <input {...reserve.fields.partId.as('hidden', option.partId)} />
+      <input {...reserve.fields.locationId.as('hidden', option.locationId)} />
+      <input {...reserve.fields.quantity.as('hidden', option.quantity)} />
+      <input {...reserve.fields.unit.as('hidden', option.baseUnit)} />
+      <button class="btn-secondary" disabled={reserve.pending > 0}>
+        Reserve {formatQuantity(option.quantity, option.baseUnit)}
+      </button>
+      <span class="text-xs text-gray-600">
+        {option.partId === line.partId ? '' : `${option.partName}, `}at {option.locationName}
+      </span>
+    </form>
+    {#if issues?.length}<p class="text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>{/if}
+  {/each}
+  {#each supply.commit as option (option.orderLineId)}
+    {@const commit = commitIncoming.for(`${line.id}-${option.orderLineId}`)}
+    {@const issues = commit.fields.allIssues()}
+    <form {...commit} class="mt-1 flex flex-wrap items-center gap-x-2">
+      <input {...commit.fields.projectId.as('hidden', project.id)} />
+      <input {...commit.fields.lineId.as('hidden', line.id)} />
+      <input {...commit.fields.orderLineId.as('hidden', option.orderLineId)} />
+      <input {...commit.fields.quantity.as('hidden', option.quantity)} />
+      <button class="btn-secondary" disabled={commit.pending > 0}>
+        Commit {formatQuantity(option.quantity, option.baseUnit)}
+      </button>
+      <span class="text-xs text-gray-600">
+        {option.partId === line.partId ? '' : `${option.partName}, `}from
+        <a href="/orders/{option.orderId}" class="link">{option.supplier} {option.reference ?? ''}</a>
+        {#if option.expectedOn}(expected {option.expectedOn}){/if}
+      </span>
+    </form>
+    {#if issues?.length}<p class="text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>{/if}
+  {/each}
 {/snippet}
 
 {#snippet stockCell(coverage: (typeof data.coverage)[number])}
@@ -281,6 +323,7 @@
               <td data-label="Quantity" class="whitespace-nowrap">{formatQuantity(line.quantity, line.unit)}</td>
               <td data-label="Stock" class="sm:whitespace-nowrap">
                 <div>{@render stockCell(data.coverage[line.id])}</div>
+                {@render supplyActions(line)}
               </td>
               <td data-label="Requirement">
                 <div>

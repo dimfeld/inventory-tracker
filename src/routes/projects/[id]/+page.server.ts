@@ -4,13 +4,20 @@ import { parseComponentForm, parseProjectForm } from "#lib/schemas/project.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { allocations, projects } from "#lib/server/projects/index.ts";
 import { parseComponentFilter } from "#lib/server/projects/projects.ts";
+import { listSupplyOptions } from "#lib/server/projects/supply-options.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = ({ params, url }) => {
   const filter = parseComponentFilter(url.searchParams.get("component"));
   const details = projects().getProjectDetails(Number(params.id), filter);
   if (!details) error(404, "Project not found");
-  return { ...details, filter, coverage: allocations().getProjectCoverage(details.project.id) };
+  const coverage = allocations().getProjectCoverage(details.project.id);
+  return {
+    ...details,
+    filter,
+    coverage,
+    supply: listSupplyOptions(details.project.id, coverage),
+  };
 };
 
 /** A required ID field from a form. Returns null when it is missing or invalid. */
