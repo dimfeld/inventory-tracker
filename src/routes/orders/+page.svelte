@@ -21,7 +21,7 @@
 </svelte:head>
 
 <div class="mb-4 flex items-center gap-3">
-  <h1 class="text-2xl font-semibold">Orders</h1>
+  <h1 class="page-title">Orders</h1>
   <a href="/orders/new" class="btn ml-auto">New order</a>
 </div>
 
@@ -36,11 +36,11 @@
 {#each groups as group (group.title)}
   {#if group.orders.length > 0}
     <section class="mb-6">
-      <h2 class="mb-2 font-semibold">{group.title}</h2>
-      <table class="w-full text-left text-sm">
-        <thead class="border-b text-gray-600">
+      <h2 class="section-title">{group.title}</h2>
+      <table class="data-table stack-table">
+        <thead>
           <tr>
-            <th class="py-1">Supplier</th>
+            <th>Supplier</th>
             <th>Reference</th>
             <th>Placed</th>
             <th>Expected</th>
@@ -51,14 +51,19 @@
         </thead>
         <tbody>
           {#each group.orders as order (order.id)}
-            <tr class="border-b border-gray-100">
-              <td class="py-1"><a href="/orders/{order.id}" class="text-blue-700 hover:underline">{order.supplier}</a></td>
-              <td>{order.reference ?? '—'}</td>
-              <td>{order.placedOn ?? '—'}</td>
-              <td>{order.expectedOn ?? '—'}</td>
-              <td>{ORDER_DELIVERY_LABELS[order.delivery]}</td>
-              <td class="text-right">{order.openLineCount} of {order.lineCount}</td>
-              <td class="text-right"><MoneyTotals costs={order.costs} unknownLabel="no price" /></td>
+            <tr>
+              <td>
+                <a href="/orders/{order.id}" class="link font-medium sm:font-normal">{order.supplier}</a>
+                {#if order.status !== 'draft' && order.openLineCount > 0}
+                  <a href="/orders/{order.id}/receive" class="ml-2 text-xs text-gray-600 hover:underline">Receive</a>
+                {/if}
+              </td>
+              <td data-label="Reference">{order.reference ?? '—'}</td>
+              <td data-label="Placed">{order.placedOn ?? '—'}</td>
+              <td data-label="Expected">{order.expectedOn ?? '—'}</td>
+              <td data-label="Delivery">{ORDER_DELIVERY_LABELS[order.delivery]}</td>
+              <td data-label="Outstanding" class="text-right">{order.openLineCount} of {order.lineCount}</td>
+              <td data-label="Actual cost" class="text-right"><MoneyTotals costs={order.costs} unknownLabel="no price" /></td>
             </tr>
           {/each}
         </tbody>
@@ -68,21 +73,21 @@
 {/each}
 
 <section>
-  <h2 class="mb-2 font-semibold">Incoming supply</h2>
+  <h2 class="section-title">Incoming supply by part</h2>
   {#if data.incoming.length === 0}
     <p class="text-sm text-gray-600">Nothing is outstanding on placed or shipped orders.</p>
   {:else}
     <p class="mb-2 text-sm text-gray-600">Outstanding quantities. Incoming supply is not physical stock.</p>
-    <table class="w-full text-left text-sm">
-      <thead class="border-b text-gray-600">
-        <tr><th class="py-1">Part</th><th class="text-right">Placed</th><th class="text-right">Shipped</th></tr>
+    <table class="data-table stack-table max-w-2xl">
+      <thead>
+        <tr><th>Part</th><th class="text-right">Placed</th><th class="text-right">Shipped</th></tr>
       </thead>
       <tbody>
         {#each data.incoming as part (part.partId)}
-          <tr class="border-b border-gray-100">
-            <td class="py-1"><a href="/parts/{part.partId}" class="text-blue-700 hover:underline">{part.partName}</a></td>
-            <td class="text-right">{formatQuantity(part.placed, part.baseUnit)}</td>
-            <td class="text-right">{formatQuantity(part.shipped, part.baseUnit)}</td>
+          <tr>
+            <td><a href="/parts/{part.partId}" class="link font-medium sm:font-normal">{part.partName}</a></td>
+            <td data-label="Placed" class="text-right">{formatQuantity(part.placed, part.baseUnit)}</td>
+            <td data-label="Shipped" class="text-right">{formatQuantity(part.shipped, part.baseUnit)}</td>
           </tr>
         {/each}
       </tbody>

@@ -9,10 +9,8 @@
   <title>Edit BOM row · {data.project.name}</title>
 </svelte:head>
 
-<p class="mb-2 text-sm">
-  <a href="/projects/{data.project.id}" class="text-blue-700 hover:underline">← {data.project.name}</a>
-</p>
-<h1 class="mb-4 text-2xl font-semibold">Edit BOM row</h1>
+<a href="/projects/{data.project.id}" class="back-link">← {data.project.name}</a>
+<h1 class="page-title mb-4">Edit BOM row</h1>
 
 <BomLineForm
   options={data.options}

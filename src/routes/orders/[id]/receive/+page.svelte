@@ -25,16 +25,14 @@
   <title>Receive · {order.supplier} {order.reference ?? ''}</title>
 </svelte:head>
 
-<p class="mb-2 text-sm">
-  <a href="/orders/{order.id}" class="text-blue-700 hover:underline">← {order.supplier} {order.reference ?? ''}</a>
-</p>
-<h1 class="mb-2 text-2xl font-semibold">Review and receive items</h1>
+<a href="/orders/{order.id}" class="back-link">← {order.supplier} {order.reference ?? ''}</a>
+<h1 class="page-title mb-2">Review and receive items</h1>
 <p class="mb-4 text-sm text-gray-600">
   Only accepted usable quantities are added to stock. Damaged items are recorded but not added. Receiving a line
   also records its delivery and review, even when it was not marked delivered.
 </p>
 
-{#if feedback}<p class="mb-4 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}
+{#if feedback}<p class="mb-4 {feedback.ok ? 'msg-ok' : 'msg-error'}">{feedback.text}</p>{/if}
 
 {#if order.status === 'draft'}
   <p class="text-gray-600">Place the order before you receive it.</p>
@@ -47,7 +45,7 @@
 {:else}
   {#key data.operationId}
     <section class="mb-6 rounded border border-blue-200 bg-blue-50 p-3 text-sm">
-      <h2 class="mb-2 font-semibold">Receive all outstanding items</h2>
+      <h2 class="section-title">Receive all outstanding items</h2>
       <form method="POST" action="?/receiveAll" use:enhance class="space-y-2">
         <input type="hidden" name="operation_id" value={data.operationId} />
         <input type="hidden" name="received_on" value={data.today} />
@@ -80,7 +78,7 @@
       </form>
     </section>
 
-    <h2 class="mb-2 font-semibold">Review each line</h2>
+    <h2 class="section-title">Review each line</h2>
     <div class="space-y-3">
       {#each data.lines as line (line.id)}
         <ReceiptLineForm

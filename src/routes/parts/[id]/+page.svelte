@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { enhance } from '$app/forms';
   import { formatAttributeValue } from '#lib/attributes.ts';
   import { formatQuantity } from '#lib/units.ts';
@@ -42,30 +43,53 @@
     { action: 'supplier_return', title: 'Return to supplier', locationLabel: 'From', amountLabel: 'Quantity', reason: 'required' },
     { action: 'count', title: 'Stock count', locationLabel: 'Location', amountLabel: 'Counted quantity', reason: 'required' },
   ] as const;
+  type StockFormAction = (typeof stockForms)[number]['action'];
+
+  // After a submit, the form keeps the kind of change that was just recorded.
+  // svelte-ignore state_referenced_locally
+  let stockAction = $state<StockFormAction>(
+    stockForms.find((sf) => sf.action === form?.action)?.action ?? 'opening'
+  );
+  const stockForm = $derived(stockForms.find((sf) => sf.action === stockAction)!);
+  // svelte-ignore state_referenced_locally
+  let stockLocationId = $state(data.balances[0]?.locationId ?? data.locations[0]?.id);
+  let amountInput = $state<HTMLInputElement>();
+
+  /** Open the stock form for one kind of change at one location, ready for the amount. */
+  async function startStockChange(action: StockFormAction, locationId: number) {
+    stockAction = action;
+    stockLocationId = locationId;
+    await tick();
+    amountInput?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    amountInput?.focus({ preventScroll: true });
+  }
 </script>
 
 <svelte:head>
   <title>{part.name}</title>
 </svelte:head>
 
-<p class="mb-2 text-sm"><a href="/parts" class="text-blue-700 hover:underline">← Parts</a></p>
+<a href="/parts" class="back-link">← Parts</a>
 
-<div class="mb-4 flex flex-wrap items-center gap-3">
-  <h1 class="text-2xl font-semibold">{part.name}</h1>
+<div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+  <h1 class="page-title">{part.name}</h1>
   {#if part.archivedAt}
-    <span class="rounded bg-gray-200 px-2 py-0.5 text-xs uppercase">archived</span>
+    <span class="badge">archived</span>
   {/if}
-  <a href="/parts/{part.id}/edit" class="btn-secondary ml-auto">Edit</a>
-  <form method="POST" action={part.archivedAt ? '?/restore' : '?/archive'} use:enhance>
-    <button class="btn-secondary">{part.archivedAt ? 'Restore' : 'Archive'}</button>
-  </form>
+  <span class="text-lg text-gray-600">{formatQuantity(total, part.baseUnit)} in stock</span>
+  <div class="flex gap-2 sm:ml-auto">
+    <a href="/parts/{part.id}/edit" class="btn-secondary">Edit</a>
+    <form method="POST" action={part.archivedAt ? '?/restore' : '?/archive'} use:enhance>
+      <button class="btn-secondary">{part.archivedAt ? 'Restore' : 'Archive'}</button>
+    </form>
+  </div>
 </div>
 {#if feedback('archive') ?? feedback('restore')}
   {@const fb = feedback('archive') ?? feedback('restore')}
-  <p class={fb?.ok ? 'mb-3 text-green-700' : 'mb-3 text-red-700'}>{fb?.text}</p>
+  <p class="mb-3 {fb?.ok ? 'msg-ok' : 'msg-error'}">{fb?.text}</p>
 {/if}
 
-<section class="mb-6 grid gap-4 sm:grid-cols-2">
+<section class="card mb-6 grid gap-4 sm:grid-cols-2">
   <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
     <dt class="text-gray-600">Category</dt><dd>{part.categoryName ?? '—'}</dd>
     <dt class="text-gray-600">Base unit</dt><dd>{part.baseUnit}</dd>
@@ -93,7 +117,7 @@
         {#each data.supplierParts as sp (sp.id)}
           <li>
             {sp.supplier}
-            {#if sp.url}<a href={sp.url} class="text-blue-700 hover:underline" rel="noreferrer">{sp.sku}</a>{:else}{sp.sku}{/if}
+            {#if sp.url}<a href={sp.url} class="link" rel="noreferrer" target="_blank">{sp.sku}</a>{:else}{sp.sku}{/if}
             {#if sp.purchaseUnit || sp.packQuantity}
               <span class="text-gray-600">
                 — {sp.purchaseUnit ?? 'purchase unit'}{#if sp.packQuantity} = {formatQuantity(sp.packQuantity, part.baseUnit)}{/if}
@@ -111,28 +135,42 @@
 </section>
 
 <section class="mb-6">
-  <h2 class="mb-2 text-lg font-semibold">Stock by location</h2>
+  <h2 class="section-title">Stock by location</h2>
   {#if data.balances.length === 0}
     <p class="text-gray-600">No stock recorded.</p>
   {:else}
-    <table class="w-full max-w-xl text-left text-sm">
+    <table class="data-table stack-table max-w-3xl">
+      <thead>
+        <tr><th>Location</th><th class="text-right">Quantity</th><th>Reserved</th><th></th></tr>
+      </thead>
       <tbody>
         {#each data.balances as balance (balance.locationId)}
-          <tr class="border-b border-gray-100">
-            <td class="py-1">{balance.locationName}</td>
-            <td class="text-right">{formatQuantity(balance.quantity, part.baseUnit)}</td>
-            <td class="pl-3 text-right text-gray-600">
+          <tr>
+            <td class="font-medium sm:font-normal">{balance.locationName}</td>
+            <td data-label="Quantity" class="text-right whitespace-nowrap">{formatQuantity(balance.quantity, part.baseUnit)}</td>
+            <td data-label="Reserved" class="text-gray-600 {reservedAt(balance.locationId) > 0 ? '' : 'max-sm:hidden'}">
               {#if reservedAt(balance.locationId) > 0}
                 {formatQuantity(reservedAt(balance.locationId), part.baseUnit)} reserved,
                 {formatQuantity(balance.quantity - reservedAt(balance.locationId), part.baseUnit)} available
               {/if}
             </td>
+            <td class="whitespace-nowrap sm:text-right">
+              {#if !part.archivedAt}
+                <div class="mt-1 flex gap-1 sm:mt-0 sm:justify-end">
+                  <button type="button" class="btn-secondary" onclick={() => startStockChange('count', balance.locationId)}>Count</button>
+                  {#if data.locations.length > 1}
+                    <button type="button" class="btn-secondary" onclick={() => startStockChange('transfer', balance.locationId)}>Move</button>
+                  {/if}
+                </div>
+              {/if}
+            </td>
           </tr>
         {/each}
         <tr class="font-semibold">
-          <td class="py-1">Total physical stock</td>
-          <td class="text-right">{formatQuantity(total, part.baseUnit)}</td>
-          <td></td>
+          <td>Total physical stock</td>
+          <td data-label="Total" class="text-right whitespace-nowrap">{formatQuantity(total, part.baseUnit)}</td>
+          <td class="max-sm:hidden"></td>
+          <td class="max-sm:hidden"></td>
         </tr>
       </tbody>
     </table>
@@ -140,41 +178,51 @@
 </section>
 
 {#if !part.archivedAt}
-  <section class="mb-6">
-    <h2 class="mb-2 text-lg font-semibold">Change stock</h2>
+  <section class="mb-6" id="change-stock">
+    <h2 class="section-title">Change stock</h2>
     {#if data.locations.length === 0}
       <p class="text-gray-600">
-        <a href="/locations" class="text-blue-700 hover:underline">Add a storage location</a> first.
+        <a href="/locations" class="link">Add a storage location</a> first.
       </p>
     {:else}
-      <div class="grid gap-4 md:grid-cols-2">
-        {#each stockForms as sf (sf.action)}
-          {@const fb = feedback(sf.action)}
-          <form method="POST" action="?/{sf.action}" use:enhance class="space-y-2 rounded border p-3 text-sm">
-            <h3 class="font-semibold">{sf.title}</h3>
-            <input type="hidden" name="operation_id" value={data.operationId} />
+      {@const fb = feedback(stockForm.action)}
+      <div class="card max-w-xl">
+        <div role="tablist" aria-label="Kind of stock change" class="-mx-1 mb-3 flex gap-1 overflow-x-auto px-1 pb-1">
+          {#each stockForms as sf (sf.action)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sf.action === stockAction}
+              class={sf.action === stockAction ? 'pill-active' : 'pill'}
+              onclick={() => (stockAction = sf.action)}>{sf.title}</button
+            >
+          {/each}
+        </div>
+        <form method="POST" action="?/{stockForm.action}" use:enhance class="space-y-3 text-sm">
+          <input type="hidden" name="operation_id" value={data.operationId} />
+          <div class="grid gap-3 sm:grid-cols-2">
             <label class="block">
-              {sf.locationLabel}
-              <select name="location_id" required class="input">
+              {stockForm.locationLabel}
+              <select name="location_id" required class="input" bind:value={stockLocationId}>
                 {#each data.locations as location (location.id)}
                   <option value={location.id}>{locationLabel(location)}</option>
                 {/each}
               </select>
             </label>
-            {#if sf.action === 'transfer'}
+            {#if stockForm.action === 'transfer'}
               <label class="block">
                 To
                 <select name="to_location_id" required class="input">
                   {#each data.locations as location (location.id)}
-                    <option value={location.id}>{locationLabel(location)}</option>
+                    <option value={location.id} selected={location.id !== stockLocationId}>{locationLabel(location)}</option>
                   {/each}
                 </select>
               </label>
             {/if}
             <div class="flex gap-2">
               <label class="block grow">
-                {sf.amountLabel}
-                <input name="amount" required inputmode="decimal" class="input" />
+                {stockForm.amountLabel}
+                <input bind:this={amountInput} name="amount" required inputmode="decimal" class="input" />
               </label>
               <label class="block">
                 Unit
@@ -189,37 +237,37 @@
               Date
               <input name="occurred_on" type="date" value={data.today} required class="input" />
             </label>
-            <label class="block">
-              Reason{sf.reason === 'optional' ? ' (optional)' : ''}
-              <input name="reason" required={sf.reason === 'required'} class="input" />
+            <label class="block sm:col-span-2">
+              Reason{stockForm.reason === 'optional' ? ' (optional)' : ''}
+              <input name="reason" required={stockForm.reason === 'required'} class="input" />
             </label>
-            {#if fb}<p class={fb.ok ? 'text-green-700' : 'text-red-700'}>{fb.text}</p>{/if}
-            <button class="btn">Record</button>
-          </form>
-        {/each}
+          </div>
+          {#if fb}<p class={fb.ok ? 'msg-ok' : 'msg-error'}>{fb.text}</p>{/if}
+          <button class="btn">Record {stockForm.title.toLowerCase()}</button>
+        </form>
       </div>
     {/if}
   </section>
 {/if}
 
 <section>
-  <h2 class="mb-2 text-lg font-semibold">Movement history</h2>
+  <h2 class="section-title">Movement history</h2>
   {#if data.movements.length === 0}
     <p class="text-gray-600">No movements.</p>
   {:else}
-    <table class="w-full text-left text-sm">
-      <thead class="border-b text-gray-600">
-        <tr><th class="py-1">Date</th><th>Type</th><th>From</th><th>To</th><th class="text-right">Quantity</th><th>Reason</th></tr>
+    <table class="data-table stack-table">
+      <thead>
+        <tr><th>Date</th><th>Type</th><th>From</th><th>To</th><th class="text-right">Quantity</th><th>Reason</th></tr>
       </thead>
       <tbody>
         {#each data.movements as movement (movement.id)}
-          <tr class="border-b border-gray-100">
-            <td class="py-1">{movement.occurredOn}</td>
-            <td>{MOVEMENT_LABELS[movement.movementType] ?? movement.movementType}</td>
-            <td>{movement.fromLocationName ?? 'outside'}</td>
-            <td>{movement.toLocationName ?? 'outside'}</td>
-            <td class="text-right">{formatQuantity(movement.quantity, part.baseUnit)}</td>
-            <td class="text-gray-600">{movement.reason ?? ''}</td>
+          <tr>
+            <td class="whitespace-nowrap text-gray-600">{movement.occurredOn}</td>
+            <td class="font-medium sm:font-normal">{MOVEMENT_LABELS[movement.movementType] ?? movement.movementType}</td>
+            <td data-label="From">{movement.fromLocationName ?? 'outside'}</td>
+            <td data-label="To">{movement.toLocationName ?? 'outside'}</td>
+            <td data-label="Quantity" class="text-right whitespace-nowrap">{formatQuantity(movement.quantity, part.baseUnit)}</td>
+            <td data-label="Reason" class="text-gray-600 {movement.reason ? '' : 'max-sm:hidden'}">{movement.reason ?? ''}</td>
           </tr>
         {/each}
       </tbody>

@@ -45,39 +45,39 @@
 
 {#snippet message(action: string)}
   {@const fb = feedback(action)}
-  {#if fb}<p class={fb.ok ? 'text-green-700' : 'text-red-700'}>{fb.text}</p>{/if}
+  {#if fb}<p class={fb.ok ? 'msg-ok' : 'msg-error'}>{fb.text}</p>{/if}
 {/snippet}
 
-<p class="mb-2 text-sm"><a href="/imports" class="text-blue-700 hover:underline">← Imports</a></p>
-<h1 class="mb-1 text-2xl font-semibold">{KIND_LABELS[record.kind]} import</h1>
+<a href="/imports" class="back-link">← Imports</a>
+<h1 class="page-title mb-1">{KIND_LABELS[record.kind]} import</h1>
 <p class="mb-4 text-sm text-gray-600">
   AI parsing sends the submitted source text to OpenAI. AI clean up sends that line and the catalog part list. Saving
   drafts, entering lines by hand, mapping CSV columns, and committing stay on this server.
 </p>
 
 {#if committed}
-  <p class="mb-4 rounded border border-green-300 bg-green-50 p-2">
+  <p class="msg-ok mb-4">
     Committed on {record.committedAt}.
-    {#if record.orderId}<a href="/orders/{record.orderId}" class="text-blue-700 hover:underline">View the order</a> — it is
+    {#if record.orderId}<a href="/orders/{record.orderId}" class="link">View the order</a> — it is
       a draft; nothing was received or added to stock.{/if}
-    {#if record.projectId}<a href="/projects/{record.projectId}" class="text-blue-700 hover:underline">View the project</a>.{/if}
+    {#if record.projectId}<a href="/projects/{record.projectId}" class="link">View the project</a>.{/if}
     {#if record.kind === 'order' && !record.orderId}No lines were kept, so no order was created. A later import of this
       order is skipped.{/if}
   </p>
 {/if}
 
 {#if data.sameSource.length > 0 || data.sameReference.length > 0}
-  <div class="mb-4 rounded border border-amber-300 bg-amber-50 p-2 text-sm">
+  <div class="notice mb-4">
     {#if data.sameSource.length > 0}
       <p>
         The same source was imported before:
-        {#each data.sameSource as other, i (other.id)}{i > 0 ? ', ' : ''}<a href="/imports/{other.id}" class="text-blue-700 hover:underline">import {other.id}</a> ({other.commitState}){/each}.
+        {#each data.sameSource as other, i (other.id)}{i > 0 ? ', ' : ''}<a href="/imports/{other.id}" class="link">import {other.id}</a> ({other.commitState}){/each}.
       </p>
     {/if}
     {#if data.sameReference.length > 0}
       <p>
         Orders with this supplier reference already exist:
-        {#each data.sameReference as order, i (order.id)}{i > 0 ? ', ' : ''}<a href="/orders/{order.id}" class="text-blue-700 hover:underline">order {order.id}</a>{/each}.
+        {#each data.sameReference as order, i (order.id)}{i > 0 ? ', ' : ''}<a href="/orders/{order.id}" class="link">order {order.id}</a>{/each}.
       </p>
     {/if}
     <p>A repeated purchase is allowed; check that this is not a duplicate before you commit.</p>
@@ -85,7 +85,7 @@
 {/if}
 
 <section class="mb-6">
-  <h2 class="mb-2 font-semibold">Source</h2>
+  <h2 class="section-title">Source</h2>
   {#if csv}
     <form method="POST" action="?/columns" use:enhance class="mb-2 overflow-x-auto">
       <label class="mb-1 block text-sm">
@@ -123,7 +123,7 @@
       {@render message('columns')}
     </form>
   {:else}
-    <ol class="mb-2 rounded bg-gray-50 p-2 font-mono text-sm">
+    <ol class="mb-2 overflow-x-auto rounded-md border border-gray-200 bg-white p-2 font-mono text-sm">
       {#each data.source.rows as row (row.row)}
         <li><span class="mr-2 text-gray-500">{row.row}</span>{row.cells[0]}</li>
       {/each}
@@ -132,7 +132,7 @@
 
   {#if !committed}
     <details class="mb-2">
-      <summary class="cursor-pointer text-sm text-blue-700">Edit the source</summary>
+      <summary class="link cursor-pointer text-sm">Edit the source</summary>
       <form method="POST" action="?/source" use:enhance class="space-y-2">
         <textarea name="source_text" rows="8" class="input font-mono text-sm">{record.sourceText}</textarea>
         <button class="btn-secondary">Save source</button>
@@ -155,7 +155,7 @@
 </section>
 
 <section class="mb-6 max-w-2xl">
-  <h2 class="mb-2 font-semibold">{record.kind === 'order' ? 'Order' : 'Project'}</h2>
+  <h2 class="section-title">{record.kind === 'order' ? 'Order' : 'Project'}</h2>
   <form method="POST" action="?/header" use:enhance>
     <fieldset disabled={committed} class="grid gap-2 sm:grid-cols-2">
       {#if record.kind === 'order'}
@@ -197,7 +197,7 @@
 
 {#if record.kind === 'project'}
   <section class="mb-6 max-w-2xl">
-    <h2 class="mb-1 font-semibold">Component groups</h2>
+    <h2 class="section-title mb-1">Component groups</h2>
     <p class="mb-2 text-sm text-gray-600">
       Groups organize BOM rows; they do not make a row optional. Only explicit source headings or component columns
       are proposed. Groups without lines are not committed.
@@ -208,7 +208,7 @@
         <li>
           <form method="POST" action="?/renameGroup" use:enhance class="flex flex-wrap items-center gap-2">
             <input type="hidden" name="group_id" value={group.id} />
-            <input name="name" value={group.name} disabled={committed} class="input w-56" />
+            <input name="name" value={group.name} disabled={committed} class="input w-full sm:w-56" />
             <span class="text-sm text-gray-500">
               {group.sourceExcerpt !== null ? `source row ${group.sourceRow}: "${group.sourceExcerpt}"` : 'added in review'}
               · {data.lines.filter((l) => l.groupId === group.id).length} line(s)
@@ -223,7 +223,7 @@
     </ul>
     {#if !committed}
       <form method="POST" action="?/addGroup" use:enhance class="mt-2 flex gap-2">
-        <input name="name" placeholder="New group name" class="input w-56" />
+        <input name="name" placeholder="New group name" class="input w-full sm:w-56" />
         <button class="btn-secondary">Add group</button>
       </form>
     {/if}
@@ -232,7 +232,7 @@
 {/if}
 
 <section class="mb-6">
-  <h2 class="mb-2 font-semibold">Lines</h2>
+  <h2 class="section-title">Lines</h2>
   {#if data.lines.length === 0}<p class="mb-2 text-sm text-gray-600">No lines yet.</p>{/if}
   <div class="space-y-3">
     {#each data.lines as line, index (line.id)}
@@ -263,8 +263,8 @@
 </section>
 
 {#if !committed}
-  <section class="mb-6 max-w-2xl">
-    <h2 class="mb-2 font-semibold">Commit</h2>
+  <section class="card mb-6 max-w-2xl">
+    <h2 class="section-title">Commit</h2>
     <p class="mb-2 text-sm text-gray-600">
       {#if record.kind === 'order'}
         Creates any new parts and a draft order with these lines. It does not receive the order or add stock.

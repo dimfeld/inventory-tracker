@@ -9,7 +9,7 @@
   <title>New part</title>
 </svelte:head>
 
-<h1 class="mb-4 text-2xl font-semibold">New part</h1>
+<h1 class="page-title mb-4">New part</h1>
 <PartForm
   categories={data.categories}
   attributeOptions={data.attributeOptions}

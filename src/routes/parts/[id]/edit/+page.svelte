@@ -9,8 +9,8 @@
   <title>Edit {data.part.name}</title>
 </svelte:head>
 
-<p class="mb-2 text-sm"><a href="/parts/{data.part.id}" class="text-blue-700 hover:underline">← {data.part.name}</a></p>
-<h1 class="mb-4 text-2xl font-semibold">Edit part</h1>
+<a href="/parts/{data.part.id}" class="back-link">← {data.part.name}</a>
+<h1 class="page-title mb-4">Edit part</h1>
 <PartForm
   categories={data.categories}
   attributeOptions={data.attributeOptions}

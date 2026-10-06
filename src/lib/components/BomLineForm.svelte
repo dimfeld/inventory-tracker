@@ -130,7 +130,7 @@
     <p class="text-sm text-red-700">{errors.amount ?? errors.unit}</p>
   {/if}
 
-  <fieldset class="rounded border p-3">
+  <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Requirement</legend>
     <div class="mb-3 flex gap-4">
       <label><input type="radio" name="mode" value="exact" bind:group={mode} /> Exact part</label>
@@ -178,7 +178,7 @@
     {/if}
   </fieldset>
 
-  <fieldset class="rounded border p-3">
+  <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Constraints</legend>
     <!-- Fields are parallel lists, so every row submits every field. -->
     {#each rows as row, index (index)}

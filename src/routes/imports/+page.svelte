@@ -17,7 +17,7 @@
   <title>Imports</title>
 </svelte:head>
 
-<h1 class="mb-4 text-2xl font-semibold">Imports</h1>
+<h1 class="page-title mb-4">Imports</h1>
 
 {#if data.batch}
   <p class="mb-4 rounded bg-blue-50 p-3 text-sm text-blue-900">
@@ -28,8 +28,8 @@
   </p>
 {/if}
 
-<section class="mb-8 max-w-2xl">
-  <h2 class="mb-2 font-semibold">New import</h2>
+<section class="card mb-8 max-w-2xl">
+  <h2 class="section-title">New import</h2>
   <p class="mb-2 text-sm text-gray-600">
     Paste an order list or a project BOM. It is saved as a draft; nothing is sent anywhere until you choose to
     parse it. You can also enter lines by hand or map CSV columns without parsing.
@@ -38,13 +38,13 @@
     <div class="flex flex-wrap gap-6">
       <fieldset>
         <legend class="text-sm">Kind</legend>
-        <label class="mr-3"><input type="radio" name="kind" value="order" checked /> Order list</label>
-        <label><input type="radio" name="kind" value="project" /> Project BOM</label>
+        <label class="mr-3 inline-flex min-h-8 items-center gap-1"><input type="radio" name="kind" value="order" checked /> Order list</label>
+        <label class="inline-flex min-h-8 items-center gap-1"><input type="radio" name="kind" value="project" /> Project BOM</label>
       </fieldset>
       <fieldset>
         <legend class="text-sm">Format</legend>
-        <label class="mr-3"><input type="radio" name="source_type" value="text" checked /> Text</label>
-        <label><input type="radio" name="source_type" value="csv" /> CSV</label>
+        <label class="mr-3 inline-flex min-h-8 items-center gap-1"><input type="radio" name="source_type" value="text" checked /> Text</label>
+        <label class="inline-flex min-h-8 items-center gap-1"><input type="radio" name="source_type" value="csv" /> CSV</label>
       </fieldset>
     </div>
     <label class="block">
@@ -57,28 +57,29 @@
 </section>
 
 {#if data.imports.length > 0}
-  <table class="w-full text-left text-sm">
-    <thead class="border-b text-gray-600">
-      <tr><th class="py-1">Source</th><th>Kind</th><th>State</th><th class="text-right">Lines</th><th>Result</th></tr>
+  <h2 class="section-title">Earlier imports</h2>
+  <table class="data-table stack-table">
+    <thead>
+      <tr><th>Source</th><th>Kind</th><th>State</th><th class="text-right">Lines</th><th>Result</th></tr>
     </thead>
     <tbody>
       {#each data.imports as item (item.id)}
-        <tr class="border-b border-gray-100">
-          <td class="py-1">
-            <a href="/imports/{item.id}" class="text-blue-700 hover:underline">{item.title || `Import ${item.id}`}</a>
+        <tr>
+          <td class="max-w-md truncate">
+            <a href="/imports/{item.id}" class="link font-medium sm:font-normal">{item.title || `Import ${item.id}`}</a>
           </td>
-          <td>{KIND_LABELS[item.kind]} ({item.sourceType})</td>
-          <td>
+          <td data-label="Kind">{KIND_LABELS[item.kind]} ({item.sourceType})</td>
+          <td data-label="State">
             {item.commitState !== 'committed'
               ? STATE_LABELS[item.parseState]
               : item.kind === 'order' && !item.orderId
                 ? 'Skipped'
                 : 'Committed'}
           </td>
-          <td class="text-right">{item.lineCount}</td>
-          <td>
-            {#if item.orderId}<a href="/orders/{item.orderId}" class="text-blue-700 hover:underline">Order</a>{/if}
-            {#if item.projectId}<a href="/projects/{item.projectId}" class="text-blue-700 hover:underline">Project</a>{/if}
+          <td data-label="Lines" class="text-right">{item.lineCount}</td>
+          <td data-label="Result">
+            {#if item.orderId}<a href="/orders/{item.orderId}" class="link">Order</a>{/if}
+            {#if item.projectId}<a href="/projects/{item.projectId}" class="link">Project</a>{/if}
           </td>
         </tr>
       {/each}

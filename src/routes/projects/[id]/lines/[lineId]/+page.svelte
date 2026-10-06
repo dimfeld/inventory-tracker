@@ -64,9 +64,9 @@
     inputmode="decimal"
     value={max ?? ''}
     aria-label="Quantity"
-    class="w-16 rounded border border-gray-300 px-1"
+    class="input-sm w-20"
   />
-  <select name="unit" aria-label="Unit" class="rounded border border-gray-300 px-1">
+  <select name="unit" aria-label="Unit" class="input-sm">
     {#each part.units as unit (unit)}
       <option value={unit} selected={unit === part.baseUnit}>{unit}</option>
     {/each}
@@ -88,22 +88,35 @@
   </form>
 {/snippet}
 
-<p class="mb-2 text-sm">
-  <a href="/projects/{data.project.id}" class="text-blue-700 hover:underline">← {data.project.name}</a>
-</p>
+<nav aria-label="Rows" class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+  <a href="/projects/{data.project.id}" class="link">← {data.project.name}</a>
+  <span class="ml-auto text-gray-500">Row {data.position.index + 1} of {data.position.count}</span>
+  {#if data.previousLineId !== null}
+    <a href="/projects/{data.project.id}/lines/{data.previousLineId}" class="btn-secondary">← Previous</a>
+  {/if}
+  {#if data.nextLineId !== null}
+    <a href="/projects/{data.project.id}/lines/{data.nextLineId}" class="btn-secondary">Next →</a>
+  {/if}
+</nav>
 
-<div class="mb-4 flex flex-wrap items-center gap-3">
-  <h1 class="text-2xl font-semibold">{line.description}</h1>
-  <a href="/projects/{data.project.id}/lines/{line.id}/edit" class="btn-secondary ml-auto">Edit row</a>
+<div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+  <h1 class="page-title">{line.description}</h1>
+  <div class="flex gap-2 sm:ml-auto">
+    <a href="/projects/{data.project.id}/lines/{line.id}/edit" class="btn-secondary">Edit row</a>
+    <a
+      href="/projects/{data.project.id}/lines/new{line.componentId === null ? '' : `?component=${line.componentId}`}"
+      class="btn-secondary">Add another row</a
+    >
+  </div>
 </div>
 
-<dl class="mb-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+<dl class="card mb-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
   <dt class="text-gray-600">Quantity</dt><dd>{formatQuantity(line.quantity, line.unit)}</dd>
   <dt class="text-gray-600">Component</dt><dd>{data.component?.name ?? 'Ungrouped'}</dd>
   <dt class="text-gray-600">Reference designators</dt><dd>{line.referenceDesignators ?? '—'}</dd>
   {#if line.partId !== null}
     <dt class="text-gray-600">Exact part</dt>
-    <dd><a href="/parts/{line.partId}" class="text-blue-700 hover:underline">{line.partName}</a></dd>
+    <dd><a href="/parts/{line.partId}" class="link">{line.partName}</a></dd>
   {:else}
     <dt class="text-gray-600">Category</dt><dd>{line.categoryName ?? '—'}</dd>
     <dt class="text-gray-600">Identifier</dt>
@@ -115,7 +128,7 @@
 </dl>
 
 {#if data.missingRequired.length > 0}
-  <p class="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm">
+  <p class="notice mb-4">
     This requirement does not specify {data.missingRequired.map((m) => m.label).join(', ')}, which
     {data.missingRequired.length === 1 ? 'is' : 'are'} required for its category. No part can match
     until you <a href="/projects/{data.project.id}/lines/{line.id}/edit" class="text-blue-700 underline">add
@@ -123,22 +136,22 @@
   </p>
 {/if}
 
-{#if feedback}<p class="mb-3 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}
+{#if feedback}<p class="mb-3 {feedback.ok ? 'msg-ok' : 'msg-error'}">{feedback.text}</p>{/if}
 
 <section class="mb-6">
-  <h2 class="mb-2 font-semibold">Approved parts</h2>
+  <h2 class="section-title">Approved parts</h2>
   {#if line.choices.length === 0}
     <p class="text-sm text-gray-600">None yet. Approving a part does not reserve stock.</p>
   {:else}
     <ul class="space-y-1 text-sm">
       {#each line.choices as choice (choice.id)}
         <li class="flex flex-wrap items-center gap-2">
-          <a href="/parts/{choice.partId}" class="text-blue-700 hover:underline">{choice.partName}</a>
+          <a href="/parts/{choice.partId}" class="link">{choice.partName}</a>
           {#if choice.substitute}<span class="rounded bg-amber-100 px-1 text-xs">substitute</span>{/if}
           {#if choice.note}<span class="text-gray-600">{choice.note}</span>{/if}
           <form method="POST" action="?/removeChoice" use:enhance>
             <input type="hidden" name="choice_id" value={choice.id} />
-            <button class="text-red-700 hover:underline">Remove</button>
+            <button class="link-danger">Remove</button>
           </form>
         </li>
       {/each}
@@ -147,7 +160,7 @@
 </section>
 
 <section class="mb-6">
-  <h2 class="mb-2 font-semibold">Stock for this row</h2>
+  <h2 class="section-title">Stock for this row</h2>
   <dl class="mb-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
     <dt class="text-gray-600">Required</dt><dd>{formatQuantity(coverage.required, coverage.unit)}</dd>
     <dt class="text-gray-600">Used</dt><dd>{formatQuantity(coverage.used, coverage.unit)}</dd>
@@ -166,25 +179,25 @@
       </dd>
     {/if}
   </dl>
-  {#if stockFeedback}<p class="mb-3 {stockFeedback.ok ? 'text-green-700' : 'text-red-700'}">{stockFeedback.text}</p>{/if}
+  {#if stockFeedback}<p class="mb-3 {stockFeedback.ok ? 'msg-ok' : 'msg-error'}">{stockFeedback.text}</p>{/if}
 
   {#if data.stock.parts.length === 0}
     <p class="text-sm text-gray-600">Approve a part to reserve stock for this row.</p>
   {/if}
   {#each data.stock.parts as part (part.partId)}
     {@const allocation = allocationOf(part.partId)}
-    <article class="mb-3 rounded border p-3 text-sm">
+    <article class="card mb-3 text-sm">
       <h3 class="mb-2 font-semibold">
-        <a href="/parts/{part.partId}" class="text-blue-700 hover:underline">{part.partName}</a>
+        <a href="/parts/{part.partId}" class="link">{part.partName}</a>
         {#if !part.allowed}<span class="rounded bg-red-100 px-1 text-xs text-red-800">no longer approved</span>{/if}
       </h3>
       {#if part.storage.length === 0}
         <p class="mb-2 text-gray-600">No stock in storage.</p>
       {:else}
-        <table class="mb-2 w-full text-left">
-          <thead class="border-b text-gray-600">
+        <table class="data-table stack-table mb-2">
+          <thead>
             <tr>
-              <th class="py-1">Location</th>
+              <th>Location</th>
               <th class="text-right">In storage</th>
               <th class="text-right">Reserved (all)</th>
               <th class="text-right">Available</th>
@@ -195,13 +208,13 @@
           <tbody>
             {#each part.storage as stock (stock.locationId)}
               {@const mine = reservedHere(part.partId, stock.locationId)}
-              <tr class="border-b border-gray-100 align-top">
-                <td class="py-1">{stock.locationName}</td>
-                <td class="text-right">{formatQuantity(stock.balance, part.baseUnit)}</td>
-                <td class="text-right">{formatQuantity(stock.reserved, part.baseUnit)}</td>
-                <td class="text-right">{formatQuantity(stock.available, part.baseUnit)}</td>
-                <td class="text-right">{formatQuantity(mine, part.baseUnit)}</td>
-                <td class="space-y-1 pl-3">
+              <tr>
+                <td class="font-medium sm:font-normal">{stock.locationName}</td>
+                <td data-label="In storage" class="text-right">{formatQuantity(stock.balance, part.baseUnit)}</td>
+                <td data-label="Reserved (all)" class="text-right">{formatQuantity(stock.reserved, part.baseUnit)}</td>
+                <td data-label="Available" class="text-right">{formatQuantity(stock.available, part.baseUnit)}</td>
+                <td data-label="For this row" class="text-right">{formatQuantity(mine, part.baseUnit)}</td>
+                <td class="space-y-1 pt-2 sm:pt-1.5">
                   {#if part.allowed && !part.archived && stock.available > 0 && coverage.uncovered > 0}
                     {@render amountForm('reserve', 'Reserve', part, stock.locationId)}
                   {/if}
@@ -226,13 +239,13 @@
           <form method="POST" action="?/use" use:enhance class="flex flex-wrap items-end gap-1">
             {@render hiddenFields(part.partId)}
             {@render amountFields(part, allocation.picked)}
-            <input name="reason" placeholder="Note (optional)" class="rounded border border-gray-300 px-1" />
+            <input name="reason" placeholder="Note (optional)" class="input-sm" />
             <button class="btn-secondary">Record use</button>
           </form>
           <form method="POST" action="?/return" use:enhance class="flex flex-wrap items-end gap-1">
             {@render hiddenFields(part.partId)}
             {@render amountFields(part, allocation.picked)}
-            <select name="location_id" required class="rounded border border-gray-300 px-1">
+            <select name="location_id" required class="input-sm">
               {#each data.storageLocations as location (location.id)}
                 <option value={location.id}>{location.name}</option>
               {/each}
@@ -247,29 +260,29 @@
 </section>
 
 <section class="mb-6">
-  <h2 class="mb-1 font-semibold">Incoming supply</h2>
+  <h2 class="section-title mb-1">Incoming supply</h2>
   <p class="mb-2 text-sm text-gray-600">
     An order covers this row only after you commit part of it here. When the stock arrives, the
     committed quantity becomes a reservation.
   </p>
-  {#if incomingFeedback}<p class="mb-2 {incomingFeedback.ok ? 'text-green-700' : 'text-red-700'}">{incomingFeedback.text}</p>{/if}
+  {#if incomingFeedback}<p class="mb-2 {incomingFeedback.ok ? 'msg-ok' : 'msg-error'}">{incomingFeedback.text}</p>{/if}
   {#if lineCommitments.length > 0}
-    <table class="mb-3 w-full text-left text-sm">
-      <thead class="border-b text-gray-600">
-        <tr><th class="py-1">Order</th><th>Part</th><th>Expected</th><th class="text-right">Committed</th><th></th></tr>
+    <table class="data-table stack-table mb-3">
+      <thead>
+        <tr><th>Order</th><th>Part</th><th>Expected</th><th class="text-right">Committed</th><th></th></tr>
       </thead>
       <tbody>
         {#each lineCommitments as commitment (commitment.id)}
-          <tr class="border-b border-gray-100">
-            <td class="py-1">
-              <a href="/orders/{commitment.orderId}" class="text-blue-700 hover:underline">
+          <tr>
+            <td>
+              <a href="/orders/{commitment.orderId}" class="link font-medium sm:font-normal">
                 {commitment.supplier} {commitment.reference ?? ''}
               </a>
             </td>
-            <td>{commitment.partName}</td>
-            <td>{commitment.expectedOn ?? '—'}</td>
-            <td class="text-right">{formatQuantity(commitment.quantity, commitment.baseUnit)}</td>
-            <td class="pl-3">
+            <td data-label="Part">{commitment.partName}</td>
+            <td data-label="Expected">{commitment.expectedOn ?? '—'}</td>
+            <td data-label="Committed" class="text-right">{formatQuantity(commitment.quantity, commitment.baseUnit)}</td>
+            <td class="pt-2 sm:pt-1.5">
               <form method="POST" action="?/releaseIncoming" use:enhance class="flex items-end gap-1">
                 <input type="hidden" name="commitment_id" value={commitment.id} />
                 <input
@@ -278,7 +291,7 @@
                   inputmode="numeric"
                   value={commitment.quantity}
                   aria-label="Quantity ({commitment.baseUnit})"
-                  class="w-16 rounded border border-gray-300 px-1"
+                  class="input-sm w-20"
                 />
                 <button class="btn-secondary">Release</button>
               </form>
@@ -291,27 +304,27 @@
   {#if data.incoming.length === 0}
     <p class="text-sm text-gray-600">No placed or shipped order has outstanding supply of an approved part.</p>
   {:else}
-    <table class="w-full text-left text-sm">
-      <thead class="border-b text-gray-600">
+    <table class="data-table stack-table">
+      <thead>
         <tr>
-          <th class="py-1">Order</th><th>Part</th><th>Expected</th>
+          <th>Order</th><th>Part</th><th>Expected</th>
           <th class="text-right">Outstanding</th><th class="text-right">Uncommitted</th><th></th>
         </tr>
       </thead>
       <tbody>
         {#each data.incoming as option (option.orderLineId)}
-          <tr class="border-b border-gray-100">
-            <td class="py-1">
-              <a href="/orders/{option.orderId}" class="text-blue-700 hover:underline">
+          <tr>
+            <td>
+              <a href="/orders/{option.orderId}" class="link font-medium sm:font-normal">
                 {option.supplier} {option.reference ?? ''}
               </a>
               <span class="text-gray-500">{option.status}</span>
             </td>
-            <td>{option.partName}</td>
-            <td>{option.expectedOn ?? '—'}</td>
-            <td class="text-right">{formatQuantity(option.outstanding, option.baseUnit)}</td>
-            <td class="text-right">{formatQuantity(option.uncommitted, option.baseUnit)}</td>
-            <td class="pl-3">
+            <td data-label="Part">{option.partName}</td>
+            <td data-label="Expected">{option.expectedOn ?? '—'}</td>
+            <td data-label="Outstanding" class="text-right">{formatQuantity(option.outstanding, option.baseUnit)}</td>
+            <td data-label="Uncommitted" class="text-right">{formatQuantity(option.uncommitted, option.baseUnit)}</td>
+            <td class="pt-2 sm:pt-1.5">
               {#if option.uncommitted > 0 && coverage.neededNotOrdered > 0}
                 <form method="POST" action="?/assignIncoming" use:enhance class="flex items-end gap-1">
                   <input type="hidden" name="order_line_id" value={option.orderLineId} />
@@ -320,7 +333,7 @@
                     required
                     inputmode="numeric"
                     aria-label="Quantity ({option.baseUnit})"
-                    class="w-16 rounded border border-gray-300 px-1"
+                    class="input-sm w-20"
                   />
                   <span class="text-gray-600">{option.baseUnit}</span>
                   <button class="btn-secondary">Commit</button>
@@ -335,7 +348,7 @@
 </section>
 
 <section class="mb-6">
-  <h2 class="mb-1 font-semibold">Candidates</h2>
+  <h2 class="section-title mb-1">Candidates</h2>
   <p class="mb-2 text-sm text-gray-600">
     Suggestions only. A part that is not a confirmed match can be approved only as a substitute with
     a note.
@@ -346,9 +359,9 @@
     </p>
   {/if}
   {#each data.candidates as candidate (candidate.part.id)}
-    <article class="mb-3 rounded border p-3 text-sm">
+    <article class="card mb-3 text-sm">
       <div class="mb-1 flex flex-wrap items-center gap-2">
-        <a href="/parts/{candidate.part.id}" class="font-semibold text-blue-700 hover:underline">
+        <a href="/parts/{candidate.part.id}" class="link font-semibold">
           {candidate.part.name}
         </a>
         <span class="rounded px-1 text-xs {STATUS_STYLES[candidate.status]}">{STATUS_LABELS[candidate.status]}</span>
@@ -380,7 +393,7 @@
             rows="2"
             placeholder={candidate.status === 'match' ? 'Note (optional)' : 'Why is this substitute acceptable?'}
             required={candidate.status !== 'match'}
-            class="rounded border border-gray-300 px-2 py-1"
+            class="input mt-0 max-w-md grow"
           ></textarea>
           <button class="btn-secondary">
             {candidate.status === 'match' ? 'Approve' : 'Approve as substitute'}
@@ -391,7 +404,7 @@
   {/each}
 </section>
 
-<form method="POST" action="?/approve" use:enhance class="max-w-xl space-y-2 rounded border p-3 text-sm">
+<form method="POST" action="?/approve" use:enhance class="card max-w-xl space-y-2 text-sm">
   <h2 class="font-semibold">Approve another part as a substitute</h2>
   <input type="hidden" name="substitute" value="on" />
   <select name="part_id" required class="input">

@@ -122,7 +122,7 @@
       cleaning = false;
     }
   })}
-  class="rounded border border-gray-200 p-3"
+  class="card"
 >
   <input {...fields.importId.as('hidden', importId)} />
   <div class="mb-2 flex flex-wrap items-baseline gap-2">
@@ -235,10 +235,10 @@
     <div class="sm:col-span-4">
       <span class="text-sm">Attributes</span>
       {#each attributeRows as attribute, index (index)}
-        <div class="flex items-center gap-2">
-          <input {...fields.attributes[index].key.as('text', attribute.key)} list="attribute-keys" placeholder="key" class="input w-40" />
-          <input {...fields.attributes[index].value.as('text', attribute.value)} placeholder="value as written" class="input" />
-          <span class="w-40 text-sm text-gray-600">
+        <div class="flex flex-wrap items-center gap-x-2 sm:flex-nowrap">
+          <input {...fields.attributes[index].key.as('text', attribute.key)} list="attribute-keys" placeholder="key" class="input w-32 sm:w-40" />
+          <input {...fields.attributes[index].value.as('text', attribute.value)} placeholder="value as written" class="input min-w-0 flex-1" />
+          <span class="text-sm text-gray-600 sm:w-40">
             {#if attribute.key && line.readings[attribute.key]}reads as {line.readings[attribute.key]}{/if}
             {#if attribute.key}{@render badge(`attribute:${attribute.key}`)}{/if}
           </span>
@@ -305,7 +305,7 @@
     <p class="mt-2 text-sm text-red-700">Before commit: {line.problems.join('; ')}</p>
   {/if}
   {#if line.createdPartId}
-    <p class="mt-2 text-sm">Created <a href="/parts/{line.createdPartId}" class="text-blue-700 hover:underline">a new part</a>.</p>
+    <p class="mt-2 text-sm">Created <a href="/parts/{line.createdPartId}" class="link">a new part</a>.</p>
   {/if}
   {#if issues?.length}
     <p class="mt-2 text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>

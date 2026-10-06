@@ -104,7 +104,7 @@
   method="POST"
   action="?/receiveLine"
   use:enhance
-  class="space-y-2 rounded border p-3 text-sm {line.deliveryState === 'awaiting_review' ? 'border-amber-300 bg-amber-50' : ''}"
+  class="card space-y-2 text-sm {line.deliveryState === 'awaiting_review' ? 'border-amber-300 bg-amber-50' : ''}"
 >
   <input type="hidden" name="operation_id" value={operationId} />
   <input type="hidden" name="received_on" value={today} />
@@ -135,7 +135,7 @@
     </label>
   </div>
   {#if commitments.length > 0}
-    <fieldset class="rounded border border-gray-200 p-2">
+    <fieldset class="overflow-x-auto rounded border border-gray-200 p-2">
       <legend class="px-1">
         Project commitments ({formatQuantity(committedTotal, line.baseUnit)} of the outstanding supply)
       </legend>
@@ -160,7 +160,7 @@
                     inputmode="numeric"
                     aria-label="Reserve for {commitment.projectName}"
                     bind:value={custom[commitment.id]}
-                    class="w-20 rounded border border-gray-300 px-1 text-right"
+                    class="input-sm w-20 text-right"
                   />
                 {:else}
                   {formatQuantity(sequenceAssignment.get(commitment.id) ?? 0, line.baseUnit)}

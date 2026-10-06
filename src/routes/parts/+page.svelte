@@ -42,19 +42,39 @@
 
   const submitForm = (event: Event & { currentTarget: HTMLElement }) =>
     event.currentTarget.closest('form')?.requestSubmit();
+
+  const active = $derived(selectedFilters(filters));
+  // On phones the filters start closed, so the results show first.
+  let filtersOpen = $state(false);
 </script>
 
 <svelte:head>
   <title>Parts</title>
 </svelte:head>
 
-<div class="mb-4 flex items-center justify-between">
-  <h1 class="text-2xl font-semibold">Parts</h1>
-  <a href="/parts/new" class="btn">New part</a>
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  <h1 class="page-title">Parts</h1>
+  <span class="text-sm text-gray-500">{data.parts.length} shown</span>
+  <button
+    type="button"
+    class="btn-secondary ml-auto md:hidden"
+    aria-expanded={filtersOpen}
+    aria-controls="part-filters"
+    onclick={() => (filtersOpen = !filtersOpen)}
+  >
+    Filters{active.length > 0 ? ` (${active.length})` : ''}
+  </button>
+  <a href="/parts/new" class="btn md:ml-auto">New part</a>
 </div>
 
-<div class="grid gap-6 md:grid-cols-[16rem_1fr]">
-  <form method="GET" class="space-y-4 text-sm">
+<div class="grid grid-cols-1 gap-6 md:grid-cols-[15rem_minmax(0,1fr)]">
+  <form
+    id="part-filters"
+    method="GET"
+    class="card space-y-4 self-start text-sm md:sticky md:top-20 md:block md:max-h-[calc(100dvh-6rem)] md:overflow-y-auto {filtersOpen
+      ? ''
+      : 'hidden'}"
+  >
     <label class="block">
       <span>Search</span>
       <input
@@ -117,33 +137,36 @@
       Show archived parts
     </label>
 
-    <button class="btn">Apply filters</button>
+    <button class="btn w-full">Apply filters</button>
   </form>
 
   <div>
-    {#if selectedFilters(filters).length > 0}
-      <ul class="mb-3 flex flex-wrap gap-2 text-sm">
-        {#each selectedFilters(filters) as filter (JSON.stringify(filter))}
-          <li class="rounded bg-gray-100 px-2 py-0.5">
+    {#if active.length > 0}
+      <ul class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        {#each active as filter (JSON.stringify(filter))}
+          <li class="flex items-center rounded-full border border-gray-300 bg-white py-0.5 pr-1 pl-3">
             {filterLabel(filter)}
             <a
               href={partFiltersHref(removeFilter(filters, filter))}
-              class="ml-1 text-gray-600 hover:text-red-700"
+              class="ml-1 rounded-full px-1.5 text-gray-500 hover:bg-red-50 hover:text-red-700"
               aria-label="Remove filter {filterLabel(filter)}">×</a
             >
           </li>
         {/each}
-        <li><a href="/parts" class="text-blue-700 hover:underline">Clear all</a></li>
+        <li><a href="/parts" class="link">Clear all</a></li>
       </ul>
     {/if}
 
     {#if data.parts.length === 0}
-      <p class="text-gray-600">No parts found.</p>
+      <p class="text-gray-600">
+        No parts found.
+        {#if filters.q}<a href="/parts/new" class="link">Add a new part</a>.{/if}
+      </p>
     {:else}
-      <table class="w-full text-left">
-        <thead class="border-b text-sm text-gray-600">
+      <table class="data-table stack-table">
+        <thead>
           <tr>
-            <th class="py-1">Name</th>
+            <th>Name</th>
             <th>Category</th>
             <th>Attributes</th>
             <th>Manufacturer / part number</th>
@@ -152,22 +175,24 @@
         </thead>
         <tbody>
           {#each data.parts as part (part.id)}
-            <tr class="border-b border-gray-100 align-top" class:text-gray-500={part.archivedAt}>
-              <td class="py-1">
-                <a href="/parts/{part.id}" class="text-blue-700 hover:underline">{part.name}</a>
-                {#if part.archivedAt}<span class="ml-1 text-xs uppercase">archived</span>{/if}
+            <tr class:text-gray-500={part.archivedAt}>
+              <td class="font-medium sm:font-normal">
+                <a href="/parts/{part.id}" class="link">{part.name}</a>
+                {#if part.archivedAt}<span class="badge ml-1">archived</span>{/if}
               </td>
-              <td class="text-sm">{part.categoryPath ?? ''}</td>
-              <td class="text-sm">
-                {#each part.attributes as attribute (attribute.key)}
-                  <span class="mr-2 whitespace-nowrap" title="Entered as {attribute.rawValue}">
-                    <span class="text-gray-600">{attribute.label}</span>
-                    {attribute.display ?? `${attribute.rawValue} (unrecognized)`}
-                  </span>
-                {/each}
+              <td data-label="Category" class={part.categoryPath ? '' : 'max-sm:hidden'}>{part.categoryPath ?? ''}</td>
+              <td class={part.attributes.length > 0 ? '' : 'max-sm:hidden'}>
+                <div class="flex flex-wrap gap-x-2">
+                  {#each part.attributes as attribute (attribute.key)}
+                    <span class="whitespace-nowrap" title="Entered as {attribute.rawValue}">
+                      <span class="text-gray-600">{attribute.label}</span>
+                      {attribute.display ?? `${attribute.rawValue} (unrecognized)`}
+                    </span>
+                  {/each}
+                </div>
               </td>
-              <td>{[part.manufacturer, part.partNumber].filter(Boolean).join(' ')}</td>
-              <td class="text-right">{formatQuantity(part.totalQuantity, part.baseUnit)}</td>
+              <td data-label="Part number" class={part.manufacturer || part.partNumber ? '' : 'max-sm:hidden'}>{[part.manufacturer, part.partNumber].filter(Boolean).join(' ')}</td>
+              <td data-label="Stock" class="text-right whitespace-nowrap">{formatQuantity(part.totalQuantity, part.baseUnit)}</td>
             </tr>
           {/each}
         </tbody>

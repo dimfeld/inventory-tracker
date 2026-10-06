@@ -1,13 +1,135 @@
 @import "tailwindcss";
 
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-600;
+  }
+  /* Room for the sticky header when a link jumps to an anchor. */
+  [id] {
+    scroll-margin-top: 7rem;
+  }
+}
+
 @layer components {
+  /* Text inputs use 16px on phones so that iOS does not zoom in on focus. */
   .input {
-    @apply mt-1 block w-full rounded border border-gray-300 px-2 py-1;
+    @apply mt-1 block w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-base shadow-xs sm:py-1 sm:text-sm;
+  }
+  .input:disabled {
+    @apply bg-gray-100 text-gray-600;
+  }
+  /* A compact input or select that sits inline in a table row or toolbar. */
+  .input-sm {
+    @apply rounded-md border border-gray-300 bg-white px-1.5 py-1 text-base sm:py-0.5 sm:text-sm;
+  }
+  .btn,
+  .btn-secondary,
+  .btn-danger {
+    @apply inline-flex min-h-9 items-center justify-center gap-1 rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-8;
   }
   .btn {
-    @apply rounded bg-blue-700 px-3 py-1 text-white hover:bg-blue-800;
+    @apply bg-blue-700 text-white shadow-xs hover:bg-blue-800;
   }
   .btn-secondary {
-    @apply rounded border border-gray-300 px-3 py-1 hover:bg-gray-100;
+    @apply border border-gray-300 bg-white text-gray-800 shadow-xs hover:bg-gray-100;
+  }
+  .btn-danger {
+    @apply border border-red-200 bg-white text-red-700 hover:bg-red-50;
+  }
+  .link {
+    @apply text-blue-700 hover:underline;
+  }
+  .link-danger {
+    @apply text-red-700 hover:underline;
+  }
+  .card {
+    @apply rounded-lg border border-gray-200 bg-white p-3 shadow-xs sm:p-4;
+  }
+  .badge {
+    @apply inline-block rounded bg-gray-200 px-1.5 py-0.5 text-xs font-medium tracking-wide text-gray-700 uppercase;
+  }
+  .page-title {
+    @apply text-2xl font-semibold;
+  }
+  .section-title {
+    @apply mb-2 text-lg font-semibold;
+  }
+  .back-link {
+    @apply mb-2 inline-block text-sm text-blue-700 hover:underline;
+  }
+  .hint {
+    @apply text-sm text-gray-600;
+  }
+  .msg-ok {
+    @apply rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800;
+  }
+  .msg-error {
+    @apply rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800;
+  }
+  .notice {
+    @apply rounded-md border border-amber-300 bg-amber-50 p-3 text-sm;
+  }
+
+  /* A row of filter links, such as component filters. */
+  .pill {
+    @apply rounded-full border border-gray-300 bg-white px-3 py-1 text-sm whitespace-nowrap hover:bg-gray-100;
+  }
+  .pill-active {
+    @apply rounded-full border border-blue-700 bg-blue-700 px-3 py-1 text-sm whitespace-nowrap text-white;
+  }
+
+  /* A wide table scrolls inside its own box instead of widening the page. */
+  .table-scroll {
+    @apply -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0;
+  }
+
+  .data-table {
+    @apply w-full text-left text-sm;
+  }
+  .data-table thead {
+    @apply border-b border-gray-300 text-gray-600;
+  }
+  .data-table th {
+    @apply px-2 py-1.5 font-medium first:pl-0 last:pr-0;
+  }
+  .data-table td {
+    @apply px-2 py-1.5 align-top first:pl-0 last:pr-0;
+  }
+  .data-table tbody tr {
+    @apply border-b border-gray-200;
+  }
+
+  /*
+   * On phones, each row of a stacked table shows as a card, and each cell shows its column
+   * name from data-label. Cells without data-label show without a name. Give a cell that can be
+   * empty the class max-sm:hidden when it is empty, so the card does not show a bare name.
+   */
+  @media (width < 40rem) {
+    /* A thead clips its content only as a block, so it must be a block to stay hidden. */
+    .stack-table thead {
+      @apply sr-only block;
+    }
+    .stack-table,
+    .stack-table tbody,
+    .stack-table tr,
+    .stack-table td {
+      @apply block;
+    }
+    .stack-table tbody tr {
+      @apply mb-2 rounded-lg border border-gray-200 bg-white p-3 shadow-xs;
+    }
+    .stack-table td {
+      @apply px-0 py-0.5 text-left;
+    }
+    .stack-table td[data-label] {
+      @apply flex gap-3;
+    }
+    .stack-table td[data-label]::before {
+      content: attr(data-label);
+      @apply w-28 shrink-0 text-left text-gray-500;
+    }
   }
 }

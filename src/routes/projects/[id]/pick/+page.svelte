@@ -26,20 +26,21 @@
   <title>Pick list · {data.project.name}</title>
 </svelte:head>
 
-<p class="mb-2 text-sm"><a href={base} class="text-blue-700 hover:underline">← {data.project.name}</a></p>
+<a href={base} class="back-link">← {data.project.name}</a>
 
-<h1 class="mb-2 text-2xl font-semibold">Pick list</h1>
-<p class="mb-3 text-sm text-gray-600">
+<h1 class="page-title mb-2">Pick list</h1>
+<p class="hint mb-3">
   Reserved stock to take from storage, by location. Picking moves it to the project's holding
   location. A component filter changes only this view; it does not release any reservation.
 </p>
 
 {#if data.components.length > 0}
-  <nav class="mb-4 flex flex-wrap gap-1 text-sm">
+  <nav aria-label="Component filter" class="-mx-4 mb-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0">
     {#each filters as filter (filter.value)}
       <a
         href={filter.value === null ? `${base}/pick` : `${base}/pick?component=${filter.value}`}
-        class={filter.value === activeFilter ? 'rounded bg-blue-700 px-2 py-0.5 text-white' : 'rounded border px-2 py-0.5'}
+        aria-current={filter.value === activeFilter ? 'true' : undefined}
+        class={filter.value === activeFilter ? 'pill-active' : 'pill'}
       >
         {filter.label}
       </a>
@@ -47,16 +48,16 @@
   </nav>
 {/if}
 
-{#if feedback}<p class="mb-3 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}
+{#if feedback}<p class="mb-3 {feedback.ok ? 'msg-ok' : 'msg-error'}">{feedback.text}</p>{/if}
 
 {#each data.stops as stop (stop.locationId)}
-  <section class="mb-4 rounded border p-3">
+  <section class="card mb-4">
     <h2 class="mb-2 text-lg font-semibold">{stop.locationName}</h2>
-    <ul class="space-y-2 text-sm">
+    <ul class="divide-y divide-gray-100 text-sm">
       {#each stop.items as item (item.reservationId)}
-        <li class="flex flex-wrap items-center gap-2">
+        <li class="flex flex-wrap items-center gap-2 py-2">
           <span class="font-semibold">{formatQuantity(item.quantity, item.baseUnit)}</span>
-          <a href="/parts/{item.partId}" class="text-blue-700 hover:underline">{item.partName}</a>
+          <a href="/parts/{item.partId}" class="link">{item.partName}</a>
           <span class="text-gray-600">
             for <a href="{base}/lines/{item.lineId}" class="hover:underline">{item.lineDescription}</a>
             {#if data.components.length > 0}({item.componentName ?? 'Ungrouped'}){/if}
@@ -74,7 +75,7 @@
               inputmode="decimal"
               value={item.quantity}
               aria-label="Quantity to pick"
-              class="w-16 rounded border border-gray-300 px-1"
+              class="input-sm w-20"
             />
             <button class="btn-secondary">Pick</button>
           </form>

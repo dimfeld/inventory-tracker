@@ -17,8 +17,14 @@ export const load: PageServerLoad = ({ params }) => {
   const line = projects().getLine(projectId, lineId);
   if (!details || !line) error(404, "BOM row not found");
   const { requirement, candidates } = projects().findCandidates(projectId, lineId);
+  // Rows in the order the project page shows them, for previous and next links.
+  const order = details.sections.flatMap((section) => section.lines.map((l) => l.id));
+  const position = order.indexOf(lineId);
   return {
     project: details.project,
+    position: { index: position, count: order.length },
+    previousLineId: order[position - 1] ?? null,
+    nextLineId: order[position + 1] ?? null,
     component: details.components.find((c) => c.id === line.componentId) ?? null,
     line,
     missingRequired: requirement.missingRequired,

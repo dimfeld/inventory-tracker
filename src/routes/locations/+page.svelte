@@ -9,28 +9,28 @@
   <title>Locations</title>
 </svelte:head>
 
-<h1 class="mb-4 text-2xl font-semibold">Storage locations</h1>
+<h1 class="page-title mb-4">Storage locations</h1>
 
 {#if data.locations.length === 0}
   <p class="mb-4 text-gray-600">No locations yet.</p>
 {:else}
-  <table class="mb-6 w-full text-left">
-    <thead class="border-b text-sm text-gray-600">
-      <tr><th class="py-1">Name</th><th>Kind</th><th>Notes</th></tr>
+  <table class="data-table stack-table mb-6 max-w-3xl">
+    <thead>
+      <tr><th>Name</th><th>Kind</th><th>Notes</th></tr>
     </thead>
     <tbody>
       {#each data.locations as location (location.id)}
-        <tr class="border-b border-gray-100">
-          <td class="py-1">{location.name}</td>
-          <td>{location.kind}</td>
-          <td class="text-gray-600">{location.notes ?? ''}</td>
+        <tr>
+          <td class="font-medium sm:font-normal">{location.name}</td>
+          <td data-label="Kind">{location.kind}</td>
+          <td data-label="Notes" class="text-gray-600 {location.notes ? '' : 'max-sm:hidden'}">{location.notes ?? ''}</td>
         </tr>
       {/each}
     </tbody>
   </table>
 {/if}
 
-<form method="POST" action="?/create" use:enhance class="max-w-md space-y-3 rounded border p-4">
+<form method="POST" action="?/create" use:enhance class="card max-w-md space-y-3">
   <h2 class="font-semibold">Add location</h2>
   <label class="block">
     <span class="text-sm">Name</span>
@@ -40,8 +40,8 @@
     <span class="text-sm">Notes</span>
     <textarea name="notes" rows="2" class="input"></textarea>
   </label>
-  {#if form && 'message' in form}<p class="text-red-700">{form.message}</p>{/if}
-  {#if form && 'errors' in form}<p class="text-red-700">{Object.values(form.errors ?? {}).join('. ')}</p>{/if}
-  {#if form && 'created' in form}<p class="text-green-700">Added {form.created}.</p>{/if}
+  {#if form && 'message' in form}<p class="msg-error">{form.message}</p>{/if}
+  {#if form && 'errors' in form}<p class="msg-error">{Object.values(form.errors ?? {}).join('. ')}</p>{/if}
+  {#if form && 'created' in form}<p class="msg-ok">Added {form.created}.</p>{/if}
   <button class="btn">Add location</button>
 </form>

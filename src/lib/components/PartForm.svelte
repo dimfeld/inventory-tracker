@@ -153,7 +153,7 @@
     </label>
   </div>
 
-  <fieldset class="rounded border p-3">
+  <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Attributes</legend>
     {#each attributes as attribute, index (index)}
       {@const rule = definitions.get(normalizeAttributeKey(attribute.label))?.normalization ?? null}
@@ -191,10 +191,10 @@
     <input name="tags" value={initial?.tags.join(', ') ?? ''} class="input" />
   </label>
 
-  <fieldset class="rounded border p-3">
+  <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Supplier references</legend>
     {#each supplierParts as supplierPart, index (index)}
-      <div class="mb-2 grid gap-2 sm:grid-cols-5">
+      <div class="mb-3 grid gap-2 border-b border-gray-100 pb-3 last-of-type:border-0 sm:grid-cols-2 lg:grid-cols-5 lg:border-0 lg:pb-0">
         <input type="hidden" name="supplier_id" value={supplierPart.id ?? ''} />
         <input name="supplier_name" placeholder="Supplier" bind:value={supplierPart.supplier} class="input" />
         <input name="supplier_sku" placeholder="SKU" bind:value={supplierPart.sku} class="input" />
