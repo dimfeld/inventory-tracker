@@ -1,7 +1,6 @@
 <script lang="ts">
   import './layout.css';
   import { page } from '$app/state';
-  import favicon from '#lib/assets/favicon.svg';
 
   let { children } = $props();
 
@@ -35,10 +34,6 @@
 </script>
 
 <svelte:window {onkeydown} />
-
-<svelte:head>
-  <link rel="icon" href={favicon} />
-</svelte:head>
 
 <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-white focus:p-2">
   Skip to content

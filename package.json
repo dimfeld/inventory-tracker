@@ -13,7 +13,7 @@
     "preview": "bun --bun --env-file .env vite preview",
     "start": "bun --env-file .env ./build/index.js",
     "prepare": "svelte-kit sync || echo ''",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p src/service-worker/tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test:unit": "bun --bun node_modules/vitest/vitest.mjs",
     "test": "bun run test:unit -- --run",
