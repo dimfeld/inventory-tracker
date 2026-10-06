@@ -81,6 +81,8 @@ export interface LineProposal {
 export interface ImportHeader {
   supplier: string | null;
   reference: string | null;
+  /** Date the order was placed, YYYY-MM-DD. The commit marks the order placed on this date. */
+  placedOn: string | null;
   /** An existing project to add the BOM to, or null to create `projectName`. */
   projectId: number | null;
   projectName: string | null;
@@ -90,6 +92,7 @@ export interface ImportHeader {
 export const EMPTY_HEADER: ImportHeader = {
   supplier: null,
   reference: null,
+  placedOn: null,
   projectId: null,
   projectName: null,
   notes: null,
@@ -119,6 +122,7 @@ export const COLUMN_ROLES = [
   "ignore",
   "supplier",
   "order_reference",
+  "order_date",
   "description",
   "quantity",
   "unit",
@@ -139,6 +143,7 @@ export const COLUMN_ROLE_LABELS: Record<ColumnRole, string> = {
   ignore: "Ignore",
   supplier: "Supplier",
   order_reference: "Order reference",
+  order_date: "Order date",
   description: "Description",
   quantity: "Quantity",
   unit: "Unit",

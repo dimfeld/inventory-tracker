@@ -7,7 +7,7 @@ import * as z from "zod";
 import { PROVENANCES } from "#lib/imports.ts";
 
 /** Increase when a schema changes shape. Saved with each parsed import. */
-export const SCHEMA_VERSION = "1";
+export const SCHEMA_VERSION = "2";
 
 const provenance = z
   .enum(PROVENANCES)
@@ -68,6 +68,7 @@ export const orderLineSchema = z.object({
 export const orderOutputSchema = z.object({
   supplier: marked("Supplier or shop name"),
   reference: marked("The supplier's order number"),
+  placedOn: marked("Date the order was placed, as YYYY-MM-DD"),
   lines: z.array(orderLineSchema),
 });
 

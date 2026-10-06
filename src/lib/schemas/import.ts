@@ -33,6 +33,8 @@ function result<T>(errors: FieldErrors, data: () => T): ParseResult<T> {
     : { success: true, data: data() };
 }
 
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 const oneOf = <T extends string>(values: readonly T[], value: string): value is T =>
   (values as readonly string[]).includes(value);
 
@@ -71,9 +73,12 @@ export function parseHeaderForm(form: FormData): ParseResult<ImportHeader> {
   const errors: FieldErrors = {};
   const projectId = parseId(text(form, "project_id"));
   if (Number.isNaN(projectId)) errors.project_id = "Choose a valid project";
+  const placedOn = optionalText(form, "placed_on");
+  if (placedOn !== null && !DATE.test(placedOn)) errors.placed_on = "Enter a date as YYYY-MM-DD";
   return result(errors, () => ({
     supplier: optionalText(form, "supplier"),
     reference: optionalText(form, "reference"),
+    placedOn,
     projectId,
     projectName: optionalText(form, "project_name"),
     notes: optionalText(form, "notes"),

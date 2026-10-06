@@ -138,6 +138,35 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
     ]);
   });
 
+  it("takes the order date from extension CSV and places the order on commit", () => {
+    const ctx = createTestImports();
+    const result = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: `supplier,order_reference,order_date,description,quantity
+Amazon,111-1,2026-10-04,Cabinet catch,2
+Amazon,111-1,2026-10-04,Seal foam tape,1
+Amazon,111-2,,Dust separator,1`,
+    });
+    const headers = result.ids.map((id) => review(ctx, id).record.header);
+    expect(headers.map((header) => header.placedOn)).toEqual(["2026-10-04", null]);
+
+    const [id] = result.ids;
+    for (const line of review(ctx, id).lines) {
+      ctx.imports.updateLine(id, line.id, {
+        groupId: null,
+        resolution: "existing",
+        partId: ctx.parts.screw,
+        fields: { ...line.fields, purchaseUnit: "each", packQuantity: "1" },
+      });
+    }
+    const { orderId } = ctx.imports.commit(id, opId());
+    expect(ctx.orders.getOrderDetails(orderId!)!.order).toMatchObject({
+      status: "placed",
+      placedOn: "2026-10-04",
+    });
+  });
+
   it("parses into reviewable proposals without creating inventory records", async () => {
     const ctx = createTestImports();
     const before = inventoryCounts(ctx.db);
@@ -399,6 +428,7 @@ describe("failed parsing", () => {
     ctx.imports.updateHeader(id, {
       supplier: "Bolt Depot",
       reference: null,
+      placedOn: null,
       projectId: null,
       projectName: null,
       notes: null,
@@ -511,6 +541,7 @@ describe("BOM import", () => {
     ctx.imports.updateHeader(ctx.id, {
       supplier: null,
       reference: null,
+      placedOn: null,
       projectId,
       projectName: null,
       notes: null,
@@ -540,6 +571,7 @@ describe("BOM import", () => {
         ctx.imports.updateHeader(id, {
           supplier: null,
           reference: null,
+          placedOn: null,
           projectId,
           projectName: null,
           notes: null,
@@ -580,6 +612,7 @@ describe("BOM import", () => {
     ctx.imports.updateHeader(ctx.id, {
       supplier: null,
       reference: null,
+      placedOn: null,
       projectId: null,
       projectName: "Flat board",
       notes: null,

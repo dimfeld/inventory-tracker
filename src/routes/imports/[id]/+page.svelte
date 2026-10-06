@@ -165,6 +165,11 @@
           <span class="text-sm">Supplier order reference {#if headerMark('reference')}<span class="text-xs text-gray-500">({headerMark('reference')})</span>{/if}</span>
           <input name="reference" value={record.header.reference ?? ''} class="input" />
         </label>
+        <label class="block">
+          <span class="text-sm">Order date {#if headerMark('placedOn')}<span class="text-xs text-gray-500">({headerMark('placedOn')})</span>{/if}</span>
+          <input type="date" name="placed_on" value={record.header.placedOn ?? ''} class="input" />
+          <span class="text-xs text-gray-600">With a date, the commit marks the order placed on that date.</span>
+        </label>
       {:else}
         <label class="block">
           <span class="text-sm">Add to project</span>

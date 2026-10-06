@@ -425,6 +425,9 @@ export function createImportService(db: Database) {
         recordLineCommit(db, line.id, { createdPartId, orderLineId, bomLineId: null });
       })
     );
+    // An imported order with a date was already placed at the supplier. Headers saved before
+    // the order date existed have no placedOn.
+    if (header.placedOn && lines.length > 0) orders.markPlaced(orderId, header.placedOn);
     return { orderId, projectId: null };
   }
 
@@ -647,7 +650,7 @@ export function createImportService(db: Database) {
         updateHeader(db, id, {
           ...EMPTY_HEADER,
           ...(record.kind === "order"
-            ? { supplier: header.supplier, reference: header.reference }
+            ? { supplier: header.supplier, reference: header.reference, placedOn: header.placedOn }
             : { projectId: header.projectId, projectName: header.projectName }),
           notes: header.notes,
         });

@@ -13,6 +13,7 @@ export const source = `DigiKey order DK-55012
 export const response: OrderOutput = {
   supplier: { value: "DigiKey", provenance: "source" },
   reference: { value: "DK-55012", provenance: "source" },
+  placedOn: null,
   lines: [
     {
       description: "M3 screws, stainless",

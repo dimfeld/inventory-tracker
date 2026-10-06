@@ -63,6 +63,7 @@ export function outputFromColumns(
     return {
       supplier: common("supplier"),
       reference: common("order_reference"),
+      placedOn: common("order_date"),
       lines: records.map((record) => ({
         ...shared(record),
         purchaseQuantity: wholeNumber(record.cell("quantity")),

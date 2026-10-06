@@ -248,10 +248,12 @@ function projectLine(context: CatalogContext, line: ProjectLineOutput): LineProp
   return b.proposal(line.group?.value.trim() || null);
 }
 
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 function markHeader(
   header: Partial<ImportHeader>,
   provenance: ProvenanceMarks,
-  field: "supplier" | "reference" | "projectName",
+  field: "supplier" | "reference" | "placedOn" | "projectName",
   value: MarkedValue
 ) {
   const text = value?.value.trim() || null;
@@ -268,6 +270,10 @@ export function normalizeOrder(context: CatalogContext, output: OrderOutput): No
   const headerProvenance: ProvenanceMarks = {};
   markHeader(header, headerProvenance, "supplier", output.supplier);
   markHeader(header, headerProvenance, "reference", output.reference);
+  // Only a real calendar date can become the placed date; the owner can enter it in review.
+  if (DATE.test(output.placedOn?.value.trim() ?? "")) {
+    markHeader(header, headerProvenance, "placedOn", output.placedOn);
+  }
   return {
     header,
     headerProvenance,

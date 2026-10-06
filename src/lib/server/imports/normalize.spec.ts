@@ -40,6 +40,7 @@ describe("import normalization", () => {
     const [reel, bag] = normalizeOrder(context, {
       supplier: null,
       reference: null,
+      placedOn: null,
       lines: [
         orderLine({
           purchaseUnit: { value: "m", provenance: "source" },
@@ -59,6 +60,7 @@ describe("import normalization", () => {
     const [line] = normalizeOrder(context, {
       supplier: null,
       reference: null,
+      placedOn: null,
       lines: [
         orderLine({
           category: { value: "Widgets", provenance: "inferred" },
