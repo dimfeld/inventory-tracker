@@ -389,6 +389,26 @@ export function updateLine(
   );
 }
 
+/**
+ * Order imports, open or committed, of a supplier order. A skipped order has a committed import
+ * and no order, so this finds the orders that were handled without creating an order.
+ */
+export function listOrderImportsWithReference(
+  db: Database,
+  supplier: string,
+  reference: string
+): { id: number; commitState: CommitState }[] {
+  return db
+    .query<{ id: number; commitState: CommitState }, [string, string]>(
+      `SELECT id, commit_state AS commitState FROM imports
+       WHERE kind = 'order'
+         AND json_extract(header, '$.supplier') = ? COLLATE NOCASE
+         AND json_extract(header, '$.reference') = ? COLLATE NOCASE
+       ORDER BY id`
+    )
+    .all(supplier, reference);
+}
+
 export function deleteLine(db: Database, id: number): void {
   db.run("DELETE FROM import_lines WHERE id = ?", [id]);
 }

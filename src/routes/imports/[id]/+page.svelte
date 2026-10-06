@@ -61,6 +61,8 @@
     {#if record.orderId}<a href="/orders/{record.orderId}" class="text-blue-700 hover:underline">View the order</a> — it is
       a draft; nothing was received or added to stock.{/if}
     {#if record.projectId}<a href="/projects/{record.projectId}" class="text-blue-700 hover:underline">View the project</a>.{/if}
+    {#if record.kind === 'order' && !record.orderId}The order was skipped: no order was created, and a later import of this
+      order is skipped.{/if}
   </p>
 {/if}
 
@@ -280,8 +282,17 @@
     <form method="POST" action="?/commit" use:enhance class="flex gap-2">
       <input type="hidden" name="operation_id" value={data.operationId} />
       <button class="btn" disabled={blocking.length > 0 || data.lines.length === 0}>Commit import</button>
+      {#if record.kind === 'order'}
+        <button formaction="?/skipOrder" class="btn-secondary">Skip order</button>
+      {/if}
       <button formaction="?/discard" class="btn-secondary">Discard import</button>
     </form>
+    {#if record.kind === 'order'}
+      <p class="mt-2 text-sm text-gray-600">
+        Skip order: nothing in this order is tracked. No order is created, and a later import of this order is skipped.
+        Discard import deletes the import, so a later import of the order is not skipped.
+      </p>
+    {/if}
     {@render message('commit')}
     {@render message('discard')}
   </section>

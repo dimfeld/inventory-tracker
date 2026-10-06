@@ -161,6 +161,15 @@ export const actions: Actions = {
     );
   },
 
+  skipOrder: async ({ request, params }) => {
+    const operationId = text(await request.formData(), "operation_id");
+    if (!operationId)
+      return fail(400, { action: "commit", message: "Missing operation ID; reload the page" });
+    const result = runAction("commit", () => imports().skipOrder(Number(params.id), operationId));
+    if (!("repeated" in result)) return result;
+    redirect(303, "/imports");
+  },
+
   discard: async ({ params }) => {
     const result = runAction("discard", () => {
       imports().discard(Number(params.id));

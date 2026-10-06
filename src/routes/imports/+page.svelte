@@ -68,7 +68,13 @@
             <a href="/imports/{item.id}" class="text-blue-700 hover:underline">{item.title || `Import ${item.id}`}</a>
           </td>
           <td>{KIND_LABELS[item.kind]} ({item.sourceType})</td>
-          <td>{item.commitState === 'committed' ? 'Committed' : STATE_LABELS[item.parseState]}</td>
+          <td>
+            {item.commitState !== 'committed'
+              ? STATE_LABELS[item.parseState]
+              : item.kind === 'order' && !item.orderId
+                ? 'Skipped'
+                : 'Committed'}
+          </td>
           <td class="text-right">{item.lineCount}</td>
           <td>
             {#if item.orderId}<a href="/orders/{item.orderId}" class="text-blue-700 hover:underline">Order</a>{/if}

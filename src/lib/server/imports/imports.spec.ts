@@ -234,6 +234,52 @@ Amazon,111-2,,Dust separator,1`,
     });
   });
 
+  it("imports each supplier order once, with removed lines and skipped orders", () => {
+    const ctx = createTestImports();
+    const sourceText = `supplier,order_reference,description,quantity
+Amazon,111-1,Cabinet catch,2
+Amazon,111-1,Coffee beans,1
+Amazon,111-2,Birthday card,1
+Amazon,111-3,Seal foam tape,1`;
+    const first = ctx.imports.createCsvOrderBatch({ kind: "order", sourceType: "csv", sourceText });
+    const [kept, skipped] = first.ids;
+
+    // Remove the line that is not tracked; the order has only the other line.
+    const [catchLine, coffee] = review(ctx, kept).lines;
+    ctx.imports.removeLine(kept, coffee.id);
+    ctx.imports.updateLine(kept, catchLine.id, {
+      groupId: null,
+      resolution: "existing",
+      partId: ctx.parts.screw,
+      fields: { ...catchLine.fields, purchaseUnit: "each", packQuantity: "1" },
+    });
+    const { orderId } = ctx.imports.commit(kept, opId());
+    expect(ctx.orders.getOrderDetails(orderId!)!.lines).toHaveLength(1);
+
+    // Nothing in the second order is tracked: no order is created.
+    expect(ctx.imports.skipOrder(skipped, opId())).toMatchObject({ orderId: null });
+    expect(ctx.orders.listOrders().map((order) => order.reference)).toEqual(["111-1"]);
+
+    // A repeated run skips the committed, skipped, and still open orders.
+    const second = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: `${sourceText}\nAmazon,111-4,Hinge set,1`,
+    });
+    expect(second.skipped.map((order) => order.reference)).toEqual(["111-1", "111-2", "111-3"]);
+    expect(second.ids.map((id) => review(ctx, id).record.header.reference)).toEqual(["111-4"]);
+  });
+
+  it("needs a supplier order reference to skip an order", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "1 bag of M3 screws",
+    });
+    expect(() => ctx.imports.skipOrder(id, opId())).toThrow("order reference");
+  });
+
   it("parses into reviewable proposals without creating inventory records", async () => {
     const ctx = createTestImports();
     const before = inventoryCounts(ctx.db);

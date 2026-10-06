@@ -28,6 +28,7 @@ import {
   deleteGroup,
   deleteImport,
   deleteLine,
+  listOrderImportsWithReference,
   getImport,
   getLine,
   insertGroup,
@@ -504,7 +505,9 @@ export function createImportService(db: Database) {
     },
 
     /**
-     * Split extension CSV into one draft per supplier order and skip existing references. If a
+     * Split extension CSV into one draft per supplier order. A supplier order that already has an
+     * order or an import (open, committed, or skipped) is skipped, so a repeated run of the
+     * extension imports only new orders. If a
      * row cannot be identified, save one ordinary draft so no source row is lost. That draft
      * gets lines from its columns when they include a description, such as a DigiKey copy.
      */
@@ -550,7 +553,10 @@ export function createImportService(db: Database) {
         const ids: number[] = [];
         const skipped: CsvOrderBatchResult["skipped"] = [];
         for (const group of groups.values()) {
-          if (listOrdersWithReference(db, group.supplier, group.reference, null).length > 0) {
+          if (
+            listOrdersWithReference(db, group.supplier, group.reference, null).length > 0 ||
+            listOrderImportsWithReference(db, group.supplier, group.reference).length > 0
+          ) {
             skipped.push({ supplier: group.supplier, reference: group.reference });
             continue;
           }
@@ -825,6 +831,28 @@ export function createImportService(db: Database) {
      * lines, or the project's components and BOM rows. A repeated commit returns the recorded
      * result and creates nothing. No stock movement is recorded.
      */
+    /**
+     * Close an order import without creating an order, for an order with nothing to track. The
+     * import keeps the supplier and reference, so the order is not imported again.
+     */
+    skipOrder(id: number, operationId: string): CommitResult {
+      return inTransaction(() => {
+        const record = requireImport(id);
+        if (record.commitState === "committed") {
+          return { orderId: record.orderId, projectId: record.projectId, repeated: true };
+        }
+        if (record.kind !== "order")
+          throw new InventoryError("Only an order import can be skipped");
+        if (!record.header.supplier || !record.header.reference) {
+          throw new InventoryError(
+            "Enter the supplier and the order reference, so that the order is not imported again"
+          );
+        }
+        recordCommit(db, id, { operationId, orderId: null, projectId: null });
+        return { orderId: null, projectId: null, repeated: false };
+      });
+    },
+
     commit(id: number, operationId: string): CommitResult {
       return inTransaction(() => {
         const record = requireImport(id);
