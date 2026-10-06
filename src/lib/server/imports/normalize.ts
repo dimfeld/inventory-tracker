@@ -11,6 +11,7 @@ import { expandAttributes, isNormalizationRule, normalizeAttributeValue } from "
 import {
   emptyLineFields,
   type ImportAttribute,
+  type ImportLineFields,
   type ImportHeader,
   type ImportKind,
   type LineProposal,
@@ -19,6 +20,7 @@ import {
 import { isUnit, toBaseQuantity, UnitError, UNITS, type Unit } from "#lib/units.ts";
 import type { CatalogContext } from "./context";
 import type {
+  LineCleanupOutput,
   MarkedValue,
   OrderLineOutput,
   OrderOutput,
@@ -124,21 +126,29 @@ class LineBuilder {
     this.text("supplierSku", line.supplierSku);
     this.text("notes", line.notes);
     for (const note of line.unresolved) this.note(note);
+    this.category(line.category);
+    this.attributes(line.attributes);
+    this.checkRequired();
+  }
 
-    const categoryPath = line.category?.value.trim();
-    if (categoryPath) {
-      const category = this.findCategory(categoryPath);
-      if (category) {
-        this.fields.categoryId = category.id;
-        this.provenance.categoryId = line.category!.provenance;
-      } else {
-        this.note(`Category "${categoryPath}" is not defined`);
-      }
+  /** Set the category from its path. An unknown path is unresolved. */
+  category(value: MarkedValue) {
+    const categoryPath = value?.value.trim();
+    if (!categoryPath) return;
+    const category = this.findCategory(categoryPath);
+    if (category) {
+      this.fields.categoryId = category.id;
+      this.provenance.categoryId = value!.provenance;
+    } else {
+      this.note(`Category "${categoryPath}" is not defined`);
     }
+  }
 
+  /** Set the attributes. Unknown keys and unreadable values are unresolved. */
+  attributes(list: PartOutput["attributes"]) {
     const definitions = new Map(this.context.definitions.map((d) => [d.key, d]));
     const attributes: ImportAttribute[] = [];
-    for (const attribute of line.attributes) {
+    for (const attribute of list) {
       const key = attribute.key.trim();
       const value = attribute.value.trim();
       if (!key || !value || attributes.some((a) => a.key === key)) continue;
@@ -155,11 +165,10 @@ class LineBuilder {
       }
     }
     this.fields.attributes = attributes;
-    this.checkRequired();
   }
 
   /** A generic item must state its category's required attributes, such as a screw's length. */
-  private checkRequired() {
+  checkRequired() {
     const { categoryId, partNumber, supplierSku, attributes } = this.fields;
     if (categoryId === null || partNumber !== null || supplierSku !== null) return;
     const category = this.context.categories.find((c) => c.id === categoryId);
@@ -246,6 +255,37 @@ function projectLine(context: CatalogContext, line: ProjectLineOutput): LineProp
   if (b.unit(line.unit) === null && b.fields.unit === null) b.note("Unit is missing");
   b.text("referenceDesignators", line.referenceDesignators);
   return b.proposal(line.group?.value.trim() || null);
+}
+
+/**
+ * Apply a cleanup to a line's current fields. The description, category, and attributes are
+ * replaced; other fields stay. Earlier provenance marks and unresolved notes of other fields
+ * stay too.
+ */
+export function cleanupLine(
+  context: CatalogContext,
+  current: { fields: ImportLineFields; proposal: LineProposal | null },
+  output: LineCleanupOutput
+): LineProposal {
+  const b = new LineBuilder(context);
+  b.fields = { ...current.fields, categoryId: null, attributes: [] };
+  b.provenance = Object.fromEntries(
+    Object.entries(current.proposal?.provenance ?? {}).filter(
+      ([field]) => field !== "categoryId" && !field.startsWith("attribute:")
+    )
+  );
+  for (const note of current.proposal?.unresolved ?? []) b.note(note);
+
+  const description = output.description.trim();
+  if (description && description !== current.fields.description) {
+    b.fields.description = description;
+    b.provenance.description = "normalized";
+  }
+  for (const note of output.unresolved) b.note(note);
+  b.category(output.category);
+  b.attributes(output.attributes);
+  b.checkRequired();
+  return b.proposal(current.proposal?.groupName ?? null);
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

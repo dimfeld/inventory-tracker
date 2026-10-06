@@ -110,6 +110,36 @@ export const actions: Actions = {
     });
   },
 
+  /** Save the line's edits, then let GPT-6 Luna clean up its name, category, and attributes. */
+  cleanupLine: async ({ request, params }) => {
+    const form = await request.formData();
+    const lineId = idField(form, "line_id");
+    const parsed = parseLineForm(form);
+    const action = `line-${lineId}`;
+    if (lineId === null || !parsed.success) {
+      return fail(400, {
+        action,
+        errors: parsed.success ? { line_id: "Missing line" } : parsed.errors,
+      });
+    }
+    const id = Number(params.id);
+    let outcome;
+    try {
+      imports().updateLine(id, lineId, parsed.data);
+      outcome = await imports().cleanupLine(id, lineId, extractor());
+    } catch (error) {
+      if (!isUserError(error)) throw error;
+      return fail(400, { action, message: error.message });
+    }
+    if (!outcome.ok) return fail(400, { action, message: outcome.error });
+    return {
+      action,
+      success: outcome.matchedPart
+        ? `Cleaned up and matched to ${outcome.matchedPart.name}. Check the line.`
+        : "Cleaned up. No catalog part is the same item. Check the line.",
+    };
+  },
+
   removeLine: async ({ request, params }) => {
     const lineId = idField(await request.formData(), "line_id");
     if (lineId === null) return fail(400, { action: "lines", message: "Missing line" });

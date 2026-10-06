@@ -1,7 +1,10 @@
 import type { ImportKind } from "#lib/imports.ts";
 
+/** An import kind to extract, or the cleanup of one line. Each has its own output schema. */
+export type ExtractionKind = ImportKind | "line_cleanup";
+
 export interface ExtractionRequest {
-  kind: ImportKind;
+  kind: ExtractionKind;
   system: string;
   prompt: string;
 }

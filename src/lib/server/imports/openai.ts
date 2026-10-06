@@ -5,7 +5,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
 import { ExtractionError, type Extractor } from "./extractor";
-import { orderOutputSchema, projectOutputSchema } from "./schema";
+import { lineCleanupSchema, orderOutputSchema, projectOutputSchema } from "./schema";
 
 /** The only model used for LLM calls. */
 export const MODEL_ID = "gpt-6-luna";
@@ -22,7 +22,9 @@ export function createOpenAIExtractor(apiKey: string | null | undefined): Extrac
     const output =
       kind === "order"
         ? Output.object({ schema: orderOutputSchema, name: "order_list" })
-        : Output.object({ schema: projectOutputSchema, name: "project_bom" });
+        : kind === "project"
+          ? Output.object({ schema: projectOutputSchema, name: "project_bom" })
+          : Output.object({ schema: lineCleanupSchema, name: "line_cleanup" });
     const result = await generateText({ model: openai(MODEL_ID), system, prompt, output });
     return {
       output: result.output,

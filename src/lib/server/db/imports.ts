@@ -402,6 +402,11 @@ export function updateLine(
   );
 }
 
+/** Replace the model's proposal of a line, such as after a cleanup. */
+export function updateLineProposal(db: Database, id: number, proposal: LineProposal): void {
+  db.run("UPDATE import_lines SET proposal = ? WHERE id = ?", [JSON.stringify(proposal), id]);
+}
+
 /**
  * Order imports, open or committed, of a supplier order. A skipped order has a committed import
  * and no order, so this finds the orders that were handled without creating an order.

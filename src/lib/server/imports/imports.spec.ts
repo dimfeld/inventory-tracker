@@ -503,6 +503,100 @@ describe("manual lines", () => {
   );
 });
 
+describe("order line cleanup", () => {
+  /** An order import from extension CSV with one DigiKey resistor line. */
+  function csvOrder() {
+    const ctx = createTestImports();
+    const { ids } = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: `supplier,order_reference,description,quantity,purchase_unit,pack_quantity,unit,supplier_sku,unit_price,currency
+DigiKey,DK-1,RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM,10,each,1,pcs,311-4.70KCRCT-ND,0.10,USD`,
+    });
+    return { ...ctx, id: ids[0], lineId: review(ctx, ids[0]).lines[0].id };
+  }
+
+  const cleanup = (partId: number | null) => ({
+    description: "4.7k resistor 0805",
+    category: { value: "Electronics / Passives / Resistors", provenance: "inferred" },
+    attributes: [
+      { key: "resistance", value: "4.7K", provenance: "source" },
+      { key: "tolerance", value: "1%", provenance: "source" },
+      { key: "package", value: "0805", provenance: "source" },
+    ],
+    match: partId === null ? null : { partId, reason: "Same resistance, tolerance, and package" },
+    unresolved: [],
+  });
+
+  it("cleans up the name, category, and attributes and matches a catalog part", async () => {
+    const ctx = csvOrder();
+    const before = inventoryCounts(ctx.db);
+    const extractor = fixtureExtractor(cleanup(ctx.parts.resistor4k7));
+
+    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor)).toEqual({
+      ok: true,
+      matchedPart: { id: ctx.parts.resistor4k7, name: "4.7k resistor 0805" },
+    });
+    expect(extractor.calls[0].kind).toBe("line_cleanup");
+    expect(extractor.calls[0].prompt).toContain("RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM");
+    expect(extractor.calls[0].prompt).toContain('"name":"M3 × 8 pan head screw"');
+
+    const line = review(ctx, ctx.id).lines[0];
+    expect(line.fields).toMatchObject({
+      description: "4.7k resistor 0805",
+      categoryId: ctx.categories.resistors,
+      attributes: [
+        { key: "resistance", value: "4.7K" },
+        { key: "tolerance", value: "1%" },
+        { key: "package", value: "0805" },
+      ],
+      quantity: "10",
+      supplierSku: "311-4.70KCRCT-ND",
+    });
+    expect(line.proposal?.fields).toEqual(line.fields);
+    expect(line.proposal?.provenance).toMatchObject({
+      description: "normalized",
+      categoryId: "inferred",
+      "attribute:resistance": "source",
+      quantity: "source",
+    });
+    expect([line.resolution, line.partId]).toEqual(["existing", ctx.parts.resistor4k7]);
+    expect(line.problems).toEqual([]);
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+  });
+
+  it("keeps the line a new part when the model names a part that is not in the catalog", async () => {
+    const ctx = csvOrder();
+    const outcome = await ctx.imports.cleanupLine(
+      ctx.id,
+      ctx.lineId,
+      fixtureExtractor(cleanup(9999))
+    );
+    expect(outcome).toEqual({ ok: true, matchedPart: null });
+    const line = review(ctx, ctx.id).lines[0];
+    expect([line.resolution, line.partId]).toEqual(["new", null]);
+    expect(line.fields.description).toBe("4.7k resistor 0805");
+    expect(line.proposal?.unresolved).toContain("Matched part 9999 is not in the catalog");
+  });
+
+  it("changes nothing when the call fails or the answer is invalid", async () => {
+    const ctx = csvOrder();
+    const original = review(ctx, ctx.id).lines[0];
+    const failing = async () => {
+      throw new Error("network unreachable");
+    };
+    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, failing)).toEqual({
+      ok: false,
+      error: "Cleanup failed: network unreachable",
+    });
+    expect(
+      await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor({ description: 3 }))
+    ).toMatchObject({ ok: false });
+    const line = review(ctx, ctx.id).lines[0];
+    expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);
+  });
+});
+
 describe("failed parsing", () => {
   it("leaves the source editable and creates nothing when the output is invalid", async () => {
     const ctx = createTestImports();

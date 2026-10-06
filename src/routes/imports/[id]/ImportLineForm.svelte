@@ -37,9 +37,14 @@
     };
     groups: { id: number; name: string }[];
     feedback: { ok: boolean; text: string } | null;
+    /** True when the server can call GPT-6 Luna to clean up the line. */
+    cleanupAvailable?: boolean;
   }
 
-  let { kind, number, readonly, line, options, groups, feedback }: Props = $props();
+  let { kind, number, readonly, line, options, groups, feedback, cleanupAvailable = false }: Props = $props();
+
+  /** True while a cleanup request of this line is in flight. */
+  let cleaning = $state(false);
 
   // The form owns this after the initial value.
   // svelte-ignore state_referenced_locally
@@ -75,7 +80,19 @@
 {/snippet}
 
 <!-- No reset after a save: it would clear the resolution and every field the save did not change. -->
-<form method="POST" action="?/saveLine" use:enhance={() => ({ update }) => update({ reset: false })} class="rounded border border-gray-200 p-3">
+<form
+  method="POST"
+  action="?/saveLine"
+  use:enhance={({ submitter, cancel }) => {
+    if (cleaning) return cancel();
+    cleaning = submitter?.getAttribute('formaction') === '?/cleanupLine';
+    return async ({ update }) => {
+      cleaning = false;
+      await update({ reset: false });
+    };
+  }}
+  class="rounded border border-gray-200 p-3"
+>
   <input type="hidden" name="line_id" value={line.id} />
   <div class="mb-2 flex flex-wrap items-baseline gap-2">
     <h3 class="font-semibold">Line {number}</h3>
@@ -252,9 +269,28 @@
   {#if feedback}<p class="mt-2 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}
 
   {#if !readonly}
-    <div class="mt-2 flex gap-2">
-      <button class="btn">Save line</button>
-      <button formaction="?/removeLine" class="btn-secondary">Remove line</button>
+    <div class="mt-2 flex flex-wrap items-center gap-2">
+      <button class="btn" disabled={cleaning}>Save line</button>
+      <button formaction="?/removeLine" class="btn-secondary" disabled={cleaning}>Remove line</button>
+      {#if kind === 'order'}
+        <button
+          formaction="?/cleanupLine"
+          class="btn-secondary"
+          disabled={!cleanupAvailable || cleaning}
+          title={cleanupAvailable ? undefined : 'OPENAI_API_KEY is not set'}
+        >
+          Clean up with GPT-6 Luna
+        </button>
+      {/if}
+      <span role="status" class="flex items-center gap-2 text-sm">
+        {#if cleaning}
+          <span
+            aria-hidden="true"
+            class="inline-block size-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-700 motion-reduce:animate-none"
+          ></span>
+          Saving the line and sending it to OpenAI…
+        {/if}
+      </span>
     </div>
   {/if}
 </form>

@@ -45,13 +45,14 @@ import {
   setParseState,
   updateHeader,
   updateLine,
+  updateLineProposal,
   updateSource,
   type ImportGroup,
   type ImportLine,
   type ImportRecord,
 } from "#lib/server/db/imports.ts";
 import { listOrdersWithReference } from "#lib/server/db/orders.ts";
-import { searchParts } from "#lib/server/db/part-search.ts";
+import { listAttributesOfParts, searchParts } from "#lib/server/db/part-search.ts";
 import { getProject, listComponents, listProjects } from "#lib/server/db/projects.ts";
 import { createCatalogService, typedAttributeValue } from "#lib/server/inventory/catalog.ts";
 import { InventoryError, isUserError, NotFoundError } from "#lib/server/inventory/errors.ts";
@@ -65,11 +66,18 @@ import {
 import { createProjectService } from "#lib/server/projects/projects.ts";
 import { assertUnit, isUnit, toBaseQuantity, UNITS, type Unit } from "#lib/units.ts";
 import { outputFromColumns } from "./columns";
-import { loadCatalogContext } from "./context";
+import { loadCatalogContext, type CatalogContext } from "./context";
 import { ExtractionError, type ExtractionUsage, type Extractor } from "./extractor";
-import { normalizeOutput, type NormalizedImport } from "./normalize";
-import { PROMPT_VERSION, sourcePrompt, systemPrompt } from "./prompt";
-import { OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
+import { cleanupLine, normalizeOutput, type NormalizedImport } from "./normalize";
+import {
+  cleanupPrompt,
+  cleanupSystemPrompt,
+  PROMPT_VERSION,
+  sourcePrompt,
+  systemPrompt,
+  type PromptPart,
+} from "./prompt";
+import { lineCleanupSchema, OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
 import { csvTable, defaultCsvSettings, formatCsv, sourceRows } from "./source";
 
 export type ImportService = ReturnType<typeof createImportService>;
@@ -83,6 +91,10 @@ export interface LineEdit {
 }
 
 export type ParseOutcome = { ok: true; lineCount: number } | { ok: false; error: string };
+
+export type CleanupOutcome =
+  | { ok: true; matchedPart: { id: number; name: string } | null }
+  | { ok: false; error: string };
 
 export interface NewImport {
   kind: ImportKind;
@@ -263,6 +275,34 @@ export function createImportService(db: Database) {
     );
     const candidates = matchRequirement(db, requirement, { supplierSku: fields.supplierSku });
     return { requirement, candidates };
+  }
+
+  /** The catalog parts that a line can match, as the cleanup prompt lists them. */
+  function promptParts(context: CatalogContext): PromptPart[] {
+    const paths = new Map(context.categories.map((c) => [c.id, c.path]));
+    const parts = searchParts(db, {
+      text: null,
+      categoryId: null,
+      attributes: [],
+      tags: [],
+      includeArchived: false,
+    });
+    const attributes = Map.groupBy(
+      listAttributesOfParts(
+        db,
+        parts.map((p) => p.id)
+      ),
+      (a) => a.partId
+    );
+    return parts.map((part) => ({
+      id: part.id,
+      name: part.name,
+      category: part.categoryId === null ? null : (paths.get(part.categoryId) ?? null),
+      manufacturer: part.manufacturer,
+      partNumber: part.partNumber,
+      baseUnit: part.baseUnit,
+      attributes: (attributes.get(part.id) ?? []).map((a) => `${a.key}=${a.rawValue}`),
+    }));
   }
 
   /** Replace the lines and groups with new proposals. Each line starts as a new catalog part. */
@@ -644,6 +684,75 @@ export function createImportService(db: Database) {
         versioned: true,
       });
       return { ok: true, lineCount: normalized.lines.length };
+    },
+
+    /**
+     * Ask the extractor to clean up one order line: a cleaner description, the category, the
+     * attributes, and the existing catalog part that is the same item. The line and its proposal
+     * change; a matched part makes the line commit as that part. A failed call or an invalid
+     * answer changes nothing.
+     */
+    async cleanupLine(id: number, lineId: number, extractor: Extractor): Promise<CleanupOutcome> {
+      const record = requireOpen(id);
+      if (record.kind !== "order") throw new InventoryError("Only order lines can be cleaned up");
+      const line = requireLine(id, lineId);
+      const context = loadCatalogContext(db);
+      const f = line.fields;
+      const parts = promptParts(context);
+
+      let result;
+      try {
+        result = await extractor({
+          kind: "line_cleanup",
+          system: cleanupSystemPrompt(context),
+          prompt: cleanupPrompt(
+            {
+              supplier: record.header.supplier,
+              sourceExcerpt: line.sourceExcerpt,
+              description: f.description,
+              category: context.categories.find((c) => c.id === f.categoryId)?.path ?? null,
+              manufacturer: f.manufacturer,
+              partNumber: f.partNumber,
+              supplierSku: f.supplierSku,
+              attributes: f.attributes,
+              notes: f.notes,
+            },
+            parts,
+            lineCandidates(f).candidates.map((c) => c.part.id)
+          ),
+        });
+      } catch (error) {
+        if (error instanceof ExtractionError) return { ok: false, error: error.message };
+        return {
+          ok: false,
+          error: `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      const parsed = lineCleanupSchema.safeParse(result.output);
+      if (!parsed.success) {
+        return { ok: false, error: "The model's answer did not match the cleanup schema" };
+      }
+      const output = parsed.data;
+      // Only a part from the list can be chosen; another ID is not a match.
+      const matched = parts.find((p) => p.id === output.match?.partId) ?? null;
+
+      inTransaction(() => {
+        requireOpen(id);
+        // Apply to the line as it is now, in case it was saved during the call.
+        const fresh = requireLine(id, lineId);
+        const proposal = cleanupLine(context, fresh, output);
+        if (output.match && !matched) {
+          proposal.unresolved.push(`Matched part ${output.match.partId} is not in the catalog`);
+        }
+        updateLineProposal(db, lineId, proposal);
+        updateLine(db, lineId, {
+          groupId: fresh.groupId,
+          fields: proposal.fields,
+          resolution: matched ? "existing" : fresh.resolution,
+          partId: matched ? matched.id : fresh.partId,
+        });
+      });
+      return { ok: true, matchedPart: matched && { id: matched.id, name: matched.name } };
     },
 
     /** Lines from the owner's CSV column roles, without a model. Replaces the lines. */

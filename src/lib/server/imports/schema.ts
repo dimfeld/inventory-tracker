@@ -95,7 +95,29 @@ export const projectOutputSchema = z.object({
   lines: z.array(projectLineSchema),
 });
 
+/** A cleanup of one order line that already has structured fields. */
+export const lineCleanupSchema = z.object({
+  description: z
+    .string()
+    .describe("A clean, concise name for the item in the style of the catalog part names"),
+  category: marked("A category path from the category definitions"),
+  attributes: z
+    .array(attribute)
+    .describe("All typed attributes of the item, including the ones the line already has"),
+  match: z
+    .object({
+      partId: z.number().int().describe("ID of a part from the catalog list"),
+      reason: z.string().describe("Why this catalog part is the same item"),
+    })
+    .nullable()
+    .describe("The catalog part that is the same item, or null when no part is the same item"),
+  unresolved: z
+    .array(z.string())
+    .describe("Fields that are missing, unclear, or contradictory, such as 'length'"),
+});
+
 export type MarkedValue = z.infer<ReturnType<typeof marked>>;
+export type LineCleanupOutput = z.infer<typeof lineCleanupSchema>;
 export type OrderOutput = z.infer<typeof orderOutputSchema>;
 export type OrderLineOutput = z.infer<typeof orderLineSchema>;
 export type ProjectOutput = z.infer<typeof projectOutputSchema>;
@@ -105,4 +127,5 @@ export type PartOutput = Pick<OrderLineOutput, keyof typeof partFields>;
 export const OUTPUT_SCHEMAS = {
   order: orderOutputSchema,
   project: projectOutputSchema,
+  line_cleanup: lineCleanupSchema,
 } as const;

@@ -135,4 +135,18 @@ describe("ImportLineForm.svelte", () => {
     expect(field("quantity").value).toBe("four");
     expect(field("description").value).toBe("Pull-up resistor");
   });
+
+  it("shows a cleanup in progress and blocks other submissions until it finishes", async () => {
+    render(ImportLineForm, { ...props(saved), kind: "order" as const, cleanupAvailable: true });
+
+    await page.getByRole("button", { name: "Clean up with GPT-6 Luna" }).click();
+    await expect.element(page.getByText("Saving the line and sending it to OpenAI")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Save line" })).toBeDisabled();
+
+    await requests[0].finish(true);
+    await expect
+      .element(page.getByText("Saving the line and sending it to OpenAI"))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Save line" })).toBeEnabled();
+  });
 });
