@@ -306,8 +306,23 @@
   }
 
   function extractAmazon() {
-    const detailItems = [...document.querySelectorAll('[data-component="purchasedItems"]')];
-    if (detailItems.length) return extractAmazonDetails(detailItems);
+    // A purchasedItems block is one shipment group and can hold several items. Each item is
+    // the largest ancestor of its title that holds no other title.
+    const titles = [
+      ...document.querySelectorAll(
+        '[data-component="purchasedItems"] [data-component="itemTitle"]'
+      ),
+    ];
+    if (titles.length) {
+      const itemTitles = '[data-component="itemTitle"]';
+      const items = titles.map((title) => {
+        let item = title;
+        while (item.parentElement && item.parentElement.querySelectorAll(itemTitles).length === 1)
+          item = item.parentElement;
+        return item;
+      });
+      return extractAmazonDetails(items);
+    }
 
     const sourceUrl = location.href;
     let cards = topLevel(
