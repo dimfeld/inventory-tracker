@@ -22,6 +22,7 @@ import {
   listAttributeValueUsage,
   listStoredValues,
   setAttributeAssignment,
+  setPartCategory,
   updateAttributeDefinition,
   updateCategory,
   upsertPartAttribute,
@@ -230,6 +231,15 @@ export function createTaxonomyService(db: Database) {
         if (!getPart(db, partId)) throw new NotFoundError(`Part ${partId} does not exist`);
         if (value === null || !value.trim()) deletePartAttribute(db, partId, definition.id);
         else storeValue(definition, partId, value.trim());
+      });
+    },
+
+    /** Move a part to a category, or with null remove its category. Its attributes stay. */
+    setPartCategory(partId: number, categoryId: number | null): void {
+      inTransaction(() => {
+        if (!getPart(db, partId)) throw new NotFoundError(`Part ${partId} does not exist`);
+        if (categoryId !== null) requireCategory(categoryId);
+        setPartCategory(db, partId, categoryId);
       });
     },
 

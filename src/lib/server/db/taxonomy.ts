@@ -192,3 +192,11 @@ export function countCategoryUses(db: Database, id: number) {
 export function deleteCategory(db: Database, id: number): void {
   db.run("DELETE FROM categories WHERE id = ?", [id]);
 }
+
+export function setPartCategory(db: Database, partId: number, categoryId: number | null): void {
+  db.run(
+    `UPDATE parts SET category_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ?`,
+    [categoryId, partId]
+  );
+}

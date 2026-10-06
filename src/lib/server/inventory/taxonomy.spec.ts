@@ -127,6 +127,13 @@ describe("taxonomy service", () => {
     expect(ctx.catalog.listCategories().some((c) => c.id === empty)).toBe(false);
   });
 
+  it("moves a part to another category", () => {
+    const ctx = setup();
+    ctx.taxonomy.setPartCategory(ctx.screw, ctx.hardware);
+    expect(ctx.catalog.getPartDetails(ctx.screw)?.part.categoryId).toBe(ctx.hardware);
+    expect(() => ctx.taxonomy.setPartCategory(ctx.screw, 9999)).toThrow("does not exist");
+  });
+
   it("renames and moves a category but never under itself", () => {
     const ctx = setup();
     const fasteners = ctx.catalog.createCategory("Holders", ctx.hardware);
