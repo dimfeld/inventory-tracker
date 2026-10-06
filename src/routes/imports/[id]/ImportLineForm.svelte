@@ -109,6 +109,10 @@
   const STATUS_CLASSES = { match: 'text-green-700', unresolved: 'text-amber-700', conflict: 'text-red-700' };
 </script>
 
+{#snippet partLabel(part: Props['options']['parts'][number])}
+  {part.name}{part.partNumber ? ` (${part.partNumber})` : ''} — {part.baseUnit}
+{/snippet}
+
 {#snippet badge(field: keyof ImportLineFields | `attribute:${string}`)}
   {@const m = mark(field)}
   {#if m}<span class="ml-1 rounded bg-gray-100 px-1 text-xs text-gray-600">{m}</span>{/if}
@@ -258,12 +262,26 @@
         <label><input {...fields.resolution.as('radio', 'requirement', line.resolution === 'requirement')} /> Requirement (category and attributes)</label>
       {/if}
       {#if resolution === 'existing'}
-        <select {...fields.partId.as('select', idText(line.partId))} class="input">
-          <option value="">Choose a part</option>
-          {#each options.parts as part (part.id)}
-            <option value={String(part.id)}>{part.name}{part.partNumber ? ` (${part.partNumber})` : ''} — {part.baseUnit}</option>
-          {/each}
-        </select>
+        {@const partId = fields.partId.value() ?? ''}
+        {@const chosen = options.parts.find((part) => String(part.id) === partId)}
+        <input {...fields.partId.as('hidden', partId)} />
+        <p class="mt-1 text-sm">
+          {#if chosen}
+            Part: {@render partLabel(chosen)}
+          {:else}
+            <span class="text-gray-600">No part chosen</span>
+          {/if}
+        </p>
+        <SearchSelect
+          label="Search the catalog for the existing part of line {number}"
+          placeholder="Search {options.parts.length} part(s)"
+          items={options.parts}
+          key={(part) => part.id}
+          text={(part) => `${part.name} ${part.partNumber ?? ''}`}
+          onselect={(part) => fields.partId.set(String(part.id))}
+        >
+          {#snippet option(part)}{@render partLabel(part)}{/snippet}
+        </SearchSelect>
       {:else if resolution === 'new'}
         <p class="text-sm text-gray-600">
           The commit creates a part from the description, category, unit, identifiers, and attributes.

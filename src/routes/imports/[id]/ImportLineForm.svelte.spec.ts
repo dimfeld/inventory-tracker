@@ -199,4 +199,30 @@ describe("ImportLineForm.svelte", () => {
     expect(submissions[0]).toMatchObject({ id: 7, choosePart: "1" });
     expect(submissions[0].intent).toBeUndefined();
   });
+  it("searches the catalog for the existing part and saves the chosen one", async () => {
+    const base = props(saved, 8);
+    render(ImportLineForm, {
+      ...base,
+      line: { ...base.line, resolution: "existing", partId: 1 },
+      options: {
+        ...base.options,
+        parts: [
+          { id: 1, name: "10k resistor 0805", baseUnit: "pcs", partNumber: null },
+          { id: 2, name: "4.7k resistor 0603", baseUnit: "pcs", partNumber: "RC0603-4K7" },
+        ],
+      },
+    });
+
+    await expect.element(page.getByText("Part: 10k resistor 0805 — pcs")).toBeInTheDocument();
+    const search = page.getByRole("combobox", { name: /Search the catalog for the existing part/ });
+    await search.fill("RC0603");
+    await page.getByRole("listbox").getByRole("option", { name: /4.7k resistor 0603/ }).click();
+    await expect
+      .element(page.getByText("Part: 4.7k resistor 0603 (RC0603-4K7) — pcs"))
+      .toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Save line" }).click();
+    await expect.poll(() => submissions.length).toBe(1);
+    expect(submissions[0]).toMatchObject({ id: 8, intent: "save", resolution: "existing", partId: "2" });
+  });
 });
