@@ -42,6 +42,7 @@
 
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import PartPicker from '#lib/components/PartPicker.svelte';
   import { attributeUnitsHint, previewMeasurement } from '#lib/attributes.ts';
   import { COMPARISON_LABELS, CONSTRAINT_COMPARISONS } from '#lib/projects.ts';
   import { UNIT_CODES, UNITS } from '#lib/units.ts';
@@ -138,19 +139,12 @@
     </div>
 
     {#if mode === 'exact'}
-      <label class="block">
+      <div>
         <span class="text-sm">Part</span>
-        <select name="part_id" class="input">
-          <option value="">Choose a part</option>
-          {#each options.parts as part (part.id)}
-            <option value={part.id} selected={part.id === initial?.partId}>
-              {part.name}{part.partNumber ? ` (${part.partNumber})` : ''} — {part.baseUnit}
-            </option>
-          {/each}
-        </select>
+        <PartPicker parts={options.parts} value={initial?.partId ? String(initial.partId) : ''} />
         <span class="text-sm text-gray-600">The quantity is stored in the part's base unit.</span>
         {#if errors?.part_id}<span class="text-sm text-red-700">{errors.part_id}</span>{/if}
-      </label>
+      </div>
     {:else}
       <div class="grid gap-4 sm:grid-cols-3">
         <label class="block">

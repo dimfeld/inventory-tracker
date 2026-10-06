@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PartPicker from '#lib/components/PartPicker.svelte';
   import { describePackConversion } from '#lib/orders.ts';
 
   /** Order line inputs with a live pack conversion. The parent supplies the form element. */
@@ -6,7 +7,7 @@
     parts,
     line = null,
   }: {
-    parts: { id: number; name: string; baseUnit: string }[];
+    parts: { id: number; name: string; baseUnit: string; partNumber: string | null }[];
     line?: {
       partId: number;
       supplierSku: string | null;
@@ -40,15 +41,10 @@
 </script>
 
 <div class="grid gap-2 sm:grid-cols-2">
-  <label class="block sm:col-span-2">
+  <div class="sm:col-span-2">
     <span class="text-sm">Part</span>
-    <select name="part_id" required bind:value={partId} class="input">
-      <option value="">Choose a part</option>
-      {#each parts as part (part.id)}
-        <option value={String(part.id)}>{part.name} ({part.baseUnit})</option>
-      {/each}
-    </select>
-  </label>
+    <PartPicker {parts} bind:value={partId} />
+  </div>
   <label class="block">
     <span class="text-sm">Quantity ordered</span>
     <input name="purchase_quantity" required inputmode="numeric" bind:value={purchaseQuantity} class="input" />

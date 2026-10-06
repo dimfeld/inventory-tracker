@@ -99,6 +99,14 @@
     <p class="mt-2 text-sm text-gray-600">Draft orders are not incoming supply.</p>
   {/if}
   {@render message('state')}
+  <details class="mt-3 max-w-md" open={form?.action === 'update'}>
+    <summary class="cursor-pointer text-sm font-semibold">Edit expected date, tracking, and other details</summary>
+    <form method="POST" action="?/update" use:enhance class="mt-2 space-y-3">
+      <OrderFields {order} />
+      {@render message('update')}
+      <button class="btn">Save order</button>
+    </form>
+  </details>
 </section>
 
 <section class="mb-6">
@@ -278,12 +286,3 @@
     </ul>
   {/if}
 </section>
-
-<details class="card max-w-md" open={form?.action === 'update'}>
-  <summary class="cursor-pointer font-semibold">Edit order details</summary>
-  <form method="POST" action="?/update" use:enhance class="mt-2 space-y-3">
-    <OrderFields {order} />
-    {@render message('update')}
-    <button class="btn">Save order</button>
-  </form>
-</details>

@@ -132,7 +132,7 @@ export function createOrderService(db: Database) {
         attributes: [],
         tags: [],
         includeArchived: false,
-      }).map(({ id, name, baseUnit }) => ({ id, name, baseUnit })),
+      }).map(({ id, name, baseUnit, partNumber }) => ({ id, name, baseUnit, partNumber })),
 
     getOrderDetails(id: number) {
       const order = getOrder(db, id);

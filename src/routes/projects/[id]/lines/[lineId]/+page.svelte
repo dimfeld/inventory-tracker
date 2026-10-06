@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import PartPicker from '#lib/components/PartPicker.svelte';
   import { describeConstraint } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
@@ -407,12 +408,7 @@
 <form method="POST" action="?/approve" use:enhance class="card max-w-xl space-y-2 text-sm">
   <h2 class="font-semibold">Approve another part as a substitute</h2>
   <input type="hidden" name="substitute" value="on" />
-  <select name="part_id" required class="input">
-    <option value="">Choose a part</option>
-    {#each data.parts as part (part.id)}
-      <option value={part.id}>{part.name} — {part.baseUnit}</option>
-    {/each}
-  </select>
+  <PartPicker parts={data.parts} label="Search for a substitute part" />
   <textarea name="note" rows="2" required placeholder="Why is this substitute acceptable?" class="input"></textarea>
   <button class="btn-secondary">Approve substitute</button>
 </form>
