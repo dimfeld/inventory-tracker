@@ -317,13 +317,13 @@ export function updateLineDelivery(
   db: Database,
   ids: number[],
   deliveryState: DeliveryState,
-  deliveredOn?: string
+  deliveredOn: string
 ): void {
   db.run(
-    `UPDATE order_lines SET delivery_state = ?, delivered_on = coalesce(?, delivered_on),
+    `UPDATE order_lines SET delivery_state = ?, delivered_on = ?,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id IN (SELECT value FROM json_each(?))`,
-    [deliveryState, deliveredOn ?? null, JSON.stringify(ids)]
+    [deliveryState, deliveredOn, JSON.stringify(ids)]
   );
 }
 

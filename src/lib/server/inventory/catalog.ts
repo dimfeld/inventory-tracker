@@ -158,13 +158,10 @@ export function createCatalogService(db: Database) {
     }
 
     for (const { id, ...fields } of input) {
-      const other = findSupplierPart(db, fields.supplier, fields.sku);
-      if (other && other.id !== id) {
-        throw new InventoryError(
-          `${fields.supplier} SKU ${fields.sku} already belongs to ${
-            other.partId === partId ? "this part" : `part ${other.partId}`
-          }`
-        );
+      // Several parts can share a supplier SKU, but one part lists it only once.
+      const other = findSupplierPart(db, partId, fields.supplier, fields.sku);
+      if (other !== null && other !== id) {
+        throw new InventoryError(`${fields.supplier} SKU ${fields.sku} is already on this part`);
       }
       if (id !== null && existingIds.has(id)) {
         updateSupplierPart(db, partId, id, fields);

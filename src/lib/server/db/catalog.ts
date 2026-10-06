@@ -308,14 +308,18 @@ export function deleteSupplierPart(db: Database, partId: number, id: number): vo
   db.run("DELETE FROM supplier_parts WHERE id = ? AND part_id = ?", [id, partId]);
 }
 
+/** The ID of the part's supplier SKU row for `supplier` and `sku`, or null. */
 export function findSupplierPart(
   db: Database,
+  partId: number,
   supplier: string,
   sku: string
-): { id: number; partId: number } | null {
-  return db
-    .query<{ id: number; partId: number }, [string, string]>(
-      "SELECT id, part_id AS partId FROM supplier_parts WHERE supplier = ? AND sku = ?"
-    )
-    .get(supplier, sku);
+): number | null {
+  return (
+    db
+      .query<{ id: number }, [number, string, string]>(
+        "SELECT id FROM supplier_parts WHERE part_id = ? AND supplier = ? AND sku = ?"
+      )
+      .get(partId, supplier, sku)?.id ?? null
+  );
 }

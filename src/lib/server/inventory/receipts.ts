@@ -55,6 +55,8 @@ export interface ReceiveAllInput {
   /** Storage destination of every outstanding line. */
   locationId: number;
   notes: string | null;
+  /** Receive only these order lines. Absent receives every outstanding line. */
+  orderLineIds?: number[];
 }
 
 export interface ReceiptResult {
@@ -248,13 +250,24 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
      */
     receive,
 
-    /** Accept everything still outstanding on the order into one storage location. */
+    /**
+     * Accept everything still outstanding on the order, or on the lines in `orderLineIds`, into
+     * one storage location.
+     */
     receiveAllOutstanding(input: ReceiveAllInput): ReceiptResult {
       return inTransaction(() => {
         const existing = existingResult(input.operationId);
         if (existing) return existing;
         requireReceivable(input.orderId);
-        const lines = listOrderLines(db, input.orderId).filter((line) => line.outstanding > 0);
+        let lines = listOrderLines(db, input.orderId);
+        if (input.orderLineIds) {
+          const ids = new Set(input.orderLineIds);
+          lines = lines.filter((line) => ids.has(line.id));
+          if (lines.length !== ids.size) throw new NotFoundError("A line is not on this order");
+          const settled = lines.find((line) => line.outstanding === 0);
+          if (settled) throw new InventoryError(`${settled.partName} has nothing outstanding`);
+        }
+        lines = lines.filter((line) => line.outstanding > 0);
         if (lines.length === 0) throw new InventoryError("Nothing is outstanding on this order");
         return receive({
           operationId: input.operationId,

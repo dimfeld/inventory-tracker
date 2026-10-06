@@ -139,6 +139,25 @@ AliExpress,AE-3,Resistor kit,1,pack,100,pcs,300,4.00,USD,`;
     ]);
   });
 
+  it("lists parsed imports first and committed imports last", async () => {
+    const ctx = await parsedOrder();
+    const draft = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "Draft",
+    });
+    const committed = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "Committed",
+    });
+    ctx.db.run(
+      "UPDATE imports SET commit_state = 'committed', commit_operation_id = 'op' WHERE id = ?",
+      [committed]
+    );
+    expect(ctx.imports.listImports().map((item) => item.id)).toEqual([ctx.id, draft, committed]);
+  });
+
   it("maps a DigiKey order copy into one draft with lines", () => {
     const ctx = createTestImports();
     const row = (...cells: string[]) => cells.join("\t");

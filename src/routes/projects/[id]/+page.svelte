@@ -139,7 +139,7 @@
         </label>
         <label>
           <span class="text-xs text-gray-600">Notes</span>
-          <input name="notes" value={component.notes ?? ''} class="input" />
+          <textarea name="notes" rows="2" class="input">{component.notes ?? ''}</textarea>
         </label>
         <button class="btn-secondary">Save</button>
       </form>
@@ -167,7 +167,7 @@
     </label>
     <label>
       <span class="text-xs text-gray-600">Notes</span>
-      <input name="notes" class="input" />
+      <textarea name="notes" rows="2" class="input"></textarea>
     </label>
     <button class="btn-secondary">Add component</button>
   </form>

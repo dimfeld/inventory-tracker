@@ -183,7 +183,7 @@
   {/if}
   <label class="block">
     <span>Review notes</span>
-    <input name="notes" class="input" />
+    <textarea name="notes" rows="2" class="input"></textarea>
   </label>
   <label class="flex items-center gap-2">
     <input type="checkbox" name="cancel_remainder" bind:checked={cancelRemainder} />

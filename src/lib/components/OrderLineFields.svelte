@@ -75,7 +75,7 @@
   </label>
   <label class="block sm:col-span-2">
     <span class="text-sm">Notes</span>
-    <input name="notes" value={line?.notes ?? ''} class="input" />
+    <textarea name="notes" rows="2" class="input">{line?.notes ?? ''}</textarea>
   </label>
 </div>
 <p class="text-sm {conversion ? 'text-gray-800' : 'text-gray-500'}">

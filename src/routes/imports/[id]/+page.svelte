@@ -187,7 +187,7 @@
       {/if}
       <label class="block sm:col-span-2">
         <span class="text-sm">Notes</span>
-        <input name="notes" value={record.header.notes ?? ''} class="input" />
+        <textarea name="notes" rows="2" class="input">{record.header.notes ?? ''}</textarea>
       </label>
       {#if !committed}<div><button class="btn-secondary">Save</button></div>{/if}
     </fieldset>

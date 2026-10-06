@@ -63,7 +63,7 @@ describe("catalog service", () => {
     ]);
   });
 
-  it("rejects a supplier SKU that belongs to another part", () => {
+  it("allows several parts to share a supplier SKU but not one part to list it twice", () => {
     const { catalog } = createTestInventory();
     const ref = {
       id: null,
@@ -73,11 +73,14 @@ describe("catalog service", () => {
       purchaseUnit: null,
       packQuantity: null,
     };
-    catalog.createPart(partInput({ supplierParts: [ref] }));
-    expect(() => catalog.createPart(partInput({ name: "Other", supplierParts: [ref] }))).toThrow(
+    const first = catalog.createPart(partInput({ supplierParts: [ref] }));
+    const second = catalog.createPart(partInput({ name: "Other", supplierParts: [ref] }));
+    expect(catalog.getPartDetails(second)!.supplierParts).toMatchObject([{ sku: "1" }]);
+
+    expect(() => catalog.updatePart(first, partInput({ supplierParts: [ref, ref] }))).toThrow(
       InventoryError
     );
-    expect(catalog.getPartDetails(2)).toBeNull();
+    expect(catalog.getPartDetails(first)!.supplierParts).toHaveLength(1);
   });
 
   it("does not change the base unit after stock is recorded", () => {

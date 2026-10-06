@@ -38,7 +38,7 @@
   </label>
   <label class="block">
     <span class="text-sm">Notes</span>
-    <input name="notes" class="input" />
+    <textarea name="notes" rows="2" class="input"></textarea>
   </label>
   {#if form && 'message' in form}<p class="text-red-700">{form.message}</p>{/if}
   {#if form && 'errors' in form}<p class="text-red-700">{Object.values(form.errors ?? {}).join('. ')}</p>{/if}

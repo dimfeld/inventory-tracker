@@ -193,7 +193,7 @@ describe("delivery review", () => {
     expect(line(ctx).outstanding).toBe(100);
   });
 
-  it("marks only the selected lines delivered and finishes their review", () => {
+  it("marks only the selected lines delivered and receives the selected lines", () => {
     const ctx = setup((id) => [lineInput(id), lineInput(id), lineInput(id)]);
     expect(delivery(ctx)).toBe("not_delivered");
     ctx.orders.markLinesDelivered(ctx.orderId, [ctx.lineIds[0], ctx.lineIds[2]], DAY);
@@ -204,12 +204,21 @@ describe("delivery review", () => {
     ]);
     expect(lineAt(ctx, 1).deliveredOn).toBeNull();
 
-    expect(() => ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[1]])).toThrow(
-      /not awaiting review/
-    );
-    ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[0], ctx.lineIds[2]]);
+    const receiveLines = (ids: number[]) =>
+      ctx.receipts.receiveAllOutstanding({
+        operationId: opId(),
+        orderId: ctx.orderId,
+        receivedOn: LATER,
+        locationId: ctx.drawer,
+        notes: null,
+        orderLineIds: ids,
+      });
+    receiveLines([ctx.lineIds[0], ctx.lineIds[2]]);
     expect(lineAt(ctx, 0)).toMatchObject({ deliveryState: "reviewed", deliveredOn: DAY });
+    expect(lineAt(ctx, 1)).toMatchObject({ deliveryState: "not_delivered", outstanding: 100 });
+    expect(stock(ctx)).toBe(200);
     expect(delivery(ctx)).toBe("partly_delivered");
+    expect(() => receiveLines([ctx.lineIds[0]])).toThrow(/nothing outstanding/);
 
     // The rest of the order arrives in a later parcel.
     expect(ctx.orders.markOutstandingDelivered(ctx.orderId, LATER)).toBe(1);
@@ -218,7 +227,8 @@ describe("delivery review", () => {
     expect(() => ctx.orders.markOutstandingDelivered(ctx.orderId, LATER)).toThrow(
       /No outstanding line/
     );
-    ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[1]]);
+    receiveLines([ctx.lineIds[1]]);
+    expect(stock(ctx)).toBe(300);
     expect(delivery(ctx)).toBe("reviewed");
   });
 

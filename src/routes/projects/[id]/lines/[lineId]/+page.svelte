@@ -375,12 +375,13 @@
           {:else}
             <input type="hidden" name="substitute" value="on" />
           {/if}
-          <input
+          <textarea
             name="note"
+            rows="2"
             placeholder={candidate.status === 'match' ? 'Note (optional)' : 'Why is this substitute acceptable?'}
             required={candidate.status !== 'match'}
             class="rounded border border-gray-300 px-2 py-1"
-          />
+          ></textarea>
           <button class="btn-secondary">
             {candidate.status === 'match' ? 'Approve' : 'Approve as substitute'}
           </button>
@@ -399,6 +400,6 @@
       <option value={part.id}>{part.name} — {part.baseUnit}</option>
     {/each}
   </select>
-  <input name="note" required placeholder="Why is this substitute acceptable?" class="input" />
+  <textarea name="note" rows="2" required placeholder="Why is this substitute acceptable?" class="input"></textarea>
   <button class="btn-secondary">Approve substitute</button>
 </form>

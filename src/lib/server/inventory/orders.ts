@@ -240,28 +240,6 @@ export function createOrderService(db: Database) {
       });
     },
 
-    /**
-     * Record that the delivered lines have been reviewed. Usable stock changes only through
-     * receipts, which also finish the review of the lines they receive. Outstanding quantity of
-     * a reviewed line is still expected and can be received later. Returns the number of lines
-     * reviewed.
-     */
-    finishLineReview(orderId: number, lineIds: number[]): number {
-      return inTransaction(() => {
-        const lines = requireDeliveryLines(orderId, lineIds);
-        const notDelivered = lines.find((line) => line.deliveryState !== "awaiting_review");
-        if (notDelivered) {
-          throw new InventoryError(`${notDelivered.partName} is not awaiting review`);
-        }
-        updateLineDelivery(
-          db,
-          lines.map((line) => line.id),
-          "reviewed"
-        );
-        return lines.length;
-      });
-    },
-
     addLine(orderId: number, input: OrderLineInput): number {
       return inTransaction(() => {
         requireOrder(orderId);

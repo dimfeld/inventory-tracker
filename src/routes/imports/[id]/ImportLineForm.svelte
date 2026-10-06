@@ -181,7 +181,7 @@
     </label>
     <label class="block sm:col-span-3">
       <span class="text-sm">Notes {@render badge('notes')}</span>
-      <input name="notes" value={f.notes ?? ''} class="input" />
+      <textarea name="notes" rows="2" class="input">{f.notes ?? ''}</textarea>
     </label>
 
     <div class="sm:col-span-4">

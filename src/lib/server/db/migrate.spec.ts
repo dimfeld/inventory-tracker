@@ -84,4 +84,34 @@ describe("migrations", () => {
     const db = openDatabase(":memory:");
     expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
   });
+
+  it("lets several parts share a supplier SKU and keeps the existing rows", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.run("PRAGMA foreign_keys = ON");
+    const index = migrations.findIndex((m) => m.name === "0009_shared_supplier_sku.sql");
+    runMigrations(db, migrations.slice(0, index));
+    db.run("INSERT INTO parts (id, name, base_unit) VALUES (1, 'Red', 'pcs'), (2, 'Blue', 'pcs')");
+    db.run(
+      `INSERT INTO supplier_parts (id, part_id, supplier, sku, url, purchase_unit, pack_quantity)
+       VALUES (7, 1, 'AliExpress', '100', 'https://example.com', 'pack', 10)`
+    );
+
+    expect(runMigrations(db)).toContain("0009_shared_supplier_sku.sql");
+    expect(db.query("SELECT * FROM supplier_parts").all()).toEqual([
+      {
+        id: 7,
+        part_id: 1,
+        supplier: "AliExpress",
+        sku: "100",
+        url: "https://example.com",
+        purchase_unit: "pack",
+        pack_quantity: 10,
+      },
+    ]);
+    db.run("INSERT INTO supplier_parts (part_id, supplier, sku) VALUES (2, 'AliExpress', '100')");
+    expect(() =>
+      db.run("INSERT INTO supplier_parts (part_id, supplier, sku) VALUES (2, 'AliExpress', '100')")
+    ).toThrow(/UNIQUE/);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
 });

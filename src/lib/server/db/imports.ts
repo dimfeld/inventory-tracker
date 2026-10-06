@@ -158,6 +158,10 @@ export function getImport(db: Database, id: number): ImportRecord | null {
   return row ? toImport(row) : null;
 }
 
+/**
+ * Imports that need action come first: parsed imports to review and commit, then failed parses,
+ * parses in progress, and drafts. Committed imports come last. Newest first within each state.
+ */
 export function listImports(db: Database): ImportSummary[] {
   return db
     .query<ImportSummary, []>(
@@ -171,7 +175,16 @@ export function listImports(db: Database): ImportSummary[] {
              instr(ltrim(i.source_text) || char(10), char(10)) - 1)
          ) AS title,
          i.created_at AS createdAt
-       FROM imports i ORDER BY i.id DESC`
+       FROM imports i
+       ORDER BY
+         CASE
+           WHEN i.commit_state = 'committed' THEN 4
+           WHEN i.parse_state = 'parsed' THEN 0
+           WHEN i.parse_state = 'failed' THEN 1
+           WHEN i.parse_state = 'parsing' THEN 2
+           ELSE 3
+         END,
+         i.id DESC`
     )
     .all();
 }

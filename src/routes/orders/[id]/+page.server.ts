@@ -1,5 +1,10 @@
 import { error, fail } from "@sveltejs/kit";
-import { parseDate, parseOrderForm, parseOrderLineForm } from "#lib/schemas/order.ts";
+import {
+  parseDate,
+  parseOrderForm,
+  parseOrderLineForm,
+  parseReceiveAllForm,
+} from "#lib/schemas/order.ts";
 import { allText, parseId, text } from "#lib/schemas/result.ts";
 import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
@@ -9,7 +14,14 @@ import type { Actions, PageServerLoad } from "./$types";
 export const load: PageServerLoad = ({ params }) => {
   const details = inventory().orders.getOrderDetails(Number(params.id));
   if (!details) error(404, "Order not found");
-  return { ...details, parts: inventory().orders.partOptions(), today: today() };
+  return {
+    ...details,
+    parts: inventory().orders.partOptions(),
+    storageLocations: inventory().locations.listStorageLocations(),
+    today: today(),
+    // One ID per page load; a repeated submission returns the receipt it already created.
+    operationId: crypto.randomUUID(),
+  };
 };
 
 /** The order line ID of a line action. Returns null when it is missing or invalid. */
@@ -88,12 +100,28 @@ export const actions: Actions = {
     });
   },
 
-  finishReview: async ({ request, params }) => {
-    const ids = lineIds(await request.formData());
-    if (ids === null) return fail(400, { action: "delivery", message: "Choose valid lines" });
+  receiveSelected: async ({ request, params }) => {
+    const form = await request.formData();
+    const ids = lineIds(form);
+    // The receipt date is the date of the delivery form.
+    form.set("received_on", text(form, "date"));
+    const parsed = parseReceiveAllForm(form);
+    if (ids === null || ids.length === 0) {
+      return fail(400, { action: "delivery", message: "Choose lines to receive" });
+    }
+    if (!parsed.success) return fail(400, { action: "delivery", errors: parsed.errors });
     return runAction("delivery", () => {
-      const count = inventory().orders.finishLineReview(Number(params.id), ids);
-      return { action: "delivery", success: `Finished review of ${lineCount(count)}.` };
+      const result = inventory().receipts.receiveAllOutstanding({
+        ...parsed.data,
+        orderId: Number(params.id),
+        orderLineIds: ids,
+      });
+      return {
+        action: "delivery",
+        success: result.repeated
+          ? "This receipt was already recorded. No stock was added again."
+          : `Received ${lineCount(result.lines.length)} into stock.`,
+      };
     });
   },
 

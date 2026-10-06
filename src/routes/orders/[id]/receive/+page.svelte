@@ -74,7 +74,7 @@
         </ul>
         <label class="block">
           <span>Receipt notes</span>
-          <input name="notes" class="input" />
+          <textarea name="notes" rows="2" class="input"></textarea>
         </label>
         <button class="btn">Receive all outstanding</button>
       </form>

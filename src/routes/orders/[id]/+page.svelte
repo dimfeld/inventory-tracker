@@ -12,7 +12,6 @@
 
   const order = $derived(data.order);
   const outstandingLines = $derived(data.lines.filter((l) => l.outstanding > 0));
-  const awaitingReview = $derived(data.lines.some((l) => l.deliveryState === 'awaiting_review'));
   const waitingForDelivery = $derived(outstandingLines.some((l) => l.deliveryState === 'not_delivered'));
   const canDeliver = $derived(order.status !== 'draft');
 
@@ -26,8 +25,8 @@
     return DELIVERY_LABELS[line.deliveryState];
   }
 
-  /** Lines that can be selected to mark delivered or to finish their review. */
-  const selectable = (line: Line) => line.outstanding > 0 || line.deliveryState === 'awaiting_review';
+  /** Lines that can be selected to mark delivered or to receive. */
+  const selectable = (line: Line) => line.outstanding > 0;
   const commitmentsByLine = $derived(Map.groupBy(data.commitments, (c) => c.orderLineId));
 
   function feedback(action: string) {
@@ -111,18 +110,27 @@
     {#if canDeliver}
       <!-- The line checkboxes belong to this form through their form attribute. -->
       <form id="delivery" method="POST" action="?/deliverLines" use:enhance class="mb-2 flex flex-wrap items-end gap-2 text-sm">
+        <input type="hidden" name="operation_id" value={data.operationId} />
         <input type="date" name="date" value={data.today} aria-label="Delivery date" class="rounded border border-gray-300 px-1" />
         <button class="btn-secondary">Mark selected delivered</button>
         {#if waitingForDelivery}
           <button class="btn-secondary" formaction="?/deliverOutstanding">Mark all outstanding delivered</button>
         {/if}
-        {#if awaitingReview}
-          <button class="btn-secondary" formaction="?/finishReview">Finish review of selected</button>
+        {#if outstandingLines.length > 0 && data.storageLocations.length > 0}
+          <span class="ml-2 flex items-end gap-1">
+            <select name="location_id" aria-label="Destination" class="rounded border border-gray-300 px-1">
+              {#each data.storageLocations as location (location.id)}
+                <option value={String(location.id)}>{location.name}</option>
+              {/each}
+            </select>
+            <button class="btn-secondary" formaction="?/receiveSelected">Receive selected</button>
+          </span>
         {/if}
       </form>
       <p class="mb-2 text-sm text-gray-600">
-        Marking lines delivered does not add stock. Receiving a line also counts as its delivery and review, so
-        you can go straight to receiving.
+        Marking lines delivered does not add stock. Receive selected adds the full outstanding quantity of each
+        selected line to the destination as usable stock, which also counts as its delivery and review. To record
+        damaged items, use Review and receive items.
       </p>
       {@render message('delivery')}
     {/if}
