@@ -11,6 +11,7 @@ import {
   type Resolution,
   type SourceType,
 } from "#lib/imports.ts";
+import * as z from "zod";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
 export interface NewImportInput {
@@ -85,53 +86,97 @@ export function parseHeaderForm(form: FormData): ParseResult<ImportHeader> {
   }));
 }
 
-/**
- * Parse a review line form. Attribute rows use parallel `attribute_key`/`attribute_value`
- * fields; rows without a key or value are ignored. `resolution` is existing, new, requirement,
- * or empty; `part_id` applies to existing.
- */
-export function parseLineForm(form: FormData): ParseResult<LineEditInput> {
-  const errors: FieldErrors = {};
-  const categoryId = parseId(text(form, "category_id"));
-  if (Number.isNaN(categoryId)) errors.category_id = "Choose a valid category";
-  const groupId = parseId(text(form, "group_id"));
-  if (Number.isNaN(groupId)) errors.group_id = "Choose a valid group";
-  const resolution = text(form, "resolution");
-  if (resolution && !oneOf(RESOLUTIONS, resolution)) errors.resolution = "Choose how to commit";
-  const partId = parseId(text(form, "part_id"));
-  if (Number.isNaN(partId)) errors.part_id = "Choose a valid part";
+const formText = z
+  .string()
+  .optional()
+  .transform((value) => value?.trim() ?? "");
+const optionalFormText = formText.transform((value) => value || null);
 
-  const values = allText(form, "attribute_value");
-  const attributes: ImportAttribute[] = [];
-  allText(form, "attribute_key").forEach((key, index) => {
-    const value = values[index] ?? "";
-    if (!key || !value) return;
-    if (attributes.some((a) => a.key === key)) {
-      errors.attributes = `Attribute "${key}" is listed more than once`;
-    } else {
-      attributes.push({ key, value });
-    }
+/** A positive integer ID from a form field, or null when it is empty. */
+const formId = (message: string) =>
+  formText.transform((value, ctx) => {
+    if (value === "") return null;
+    if (/^\d+$/.test(value) && Number(value) > 0) return Number(value);
+    ctx.addIssue({ code: "custom", message });
+    return z.NEVER;
   });
 
-  return result(errors, () => ({
-    fields: {
-      description: text(form, "description"),
-      quantity: optionalText(form, "quantity"),
-      unit: optionalText(form, "unit"),
-      purchaseUnit: optionalText(form, "purchase_unit"),
-      packQuantity: optionalText(form, "pack_quantity"),
-      unitPrice: optionalText(form, "unit_price"),
-      currency: optionalText(form, "currency")?.toUpperCase() ?? null,
-      referenceDesignators: optionalText(form, "reference_designators"),
-      categoryId,
-      manufacturer: optionalText(form, "manufacturer"),
-      partNumber: optionalText(form, "part_number"),
-      supplierSku: optionalText(form, "supplier_sku"),
-      notes: optionalText(form, "notes"),
-      attributes,
-    },
-    groupId,
-    resolution: (resolution || null) as Resolution | null,
-    partId,
-  }));
-}
+/** What a submission of the review line form does. */
+export const LINE_INTENTS = ["save", "remove", "cleanup"] as const;
+export type LineIntent = (typeof LINE_INTENTS)[number];
+
+/**
+ * The review line form. `id` is the line ID and `intent` the pressed button; `choosePart` saves
+ * the line with that existing part. Attribute rows without a key or value are ignored.
+ * `resolution` is existing, new, requirement, or empty; `partId` applies to existing.
+ */
+export const lineFormSchema = z
+  .object({
+    id: z.number().int(),
+    importId: z.number().int(),
+    intent: z.enum(LINE_INTENTS).optional(),
+    choosePart: formId("Choose a valid part"),
+    description: formText,
+    quantity: optionalFormText,
+    unit: optionalFormText,
+    purchaseUnit: optionalFormText,
+    packQuantity: optionalFormText,
+    unitPrice: optionalFormText,
+    currency: optionalFormText.transform((value) => value?.toUpperCase() ?? null),
+    referenceDesignators: optionalFormText,
+    categoryId: formId("Choose a valid category"),
+    manufacturer: optionalFormText,
+    partNumber: optionalFormText,
+    supplierSku: optionalFormText,
+    notes: optionalFormText,
+    attributes: z.array(z.object({ key: formText, value: formText })).optional(),
+    groupId: formId("Choose a valid group"),
+    resolution: formText.pipe(z.enum([...RESOLUTIONS, ""], { error: "Choose how to commit" })),
+    partId: formId("Choose a valid part"),
+  })
+  .transform((input, ctx) => {
+    const attributes: ImportAttribute[] = [];
+    for (const { key, value } of input.attributes ?? []) {
+      if (!key || !value) continue;
+      if (attributes.some((a) => a.key === key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["attributes"],
+          message: `Attribute "${key}" is listed more than once`,
+        });
+        return z.NEVER;
+      }
+      attributes.push({ key, value });
+    }
+    const edit: LineEditInput = {
+      fields: {
+        description: input.description,
+        quantity: input.quantity,
+        unit: input.unit,
+        purchaseUnit: input.purchaseUnit,
+        packQuantity: input.packQuantity,
+        unitPrice: input.unitPrice,
+        currency: input.currency,
+        referenceDesignators: input.referenceDesignators,
+        categoryId: input.categoryId,
+        manufacturer: input.manufacturer,
+        partNumber: input.partNumber,
+        supplierSku: input.supplierSku,
+        notes: input.notes,
+        attributes,
+      },
+      groupId: input.groupId,
+      resolution: input.resolution || null,
+      partId: input.partId,
+    };
+    return {
+      lineId: input.id,
+      importId: input.importId,
+      intent: input.intent ?? ("save" as LineIntent),
+      // A chosen candidate saves the line as that existing part.
+      edit:
+        input.choosePart === null
+          ? edit
+          : { ...edit, resolution: "existing" as const, partId: input.choosePart },
+    };
+  });

@@ -233,19 +233,17 @@
 
 <section class="mb-6">
   <h2 class="mb-2 font-semibold">Lines</h2>
-  {@render message('lines')}
   {#if data.lines.length === 0}<p class="mb-2 text-sm text-gray-600">No lines yet.</p>{/if}
   <div class="space-y-3">
-    <!-- Keyed by the choice too, so the editor shows a part chosen from the candidates. -->
-    {#each data.lines as line, index (`${line.id}:${line.resolution}:${line.partId}`)}
+    {#each data.lines as line, index (line.id)}
       <ImportLineForm
+        importId={record.id}
         kind={record.kind}
         number={index + 1}
         readonly={committed}
         {line}
         options={data.options}
         groups={data.groups}
-        feedback={feedback(`line-${line.id}`)}
         cleanupAvailable={data.parsingAvailable}
       />
     {/each}

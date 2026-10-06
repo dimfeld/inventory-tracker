@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
   import SearchSelect from '#lib/components/SearchSelect.svelte';
   import { PROVENANCE_LABELS, type ImportKind, type ImportLineFields, type LineProposal } from '#lib/imports.ts';
+  import { editLine } from './lines.remote';
 
   interface Props {
+    importId: number;
     kind: ImportKind;
     number: number;
     readonly: boolean;
@@ -37,23 +38,53 @@
       units: string[];
     };
     groups: { id: number; name: string }[];
-    feedback: { ok: boolean; text: string } | null;
     /** True when the server can call the model to clean up the line. */
     cleanupAvailable?: boolean;
   }
 
-  let { kind, number, readonly, line, options, groups, feedback, cleanupAvailable = false }: Props = $props();
+  let { importId, kind, number, readonly, line, options, groups, cleanupAvailable = false }: Props = $props();
 
-  /** True while a cleanup request of this line is in flight. */
+  // One form instance per line, so each line saves and cleans up on its own.
+  const lineForm = $derived(editLine.for(line.id));
+  const fields = $derived(lineForm.fields);
+  /** True while a cleanup of this line is in flight. */
   let cleaning = $state(false);
   let choosePart = $state<HTMLButtonElement>()!;
 
-  // The form owns this after the initial value.
-  // svelte-ignore state_referenced_locally
-  let resolution = $state(line.resolution ?? '');
-
   const f = $derived(line.fields);
   const attributeRows = $derived([...f.attributes, { key: '', value: '' }, { key: '', value: '' }]);
+  const idText = (id: number | null) => (id === null ? '' : String(id));
+
+  /** The stored line as form input. Compared as text, so a reload with the same values keeps unsaved edits. */
+  const saved = $derived(
+    JSON.stringify({
+      importId,
+      description: f.description,
+      quantity: f.quantity ?? '',
+      unit: f.unit ?? '',
+      purchaseUnit: f.purchaseUnit ?? '',
+      packQuantity: f.packQuantity ?? '',
+      unitPrice: f.unitPrice ?? '',
+      currency: f.currency ?? '',
+      referenceDesignators: f.referenceDesignators ?? '',
+      categoryId: idText(f.categoryId),
+      manufacturer: f.manufacturer ?? '',
+      partNumber: f.partNumber ?? '',
+      supplierSku: f.supplierSku ?? '',
+      notes: f.notes ?? '',
+      attributes: attributeRows,
+      groupId: idText(line.groupId),
+      resolution: line.resolution ?? '',
+      partId: idText(line.partId),
+    })
+  );
+  // When the stored line changes, such as after a save or a cleanup, the form shows it.
+  $effect.pre(() => {
+    lineForm.fields.set(JSON.parse(saved));
+  });
+
+  const issues = $derived(fields.allIssues());
+  const resolution = $derived(fields.resolution.value() ?? line.resolution ?? '');
 
   /** The provenance mark of a field: from the proposal, or edited/entered by the owner. */
   function mark(field: keyof ImportLineFields | `attribute:${string}`): string | null {
@@ -81,21 +112,19 @@
   {#if m}<span class="ml-1 rounded bg-gray-100 px-1 text-xs text-gray-600">{m}</span>{/if}
 {/snippet}
 
-<!-- No reset after a save: it would clear the resolution and every field the save did not change. -->
+<!-- No reset after a submit: the form shows the stored line, which the page reloads. -->
 <form
-  method="POST"
-  action="?/saveLine"
-  use:enhance={({ submitter, cancel }) => {
-    if (cleaning) return cancel();
-    cleaning = submitter?.getAttribute('formaction') === '?/cleanupLine';
-    return async ({ update }) => {
+  {...lineForm.enhance(async (instance) => {
+    cleaning = instance.fields.intent.value() === 'cleanup';
+    try {
+      await instance.submit();
+    } finally {
       cleaning = false;
-      await update({ reset: false });
-    };
-  }}
+    }
+  })}
   class="rounded border border-gray-200 p-3"
 >
-  <input type="hidden" name="line_id" value={line.id} />
+  <input {...fields.importId.as('hidden', importId)} />
   <div class="mb-2 flex flex-wrap items-baseline gap-2">
     <h3 class="font-semibold">Line {number}</h3>
     {#if line.sourceExcerpt !== null}
@@ -121,24 +150,24 @@
   <fieldset disabled={readonly} class="mt-2 grid gap-2 sm:grid-cols-4">
     <label class="block sm:col-span-4">
       <span class="text-sm">Description {@render badge('description')}</span>
-      <input name="description" value={f.description} class="input" />
+      <input {...fields.description.as('text', f.description)} class="input" />
     </label>
     {#if kind === 'order'}
       <label class="block">
         <span class="text-sm">Quantity ordered {@render badge('quantity')}</span>
-        <input name="quantity" value={f.quantity ?? ''} inputmode="numeric" class="input" />
+        <input {...fields.quantity.as('text', f.quantity ?? '')} inputmode="numeric" class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Purchase unit {@render badge('purchaseUnit')}</span>
-        <input name="purchase_unit" value={f.purchaseUnit ?? ''} placeholder="pack, each…" class="input" />
+        <input {...fields.purchaseUnit.as('text', f.purchaseUnit ?? '')} placeholder="pack, each…" class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Base units per purchase unit {@render badge('packQuantity')}</span>
-        <input name="pack_quantity" value={f.packQuantity ?? ''} inputmode="numeric" class="input" />
+        <input {...fields.packQuantity.as('text', f.packQuantity ?? '')} inputmode="numeric" class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Base unit of a new part {@render badge('unit')}</span>
-        <select name="unit" value={f.unit ?? ''} class="input">
+        <select {...fields.unit.as('select', f.unit ?? '')} class="input">
           <option value="">—</option>
           {#each options.units as unit (unit)}<option value={unit}>{unit}</option>{/each}
           {#if f.unit && !options.units.includes(f.unit)}<option value={f.unit}>{f.unit} (unknown)</option>{/if}
@@ -146,20 +175,20 @@
       </label>
       <label class="block">
         <span class="text-sm">Price per purchase unit {@render badge('unitPrice')}</span>
-        <input name="unit_price" value={f.unitPrice ?? ''} inputmode="decimal" class="input" />
+        <input {...fields.unitPrice.as('text', f.unitPrice ?? '')} inputmode="decimal" class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Currency {@render badge('currency')}</span>
-        <input name="currency" value={f.currency ?? ''} class="input" />
+        <input {...fields.currency.as('text', f.currency ?? '')} class="input" />
       </label>
     {:else}
       <label class="block">
         <span class="text-sm">Quantity {@render badge('quantity')}</span>
-        <input name="quantity" value={f.quantity ?? ''} inputmode="decimal" class="input" />
+        <input {...fields.quantity.as('text', f.quantity ?? '')} inputmode="decimal" class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Unit {@render badge('unit')}</span>
-        <select name="unit" value={f.unit ?? ''} class="input">
+        <select {...fields.unit.as('select', f.unit ?? '')} class="input">
           <option value="">—</option>
           {#each options.units as unit (unit)}<option value={unit}>{unit}</option>{/each}
           {#if f.unit && !options.units.includes(f.unit)}<option value={f.unit}>{f.unit} (unknown)</option>{/if}
@@ -167,11 +196,11 @@
       </label>
       <label class="block">
         <span class="text-sm">Reference designators {@render badge('referenceDesignators')}</span>
-        <input name="reference_designators" value={f.referenceDesignators ?? ''} class="input" />
+        <input {...fields.referenceDesignators.as('text', f.referenceDesignators ?? '')} class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Component group</span>
-        <select name="group_id" value={line.groupId === null ? '' : String(line.groupId)} class="input">
+        <select {...fields.groupId.as('select', idText(line.groupId))} class="input">
           <option value="">Ungrouped</option>
           {#each groups as group (group.id)}<option value={String(group.id)}>{group.name}</option>{/each}
         </select>
@@ -179,7 +208,7 @@
     {/if}
     <label class="block sm:col-span-2">
       <span class="text-sm">Category {@render badge('categoryId')}</span>
-      <select name="category_id" value={f.categoryId === null ? '' : String(f.categoryId)} class="input">
+      <select {...fields.categoryId.as('select', idText(f.categoryId))} class="input">
         <option value="">None</option>
         {#each options.categories as category (category.id)}
           <option value={String(category.id)}>{category.path}</option>
@@ -188,27 +217,27 @@
     </label>
     <label class="block">
       <span class="text-sm">Manufacturer {@render badge('manufacturer')}</span>
-      <input name="manufacturer" value={f.manufacturer ?? ''} class="input" />
+      <input {...fields.manufacturer.as('text', f.manufacturer ?? '')} class="input" />
     </label>
     <label class="block">
       <span class="text-sm">Manufacturer part number {@render badge('partNumber')}</span>
-      <input name="part_number" value={f.partNumber ?? ''} class="input" />
+      <input {...fields.partNumber.as('text', f.partNumber ?? '')} class="input" />
     </label>
     <label class="block">
       <span class="text-sm">Supplier SKU {@render badge('supplierSku')}</span>
-      <input name="supplier_sku" value={f.supplierSku ?? ''} class="input" />
+      <input {...fields.supplierSku.as('text', f.supplierSku ?? '')} class="input" />
     </label>
     <label class="block sm:col-span-3">
       <span class="text-sm">Notes {@render badge('notes')}</span>
-      <textarea name="notes" rows="2" class="input">{f.notes ?? ''}</textarea>
+      <textarea {...fields.notes.as('text', f.notes ?? '')} rows="2" class="input"></textarea>
     </label>
 
     <div class="sm:col-span-4">
       <span class="text-sm">Attributes</span>
       {#each attributeRows as attribute, index (index)}
         <div class="flex items-center gap-2">
-          <input name="attribute_key" value={attribute.key} list="attribute-keys" placeholder="key" class="input w-40" />
-          <input name="attribute_value" value={attribute.value} placeholder="value as written" class="input" />
+          <input {...fields.attributes[index].key.as('text', attribute.key)} list="attribute-keys" placeholder="key" class="input w-40" />
+          <input {...fields.attributes[index].value.as('text', attribute.value)} placeholder="value as written" class="input" />
           <span class="w-40 text-sm text-gray-600">
             {#if attribute.key && line.readings[attribute.key]}reads as {line.readings[attribute.key]}{/if}
             {#if attribute.key}{@render badge(`attribute:${attribute.key}`)}{/if}
@@ -219,13 +248,13 @@
 
     <fieldset class="sm:col-span-4">
       <legend class="text-sm">Commit as</legend>
-      <label class="mr-3"><input type="radio" name="resolution" value="existing" bind:group={resolution} /> Existing part</label>
-      <label class="mr-3"><input type="radio" name="resolution" value="new" bind:group={resolution} /> New catalog part</label>
+      <label class="mr-3"><input {...fields.resolution.as('radio', 'existing', line.resolution === 'existing')} /> Existing part</label>
+      <label class="mr-3"><input {...fields.resolution.as('radio', 'new', line.resolution === 'new')} /> New catalog part</label>
       {#if kind === 'project'}
-        <label><input type="radio" name="resolution" value="requirement" bind:group={resolution} /> Requirement (category and attributes)</label>
+        <label><input {...fields.resolution.as('radio', 'requirement', line.resolution === 'requirement')} /> Requirement (category and attributes)</label>
       {/if}
       {#if resolution === 'existing'}
-        <select name="part_id" value={line.partId === null ? '' : String(line.partId)} class="input">
+        <select {...fields.partId.as('select', idText(line.partId))} class="input">
           <option value="">Choose a part</option>
           {#each options.parts as part (part.id)}
             <option value={String(part.id)}>{part.name}{part.partNumber ? ` (${part.partNumber})` : ''} — {part.baseUnit}</option>
@@ -268,8 +297,6 @@
             {/if}
           {/snippet}
         </SearchSelect>
-        <!-- Choosing a candidate submits the form with this button, like a click on it. -->
-        <button bind:this={choosePart} name="choose_part" value="" hidden tabindex="-1" aria-hidden="true">Use this part</button>
       {/if}
     </div>
   {/if}
@@ -280,17 +307,32 @@
   {#if line.createdPartId}
     <p class="mt-2 text-sm">Created <a href="/parts/{line.createdPartId}" class="text-blue-700 hover:underline">a new part</a>.</p>
   {/if}
-  {#if feedback}<p class="mt-2 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}
+  {#if issues?.length}
+    <p class="mt-2 text-red-700">{issues.map((issue) => issue.message).join('. ')}</p>
+  {:else if lineForm.result}
+    <p class="mt-2 text-green-700">{lineForm.result.text}</p>
+  {/if}
 
   {#if !readonly}
     <div class="mt-2 flex flex-wrap items-center gap-2">
-      <button class="btn" disabled={cleaning}>Save line</button>
-      <button formaction="?/removeLine" class="btn-secondary" disabled={cleaning}>Remove line</button>
+      <!-- Save comes first: it is the button that Enter in a field presses. -->
+      <button {...fields.intent.as('submit', 'save')} class="btn" disabled={lineForm.pending > 0}>Save line</button>
+      <!-- Choosing a candidate submits the form with this button, like a click on it. -->
+      <button
+        bind:this={choosePart}
+        {...fields.choosePart.as('submit', '')}
+        hidden
+        tabindex="-1"
+        aria-hidden="true">Use this part</button
+      >
+      <button {...fields.intent.as('submit', 'remove')} class="btn-secondary" disabled={lineForm.pending > 0}>
+        Remove line
+      </button>
       {#if kind === 'order'}
         <button
-          formaction="?/cleanupLine"
+          {...fields.intent.as('submit', 'cleanup')}
           class="btn-secondary"
-          disabled={!cleanupAvailable || cleaning}
+          disabled={!cleanupAvailable || lineForm.pending > 0}
           title={cleanupAvailable ? undefined : 'OPENAI_API_KEY is not set'}
         >
           AI clean up

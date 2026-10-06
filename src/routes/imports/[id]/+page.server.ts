@@ -1,10 +1,5 @@
 import { error, fail, redirect } from "@sveltejs/kit";
-import {
-  parseCsvSettingsForm,
-  parseHeaderForm,
-  parseLineForm,
-  parseSourceForm,
-} from "#lib/schemas/import.ts";
+import { parseCsvSettingsForm, parseHeaderForm, parseSourceForm } from "#lib/schemas/import.ts";
 import { parseId, text } from "#lib/schemas/result.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { extractor, imports, parsingAvailable } from "#lib/server/imports/index.ts";
@@ -86,68 +81,6 @@ export const actions: Actions = {
       imports().addLine(Number(params.id));
       return { action: "addLine", success: "Line added. Fill it in below." };
     }),
-
-  /** Save a line. A `choose_part` button saves it with that existing part. */
-  saveLine: async ({ request, params }) => {
-    const form = await request.formData();
-    const lineId = idField(form, "line_id");
-    const parsed = parseLineForm(form);
-    const action = `line-${lineId}`;
-    if (lineId === null || !parsed.success) {
-      return fail(400, {
-        action,
-        errors: parsed.success ? { line_id: "Missing line" } : parsed.errors,
-      });
-    }
-    const chosen = idField(form, "choose_part");
-    const edit =
-      chosen === null
-        ? parsed.data
-        : { ...parsed.data, resolution: "existing" as const, partId: chosen };
-    return runAction(action, () => {
-      imports().updateLine(Number(params.id), lineId, edit);
-      return { action, success: "Line saved." };
-    });
-  },
-
-  /** Save the line's edits, then let the model clean up its name, category, and attributes. */
-  cleanupLine: async ({ request, params }) => {
-    const form = await request.formData();
-    const lineId = idField(form, "line_id");
-    const parsed = parseLineForm(form);
-    const action = `line-${lineId}`;
-    if (lineId === null || !parsed.success) {
-      return fail(400, {
-        action,
-        errors: parsed.success ? { line_id: "Missing line" } : parsed.errors,
-      });
-    }
-    const id = Number(params.id);
-    let outcome;
-    try {
-      imports().updateLine(id, lineId, parsed.data);
-      outcome = await imports().cleanupLine(id, lineId, extractor());
-    } catch (error) {
-      if (!isUserError(error)) throw error;
-      return fail(400, { action, message: error.message });
-    }
-    if (!outcome.ok) return fail(400, { action, message: outcome.error });
-    return {
-      action,
-      success: outcome.matchedPart
-        ? `Cleaned up and matched to ${outcome.matchedPart.name}. Check the line.`
-        : "Cleaned up. No catalog part is the same item. Check the line.",
-    };
-  },
-
-  removeLine: async ({ request, params }) => {
-    const lineId = idField(await request.formData(), "line_id");
-    if (lineId === null) return fail(400, { action: "lines", message: "Missing line" });
-    return runAction("lines", () => {
-      imports().removeLine(Number(params.id), lineId);
-      return { action: "lines", success: "Line removed." };
-    });
-  },
 
   addGroup: async ({ request, params }) => {
     const name = text(await request.formData(), "name");
