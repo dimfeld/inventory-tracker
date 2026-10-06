@@ -219,7 +219,49 @@
     );
   }
 
+  // The order details page labels its fields with data-component attributes.
+  function extractAmazonDetails(items) {
+    const component = (root, name) => root.querySelector(`[data-component="${name}"]`);
+    const reference =
+      orderReference(text(component(document, "orderId"))) ||
+      text(component(document, "orderId")) ||
+      matchText(location.href, [/[?&]orderID=([A-Z0-9-]+)/i]);
+    const date = text(component(document, "orderDate"));
+
+    return dedupe(
+      items.map((item) => {
+        const link = first(component(item, "itemTitle"), ["a"]);
+        const productUrl = absoluteUrl(link?.getAttribute("href"));
+        const priceElement = component(item, "unitPrice");
+        const parsedMoney = money(
+          text(first(priceElement, [".a-offscreen"])) || text(priceElement)
+        );
+        const quantityText = text(component(item, "quantity"));
+        const imageText = text(component(item, "itemImage"));
+        const variation = text(component(item, "purchasedVariationDetails"));
+        return baseRow("Amazon", location.href, {
+          order_reference: reference,
+          order_date: date,
+          supplier_sku: skuFromUrl(productUrl),
+          description: text(link) || text(component(item, "itemTitle")),
+          quantity:
+            quantity(quantityText) ||
+            quantityText.match(/^\d+$/)?.[0] ||
+            imageText.match(/^\d+$/)?.[0] ||
+            "1",
+          unit_price: parsedMoney.amount,
+          currency: parsedMoney.currency,
+          product_url: productUrl,
+          notes: lineNotes({ date, productUrl, extra: variation && `Option: ${variation}` }),
+        });
+      })
+    );
+  }
+
   function extractAmazon() {
+    const detailItems = [...document.querySelectorAll('[data-component="purchasedItems"]')];
+    if (detailItems.length) return extractAmazonDetails(detailItems);
+
     const sourceUrl = location.href;
     let cards = topLevel(
       nodesForFirstSelector(document, [
