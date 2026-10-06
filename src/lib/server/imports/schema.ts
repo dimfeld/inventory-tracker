@@ -7,7 +7,7 @@ import * as z from "zod";
 import { PROVENANCES } from "#lib/imports.ts";
 
 /** Increase when a schema changes shape. Saved with each parsed import. */
-export const SCHEMA_VERSION = "2";
+export const SCHEMA_VERSION = "3";
 
 const provenance = z
   .enum(PROVENANCES)
@@ -104,6 +104,16 @@ export const lineCleanupSchema = z.object({
   attributes: z
     .array(attribute)
     .describe("All typed attributes of the item, including the ones the line already has"),
+  purchaseUnit: marked(
+    "How the supplier sells the item: each, pack, bag, reel, m, ...; null keeps the line's value"
+  ),
+  packQuantity: z
+    .object({ value: z.number().int(), provenance })
+    .nullable()
+    .describe("Base units in one purchase unit; null keeps the line's value"),
+  baseUnit: marked(
+    "Unit the item is counted in for a new part: pcs, mm, m, g, mL, ...; null keeps the line's value"
+  ),
   match: z
     .object({
       partId: z.number().int().describe("ID of a part from the catalog list"),

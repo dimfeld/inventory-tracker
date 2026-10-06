@@ -77,6 +77,13 @@ function measuredPack(purchaseUnit: string | null, baseUnit: Unit | null): numbe
 
 const isCountPurchaseUnit = (raw: string) => COUNT_WORDS.has(raw.trim().toLowerCase());
 
+/** Notes about a missing purchase field of an order line, by field. */
+const MISSING_PURCHASE_NOTES = {
+  purchaseUnit: "Purchase unit is missing",
+  packQuantity: "Pack size is not stated",
+  unit: "Base unit is missing",
+} as const;
+
 /** Optional text fields of a line. */
 type TextField = Exclude<keyof LineProposal["fields"], "attributes" | "categoryId" | "description">;
 
@@ -228,14 +235,14 @@ function orderLine(context: CatalogContext, line: OrderLineOutput): LineProposal
       b.set("unit", "pcs");
     }
     if (baseUnit === "pcs") b.set("packQuantity", "1");
-    else b.note("Pack size is not stated");
+    else b.note(MISSING_PURCHASE_NOTES.packQuantity);
   } else {
     const measured = measuredPack(purchaseUnit, baseUnit);
     if (measured !== null) b.set("packQuantity", String(measured));
-    else b.note("Pack size is not stated");
+    else b.note(MISSING_PURCHASE_NOTES.packQuantity);
   }
-  if (purchaseUnit === null) b.note("Purchase unit is missing");
-  if (baseUnit === null && b.fields.unit === null) b.note("Base unit is missing");
+  if (purchaseUnit === null) b.note(MISSING_PURCHASE_NOTES.purchaseUnit);
+  if (baseUnit === null && b.fields.unit === null) b.note(MISSING_PURCHASE_NOTES.unit);
 
   const price = b.text("unitPrice", line.unitPrice);
   if (price !== null && !DECIMAL.test(price)) b.note(`Price "${price}" is not a number`);
@@ -259,8 +266,9 @@ function projectLine(context: CatalogContext, line: ProjectLineOutput): LineProp
 
 /**
  * Apply a cleanup to a line's current fields. The description, category, and attributes are
- * replaced; other fields stay. Earlier provenance marks and unresolved notes of other fields
- * stay too.
+ * replaced. The purchase unit, pack size, and base unit change only when the cleanup gives a
+ * value. Other fields stay. Earlier provenance marks and unresolved notes of other fields stay
+ * too, except notes about a purchase field that now has a value.
  */
 export function cleanupLine(
   context: CatalogContext,
@@ -285,6 +293,17 @@ export function cleanupLine(
   b.category(output.category);
   b.attributes(output.attributes);
   b.checkRequired();
+
+  if (output.purchaseUnit?.value.trim()) b.text("purchaseUnit", output.purchaseUnit);
+  if (output.baseUnit?.value.trim()) b.unit(output.baseUnit);
+  if (output.packQuantity && output.packQuantity.value > 0) {
+    b.fields.packQuantity = String(output.packQuantity.value);
+    b.provenance.packQuantity = output.packQuantity.provenance;
+  }
+  const filled = Object.entries(MISSING_PURCHASE_NOTES)
+    .filter(([field]) => b.fields[field as keyof typeof MISSING_PURCHASE_NOTES] !== null)
+    .map(([, note]) => note as string);
+  b.unresolved = b.unresolved.filter((note) => !filled.includes(note));
   return b.proposal(current.proposal?.groupName ?? null);
 }
 

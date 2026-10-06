@@ -505,13 +505,15 @@ describe("manual lines", () => {
 
 describe("order line cleanup", () => {
   /** An order import from extension CSV with one DigiKey resistor line. */
-  function csvOrder() {
+  function csvOrder(
+    line = "DigiKey,DK-1,RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM,10,each,1,pcs,311-4.70KCRCT-ND,0.10,USD"
+  ) {
     const ctx = createTestImports();
     const { ids } = ctx.imports.createCsvOrderBatch({
       kind: "order",
       sourceType: "csv",
       sourceText: `supplier,order_reference,description,quantity,purchase_unit,pack_quantity,unit,supplier_sku,unit_price,currency
-DigiKey,DK-1,RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM,10,each,1,pcs,311-4.70KCRCT-ND,0.10,USD`,
+${line}`,
     });
     return { ...ctx, id: ids[0], lineId: review(ctx, ids[0]).lines[0].id };
   }
@@ -524,6 +526,9 @@ DigiKey,DK-1,RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM,10,each,1,pcs,311-4.70KCRC
       { key: "tolerance", value: "1%", provenance: "source" },
       { key: "package", value: "0805", provenance: "source" },
     ],
+    purchaseUnit: null,
+    packQuantity: null,
+    baseUnit: null,
     match: partId === null ? null : { partId, reason: "Same resistance, tolerance, and package" },
     unresolved: [],
   });
@@ -563,6 +568,51 @@ DigiKey,DK-1,RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM,10,each,1,pcs,311-4.70KCRC
     expect([line.resolution, line.partId]).toEqual(["existing", ctx.parts.resistor4k7]);
     expect(line.problems).toEqual([]);
     expect(inventoryCounts(ctx.db)).toEqual(before);
+  });
+
+  it("fills the purchase unit, pack size, and base unit when the model gives them", async () => {
+    const ctx = csvOrder("AliExpress,AE-1,M3 hex nuts 100pcs,2,,,,,1.50,USD");
+    const original = review(ctx, ctx.id).lines[0];
+    expect(original.fields).toMatchObject({ purchaseUnit: null, packQuantity: null, unit: null });
+    expect(original.proposal?.unresolved).toEqual(
+      expect.arrayContaining(["Purchase unit is missing", "Pack size is not stated"])
+    );
+
+    const extractor = fixtureExtractor({
+      ...cleanup(null),
+      purchaseUnit: { value: "pack", provenance: "inferred" },
+      packQuantity: { value: 100, provenance: "source" },
+      baseUnit: { value: "pieces", provenance: "inferred" },
+    });
+    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor)).toMatchObject({
+      ok: true,
+    });
+    expect(extractor.calls[0].prompt).toContain('"purchaseUnit": null');
+
+    const line = review(ctx, ctx.id).lines[0];
+    expect(line.fields).toMatchObject({ purchaseUnit: "pack", packQuantity: "100", unit: "pcs" });
+    expect(line.proposal?.provenance).toMatchObject({
+      purchaseUnit: "inferred",
+      packQuantity: "source",
+      unit: "normalized",
+    });
+    expect(line.conversion).toContain("100");
+    expect(line.proposal?.unresolved ?? []).not.toEqual(
+      expect.arrayContaining(["Purchase unit is missing"])
+    );
+    expect(line.proposal?.unresolved ?? []).not.toEqual(
+      expect.arrayContaining(["Pack size is not stated"])
+    );
+  });
+
+  it("keeps the purchase fields when the model gives null", async () => {
+    const ctx = csvOrder();
+    await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor(cleanup(null)));
+    expect(review(ctx, ctx.id).lines[0].fields).toMatchObject({
+      purchaseUnit: "each",
+      packQuantity: "1",
+      unit: "pcs",
+    });
   });
 
   it("keeps the line a new part when the model names a part that is not in the catalog", async () => {

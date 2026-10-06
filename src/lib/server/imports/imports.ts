@@ -688,7 +688,8 @@ export function createImportService(db: Database) {
 
     /**
      * Ask the extractor to clean up one order line: a cleaner description, the category, the
-     * attributes, and the existing catalog part that is the same item. The line and its proposal
+     * attributes, the purchase unit, pack size, and base unit when it can tell them, and the
+     * existing catalog part that is the same item. The line and its proposal
      * change; a matched part makes the line commit as that part. A failed call or an invalid
      * answer changes nothing.
      */
@@ -716,6 +717,9 @@ export function createImportService(db: Database) {
               supplierSku: f.supplierSku,
               attributes: f.attributes,
               notes: f.notes,
+              purchaseUnit: f.purchaseUnit,
+              packQuantity: f.packQuantity,
+              baseUnit: f.unit,
             },
             parts,
             lineCandidates(f).candidates.map((c) => c.part.id)
