@@ -1,6 +1,7 @@
 const COLUMNS = [
   "supplier",
   "order_reference",
+  "order_date",
   "description",
   "quantity",
   "purchase_unit",

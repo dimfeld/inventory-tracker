@@ -14,13 +14,54 @@
     return null;
   };
   const firstText = (root, selectors) => text(first(root, selectors));
+  // Product links without tracking parameters. Amazon links become /dp/ASIN.
   const absoluteUrl = (value) => {
     if (!value) return "";
     try {
-      return new URL(value, location.href).href;
+      const url = new URL(value, location.href);
+      const asin = url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i)?.[1];
+      if (asin && /(^|\.)amazon\./i.test(url.hostname)) return `${url.origin}/dp/${asin}`;
+      url.search = "";
+      url.hash = "";
+      return url.href;
     } catch {
       return "";
     }
+  };
+  const MONTHS = [
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+  ];
+  // YYYY-MM-DD, or "" when the displayed date is not clear (such as 03/04/2026).
+  const isoDate = (value) => {
+    const parts = (year, month, day) => {
+      const date = new Date(Date.UTC(year, month - 1, day));
+      if (date.getUTCFullYear() !== year || date.getUTCDate() !== day) return "";
+      return date.toISOString().slice(0, 10);
+    };
+    const v = clean(value);
+    let m = v.match(/^((?:19|20)\d{2})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+    if (m) return parts(+m[1], +m[2], +m[3]);
+    m = v.match(/^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+((?:19|20)\d{2})$/);
+    if (m && MONTHS.includes(m[1].toLowerCase()))
+      return parts(+m[3], MONTHS.indexOf(m[1].toLowerCase()) + 1, +m[2]);
+    m = v.match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+((?:19|20)\d{2})$/);
+    if (m && MONTHS.includes(m[2].toLowerCase()))
+      return parts(+m[3], MONTHS.indexOf(m[2].toLowerCase()) + 1, +m[1]);
+    m = v.match(/^(\d{1,2})[-/.](\d{1,2})[-/.]((?:19|20)\d{2})$/);
+    if (m && +m[1] > 12) return parts(+m[3], +m[2], +m[1]);
+    if (m && +m[2] > 12) return parts(+m[3], +m[1], +m[2]);
+    return "";
   };
   const matchText = (value, patterns) => {
     for (const pattern of patterns) {
@@ -79,16 +120,19 @@
     ]);
   const skuFromUrl = (url) => matchText(url, [/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i]);
   const aliItemId = (url) => matchText(url, [/\/item\/(\d+)(?:\.html)?(?:[/?]|$)/i]);
-  const lineNotes = ({ date, productUrl, extra = "" }) =>
-    [date && `Ordered: ${date}`, extra, productUrl && `Product: ${productUrl}`]
-      .filter(Boolean)
-      .join("; ");
+  // The order date has its own column; baseRow adds it to the notes only when it is not clear.
+  const lineNotes = ({ productUrl, extra = "" }) =>
+    [extra, productUrl && `Product: ${productUrl}`].filter(Boolean).join("; ");
 
   function baseRow(supplier, sourceUrl, values) {
+    const displayedDate = clean(values.order_date);
+    const date = isoDate(displayedDate);
+    const notes = [!date && displayedDate && `Ordered: ${displayedDate}`, values.notes]
+      .filter(Boolean)
+      .join("; ");
     return {
       supplier,
       order_reference: "",
-      order_date: "",
       description: "",
       quantity: "",
       purchase_unit: "",
@@ -100,9 +144,10 @@
       unit_price: "",
       currency: "",
       product_url: "",
-      notes: "",
       source_url: sourceUrl,
       ...values,
+      order_date: date,
+      notes,
     };
   }
 
@@ -198,7 +243,6 @@
             currency: parsedMoney.currency,
             product_url: productUrl,
             notes: lineNotes({
-              date,
               productUrl,
               extra: skuText && `Option: ${skuText.replace(/^(?:sku|variation)\s*:?\s*/i, "")}`,
             }),
@@ -252,7 +296,10 @@
           unit_price: parsedMoney.amount,
           currency: parsedMoney.currency,
           product_url: productUrl,
-          notes: lineNotes({ date, productUrl, extra: variation && `Option: ${variation}` }),
+          notes: lineNotes({
+            productUrl,
+            extra: variation && `Option: ${variation}`,
+          }),
         });
       })
     );
@@ -318,7 +365,7 @@
             unit_price: parsedMoney.amount,
             currency: parsedMoney.currency,
             product_url: productUrl,
-            notes: lineNotes({ date, productUrl }),
+            notes: lineNotes({ productUrl }),
           })
         );
       }
@@ -382,7 +429,7 @@
           unit_price: parsedMoney.amount,
           currency: parsedMoney.currency,
           product_url: productUrl,
-          notes: lineNotes({ date: order.order_date, productUrl }),
+          notes: lineNotes({ productUrl }),
         })
       );
     }
@@ -432,7 +479,7 @@
           unit_price: price.amount,
           currency: price.currency,
           product_url: productUrl,
-          notes: lineNotes({ date: order.order_date, productUrl }),
+          notes: lineNotes({ productUrl }),
         })
       );
     }
