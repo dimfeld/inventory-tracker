@@ -15,12 +15,14 @@ import {
   type ImportHeader,
   type ImportKind,
   type LineProposal,
+  type Provenance,
   type ProvenanceMarks,
 } from "#lib/imports.ts";
 import { isUnit, toBaseQuantity, UnitError, UNITS, type Unit } from "#lib/units.ts";
 import type { CatalogContext } from "./context";
 import type {
   LineCleanupOutput,
+  LineSplitOutput,
   MarkedValue,
   OrderLineOutput,
   OrderOutput,
@@ -221,9 +223,31 @@ function orderLine(context: CatalogContext, line: OrderLineOutput): LineProposal
     b.note("Quantity ordered is missing");
   }
 
-  let baseUnit = b.unit(line.baseUnit);
+  const baseUnit = b.unit(line.baseUnit);
   const purchaseUnit = b.text("purchaseUnit", line.purchaseUnit);
-  const pack = line.packQuantity;
+  packFields(b, purchaseUnit, baseUnit, line.packQuantity);
+
+  const price = b.text("unitPrice", line.unitPrice);
+  if (price !== null && !DECIMAL.test(price)) b.note(`Price "${price}" is not a number`);
+  const currency = b.text("currency", line.currency);
+  if (currency !== null && currency !== currency.toUpperCase()) {
+    b.set("currency", currency.toUpperCase());
+  }
+  return b.proposal(null);
+}
+
+/**
+ * Set the pack size of an order line from a stated one or an exact rule, and note the purchase
+ * fields that are missing. A count purchase unit holds one piece; a measured purchase unit
+ * converts to the base unit.
+ */
+function packFields(
+  b: LineBuilder,
+  purchaseUnit: string | null,
+  stated: Unit | null,
+  pack: { value: number; provenance: Provenance } | null
+) {
+  let baseUnit = stated;
   if (pack && pack.value > 0) {
     b.fields.packQuantity = String(pack.value);
     b.provenance.packQuantity = pack.provenance;
@@ -243,14 +267,6 @@ function orderLine(context: CatalogContext, line: OrderLineOutput): LineProposal
   }
   if (purchaseUnit === null) b.note(MISSING_PURCHASE_NOTES.purchaseUnit);
   if (baseUnit === null && b.fields.unit === null) b.note(MISSING_PURCHASE_NOTES.unit);
-
-  const price = b.text("unitPrice", line.unitPrice);
-  if (price !== null && !DECIMAL.test(price)) b.note(`Price "${price}" is not a number`);
-  const currency = b.text("currency", line.currency);
-  if (currency !== null && currency !== currency.toUpperCase()) {
-    b.set("currency", currency.toUpperCase());
-  }
-  return b.proposal(null);
 }
 
 function projectLine(context: CatalogContext, line: ProjectLineOutput): LineProposal {
@@ -305,6 +321,64 @@ export function cleanupLine(
     .map(([, note]) => note as string);
   b.unresolved = b.unresolved.filter((note) => !filled.includes(note));
   return b.proposal(current.proposal?.groupName ?? null);
+}
+
+/** The note on a split line whose price moved to the first line of the split. */
+export const SPLIT_PRICE_NOTE = "The price of the whole line is on the first line of the split";
+
+/**
+ * Split a line's current fields into one line per item of the split. Each item gets its own
+ * identity and pack size. The ordered quantity, purchase unit, currency, and notes come from the
+ * line unless the item gives its own quantity or base unit. The first line keeps the unit price,
+ * and the other lines get a price of 0, so the order total does not change.
+ */
+export function splitLine(
+  context: CatalogContext,
+  current: { fields: ImportLineFields; proposal: LineProposal | null },
+  output: LineSplitOutput
+): LineProposal[] {
+  const f = current.fields;
+  const kept = current.proposal?.provenance ?? {};
+  return output.items.map((item, index) => {
+    const b = new LineBuilder(context);
+    b.fields = {
+      ...emptyLineFields(item.description.trim()),
+      quantity: f.quantity,
+      purchaseUnit: f.purchaseUnit,
+      currency: f.currency,
+      notes: f.notes,
+      unitPrice: index === 0 || f.unitPrice === null ? f.unitPrice : "0",
+    };
+    for (const field of ["quantity", "purchaseUnit", "currency", "notes"] as const) {
+      if (kept[field]) b.provenance[field] = kept[field];
+    }
+    if (index === 0 && kept.unitPrice) b.provenance.unitPrice = kept.unitPrice;
+    if (index > 0 && f.unitPrice !== null) b.note(SPLIT_PRICE_NOTE);
+    b.provenance.description = "normalized";
+
+    b.text("manufacturer", item.manufacturer);
+    b.text("partNumber", item.partNumber);
+    b.text("supplierSku", item.supplierSku);
+    for (const note of item.unresolved) b.note(note);
+    b.category(item.category);
+    b.attributes(item.attributes);
+    b.checkRequired();
+
+    if (item.purchaseQuantity && item.purchaseQuantity.value > 0) {
+      b.fields.quantity = String(item.purchaseQuantity.value);
+      b.provenance.quantity = item.purchaseQuantity.provenance;
+    }
+    let baseUnit: Unit | null;
+    if (item.baseUnit?.value.trim()) {
+      baseUnit = b.unit(item.baseUnit);
+    } else {
+      b.fields.unit = f.unit;
+      if (kept.unit) b.provenance.unit = kept.unit;
+      baseUnit = f.unit === null ? null : normalizeUnit(f.unit);
+    }
+    packFields(b, f.purchaseUnit, baseUnit, item.packQuantity);
+    return b.proposal(current.proposal?.groupName ?? null);
+  });
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

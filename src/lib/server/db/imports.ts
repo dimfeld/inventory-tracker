@@ -341,6 +341,7 @@ export function getLine(db: Database, id: number): ImportLine | null {
   return row ? toLine(row) : null;
 }
 
+/** Insert a line at `position`, or after the last line when no position is given. */
 export function insertLine(
   db: Database,
   importId: number,
@@ -352,7 +353,8 @@ export function insertLine(
     fields: ImportLineFields;
     resolution: Resolution | null;
     partId: number | null;
-  }
+  },
+  position: number | null = null
 ): number {
   return db
     .query<
@@ -366,11 +368,13 @@ export function insertLine(
         string,
         string | null,
         number | null,
+        number | null,
       ]
     >(
       `INSERT INTO import_lines (import_id, position, group_id, source_row, source_excerpt,
          proposal, fields, resolution, part_id)
-       VALUES (?1, (SELECT coalesce(max(position), 0) + 1 FROM import_lines WHERE import_id = ?1),
+       VALUES (?1,
+         coalesce(?9, (SELECT coalesce(max(position), 0) + 1 FROM import_lines WHERE import_id = ?1)),
          ?2, ?3, ?4, ?5, ?6, ?7, ?8)
        RETURNING id`
     )
@@ -382,8 +386,18 @@ export function insertLine(
       line.proposal === null ? null : JSON.stringify(line.proposal),
       JSON.stringify(line.fields),
       line.resolution,
-      line.partId
+      line.partId,
+      position
     )!.id;
+}
+
+/** Move the lines after `position` down by `count`, to make room for new lines there. */
+export function makeRoomAfter(db: Database, importId: number, position: number, count: number) {
+  db.run("UPDATE import_lines SET position = position + ? WHERE import_id = ? AND position > ?", [
+    count,
+    importId,
+    position,
+  ]);
 }
 
 export function updateLine(

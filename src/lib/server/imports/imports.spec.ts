@@ -7,6 +7,7 @@ import * as bomFlat from "./fixtures/bom-flat";
 import * as bomSections from "./fixtures/bom-sections";
 import * as orderList from "./fixtures/order-list";
 import type { LineEdit } from "./imports";
+import { SPLIT_PRICE_NOTE } from "./normalize";
 import { createOpenAIExtractor, MODEL_ID } from "./openai";
 import { PROMPT_VERSION } from "./prompt";
 import { SCHEMA_VERSION } from "./schema";
@@ -644,6 +645,111 @@ ${line}`,
     ).toMatchObject({ ok: false });
     const line = review(ctx, ctx.id).lines[0];
     expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);
+  });
+});
+
+describe("order line split", () => {
+  function assortmentOrder() {
+    const ctx = createTestImports();
+    const { ids } = ctx.imports.createCsvOrderBatch({
+      kind: "order",
+      sourceType: "csv",
+      sourceText: `supplier,order_reference,description,quantity,purchase_unit,pack_quantity,unit,supplier_sku,unit_price,currency
+AliExpress,AE-9,M3 screw,1,each,1,pcs,,0.20,USD
+AliExpress,AE-9,Resistor kit 4.7k and 10k,2,pack,40,pcs,KIT-1,3.00,USD
+AliExpress,AE-9,M3 nut,1,each,1,pcs,,0.10,USD`,
+    });
+    const id = ids[0];
+    return { ...ctx, id, lineId: review(ctx, id).lines[1].id };
+  }
+
+  const item = (description: string, resistance: string, pack: number | null) => ({
+    description,
+    category: { value: "Electronics / Passives / Resistors", provenance: "inferred" },
+    manufacturer: null,
+    partNumber: null,
+    supplierSku: null,
+    attributes: [{ key: "resistance", value: resistance, provenance: "source" }],
+    purchaseQuantity: null,
+    packQuantity: pack === null ? null : { value: pack, provenance: "source" },
+    baseUnit: { value: "pcs", provenance: "inferred" },
+    unresolved: [],
+  });
+
+  it("replaces the line with one line per item, after it and in order", async () => {
+    const ctx = assortmentOrder();
+    const before = inventoryCounts(ctx.db);
+    const extractor = fixtureExtractor({
+      items: [item("4.7k resistor", "4.7k", 20), item("10k resistor", "10k", null)],
+    });
+
+    expect(await ctx.imports.splitLine(ctx.id, ctx.lineId, extractor, "20 of each value")).toEqual({
+      ok: true,
+      lineCount: 2,
+    });
+    expect(extractor.calls[0].kind).toBe("line_split");
+    expect(extractor.calls[0].prompt).toContain("Resistor kit 4.7k and 10k");
+    expect(extractor.calls[0].prompt).toContain("<owner_notes>\n20 of each value\n</owner_notes>");
+
+    const lines = review(ctx, ctx.id).lines;
+    expect(lines.map((l) => l.fields.description)).toEqual([
+      "M3 screw",
+      "4.7k resistor",
+      "10k resistor",
+      "M3 nut",
+    ]);
+    const [, first, second] = lines;
+    expect(first.id).toBe(ctx.lineId);
+    // The ordered quantity and purchase unit stay; the pack size is per item.
+    expect(first.fields).toMatchObject({
+      quantity: "2",
+      purchaseUnit: "pack",
+      packQuantity: "20",
+      unit: "pcs",
+      unitPrice: "3.00",
+      currency: "USD",
+      supplierSku: null,
+      categoryId: ctx.categories.resistors,
+      attributes: [{ key: "resistance", value: "4.7k" }],
+    });
+    expect(second.fields).toMatchObject({ quantity: "2", packQuantity: null, unitPrice: "0" });
+    expect(second.proposal?.unresolved).toEqual(
+      expect.arrayContaining([SPLIT_PRICE_NOTE, "Pack size is not stated"])
+    );
+    expect(first.proposal?.unresolved).not.toContain(SPLIT_PRICE_NOTE);
+    expect(second.sourceExcerpt).toBe(first.sourceExcerpt);
+    expect(lines.slice(1, 3).map((l) => [l.resolution, l.partId])).toEqual([
+      ["new", null],
+      ["new", null],
+    ]);
+    expect(inventoryCounts(ctx.db)).toEqual(before);
+  });
+
+  it("changes nothing when the model finds one item, fails, or answers invalidly", async () => {
+    const ctx = assortmentOrder();
+    const original = review(ctx, ctx.id).lines;
+    expect(
+      await ctx.imports.splitLine(
+        ctx.id,
+        ctx.lineId,
+        fixtureExtractor({ items: [item("4.7k resistor", "4.7k", 20)] }),
+        null
+      )
+    ).toMatchObject({ ok: false, error: expect.stringContaining("only one item") });
+    expect(
+      await ctx.imports.splitLine(
+        ctx.id,
+        ctx.lineId,
+        async () => {
+          throw new Error("timeout");
+        },
+        null
+      )
+    ).toEqual({ ok: false, error: "Split failed: timeout" });
+    expect(
+      await ctx.imports.splitLine(ctx.id, ctx.lineId, fixtureExtractor({ items: "x" }), null)
+    ).toMatchObject({ ok: false });
+    expect(review(ctx, ctx.id).lines).toEqual(original);
   });
 });
 

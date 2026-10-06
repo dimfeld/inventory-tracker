@@ -102,12 +102,12 @@ const formId = (message: string) =>
   });
 
 /** What a submission of the review line form does. */
-export const LINE_INTENTS = ["save", "remove", "cleanup"] as const;
+export const LINE_INTENTS = ["save", "remove", "cleanup", "split"] as const;
 export type LineIntent = (typeof LINE_INTENTS)[number];
 
 /**
  * The review line form. `id` is the line ID and `intent` the pressed button; `choosePart` saves
- * the line with that existing part. Attribute rows without a key or value are ignored.
+ * the line with that existing part, and `splitNotes` guides a split. Attribute rows without a key or value are ignored.
  * `resolution` is existing, new, requirement, or empty; `partId` applies to existing.
  */
 export const lineFormSchema = z
@@ -116,6 +116,7 @@ export const lineFormSchema = z
     importId: z.number().int(),
     intent: z.enum(LINE_INTENTS).optional(),
     choosePart: formId("Choose a valid part"),
+    splitNotes: optionalFormText,
     description: formText,
     quantity: optionalFormText,
     unit: optionalFormText,
@@ -173,6 +174,7 @@ export const lineFormSchema = z
       lineId: input.id,
       importId: input.importId,
       intent: input.intent ?? ("save" as LineIntent),
+      splitNotes: input.splitNotes,
       // A chosen candidate saves the line as that existing part.
       edit:
         input.choosePart === null

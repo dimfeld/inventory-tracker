@@ -126,8 +126,38 @@ export const lineCleanupSchema = z.object({
     .describe("Fields that are missing, unclear, or contradictory, such as 'length'"),
 });
 
+/** One item of an order line that holds several different items, such as an assortment pack. */
+const splitItem = z.object({
+  description: z
+    .string()
+    .describe("A clean, concise name for this item in the style of the catalog part names"),
+  category: marked("A category path from the category definitions"),
+  manufacturer: marked("Manufacturer name of this item"),
+  partNumber: marked("Manufacturer part number of this item"),
+  supplierSku: marked("The supplier's code for this item only; null when the line has one code"),
+  attributes: z.array(attribute).describe("All typed attributes of this item"),
+  purchaseQuantity: z
+    .object({ value: z.number().int(), provenance })
+    .nullable()
+    .describe("Purchase units of this item ordered; null when it is the line's quantity"),
+  packQuantity: z
+    .object({ value: z.number().int(), provenance })
+    .nullable()
+    .describe("Base units of this item in one purchase unit of the line"),
+  baseUnit: marked("Unit this item is counted in: pcs, mm, m, g, mL, ..."),
+  unresolved: z
+    .array(z.string())
+    .describe("Fields of this item that are missing, unclear, or contradictory"),
+});
+
+/** The split of one order line into the different items it holds. */
+export const lineSplitSchema = z.object({
+  items: z.array(splitItem).describe("The different items of the line, in the order given"),
+});
+
 export type MarkedValue = z.infer<ReturnType<typeof marked>>;
 export type LineCleanupOutput = z.infer<typeof lineCleanupSchema>;
+export type LineSplitOutput = z.infer<typeof lineSplitSchema>;
 export type OrderOutput = z.infer<typeof orderOutputSchema>;
 export type OrderLineOutput = z.infer<typeof orderLineSchema>;
 export type ProjectOutput = z.infer<typeof projectOutputSchema>;
@@ -138,4 +168,5 @@ export const OUTPUT_SCHEMAS = {
   order: orderOutputSchema,
   project: projectOutputSchema,
   line_cleanup: lineCleanupSchema,
+  line_split: lineSplitSchema,
 } as const;

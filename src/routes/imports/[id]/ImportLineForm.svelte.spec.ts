@@ -140,6 +140,27 @@ describe("ImportLineForm.svelte", () => {
     await expect.element(page.getByRole("button", { name: "Save line" }).nth(1)).toBeDisabled();
   });
 
+  it("asks for notes in a dialog and sends them with a split", async () => {
+    render(ImportLineForm, orderLine({ ...saved, description: "LDR assortment" }, 4));
+    const dialog = page.getByRole("dialog", { name: "Split line 1 with AI" });
+    await expect.element(dialog).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "AI split" }).click();
+    await expect.element(dialog).toBeVisible();
+    await dialog.getByRole("textbox", { name: /Notes/ }).fill("5 values, 20 of each");
+    await dialog.getByRole("button", { name: "Split" }).click();
+
+    await expect.poll(() => submissions.length).toBe(1);
+    expect(submissions[0]).toMatchObject({
+      id: 4,
+      intent: "split",
+      splitNotes: "5 values, 20 of each",
+      description: "LDR assortment",
+    });
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.element(page.getByText("sending it to OpenAI for a split")).toBeVisible();
+  });
+
   it("searches the catalog candidates and saves the chosen one as the existing part", async () => {
     const candidate = (id: number, name: string, status: "match" | "conflict") => ({
       part: { id, name },

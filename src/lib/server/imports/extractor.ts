@@ -1,7 +1,7 @@
 import type { ImportKind } from "#lib/imports.ts";
 
-/** An import kind to extract, or the cleanup of one line. Each has its own output schema. */
-export type ExtractionKind = ImportKind | "line_cleanup";
+/** An import kind to extract, or the cleanup or split of one line. Each has its own output schema. */
+export type ExtractionKind = ImportKind | "line_cleanup" | "line_split";
 
 export interface ExtractionRequest {
   kind: ExtractionKind;

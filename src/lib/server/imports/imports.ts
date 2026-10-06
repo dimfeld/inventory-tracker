@@ -28,6 +28,7 @@ import {
   deleteGroup,
   deleteImport,
   deleteLine,
+  makeRoomAfter,
   listOrderImportsWithReference,
   getImport,
   getLine,
@@ -67,17 +68,24 @@ import { createProjectService } from "#lib/server/projects/projects.ts";
 import { assertUnit, isUnit, toBaseQuantity, UNITS, type Unit } from "#lib/units.ts";
 import { outputFromColumns } from "./columns";
 import { loadCatalogContext, type CatalogContext } from "./context";
-import { ExtractionError, type ExtractionUsage, type Extractor } from "./extractor";
-import { cleanupLine, normalizeOutput, type NormalizedImport } from "./normalize";
+import {
+  ExtractionError,
+  type ExtractionRequest,
+  type ExtractionUsage,
+  type Extractor,
+} from "./extractor";
+import { cleanupLine, normalizeOutput, splitLine, type NormalizedImport } from "./normalize";
 import {
   cleanupPrompt,
   cleanupSystemPrompt,
+  splitPrompt,
+  splitSystemPrompt,
   PROMPT_VERSION,
   sourcePrompt,
   systemPrompt,
   type PromptPart,
 } from "./prompt";
-import { lineCleanupSchema, OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
+import { lineCleanupSchema, lineSplitSchema, OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
 import { csvTable, defaultCsvSettings, formatCsv, sourceRows } from "./source";
 
 export type ImportService = ReturnType<typeof createImportService>;
@@ -95,6 +103,8 @@ export type ParseOutcome = { ok: true; lineCount: number } | { ok: false; error:
 export type CleanupOutcome =
   | { ok: true; matchedPart: { id: number; name: string } | null }
   | { ok: false; error: string };
+
+export type SplitOutcome = { ok: true; lineCount: number } | { ok: false; error: string };
 
 export interface NewImport {
   kind: ImportKind;
@@ -190,6 +200,26 @@ function sourceView(record: ImportRecord) {
  * transaction. No import operation changes stock: an imported order is a draft order that has
  * received nothing.
  */
+/**
+ * Run a one-line extraction. A failed call becomes an error for the owner, prefixed with the
+ * operation unless it is an ExtractionError, whose message is already for the owner.
+ */
+async function extractLine(
+  extractor: Extractor,
+  request: ExtractionRequest,
+  operation: string
+): Promise<{ ok: true; output: unknown } | { ok: false; error: string }> {
+  try {
+    return { ok: true, output: (await extractor(request)).output };
+  } catch (error) {
+    if (error instanceof ExtractionError) return { ok: false, error: error.message };
+    return {
+      ok: false,
+      error: `${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 export function createImportService(db: Database) {
   const catalog = createCatalogService(db);
   const orders = createOrderService(db);
@@ -701,9 +731,9 @@ export function createImportService(db: Database) {
       const f = line.fields;
       const parts = promptParts(context);
 
-      let result;
-      try {
-        result = await extractor({
+      const call = await extractLine(
+        extractor,
+        {
           kind: "line_cleanup",
           system: cleanupSystemPrompt(context),
           prompt: cleanupPrompt(
@@ -724,15 +754,11 @@ export function createImportService(db: Database) {
             parts,
             lineCandidates(f).candidates.map((c) => c.part.id)
           ),
-        });
-      } catch (error) {
-        if (error instanceof ExtractionError) return { ok: false, error: error.message };
-        return {
-          ok: false,
-          error: `Cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      const parsed = lineCleanupSchema.safeParse(result.output);
+        },
+        "Cleanup"
+      );
+      if (!call.ok) return call;
+      const parsed = lineCleanupSchema.safeParse(call.output);
       if (!parsed.success) {
         return { ok: false, error: "The model's answer did not match the cleanup schema" };
       }
@@ -757,6 +783,97 @@ export function createImportService(db: Database) {
         });
       });
       return { ok: true, matchedPart: matched && { id: matched.id, name: matched.name } };
+    },
+
+    /**
+     * Ask the extractor to split one order line into the different items it holds, such as the
+     * values of an assortment pack. The line becomes the first item and the other items are
+     * new lines after it. Each item commits as a new part until the owner matches it; the
+     * owner's notes guide the split. A failed call, an invalid answer, or an answer with fewer
+     * than two items changes nothing.
+     */
+    async splitLine(
+      id: number,
+      lineId: number,
+      extractor: Extractor,
+      ownerNotes: string | null
+    ): Promise<SplitOutcome> {
+      const record = requireOpen(id);
+      if (record.kind !== "order") throw new InventoryError("Only order lines can be split");
+      const line = requireLine(id, lineId);
+      const context = loadCatalogContext(db);
+      const f = line.fields;
+
+      const call = await extractLine(
+        extractor,
+        {
+          kind: "line_split",
+          system: splitSystemPrompt(context),
+          prompt: splitPrompt(
+            {
+              supplier: record.header.supplier,
+              sourceExcerpt: line.sourceExcerpt,
+              description: f.description,
+              category: context.categories.find((c) => c.id === f.categoryId)?.path ?? null,
+              manufacturer: f.manufacturer,
+              partNumber: f.partNumber,
+              supplierSku: f.supplierSku,
+              attributes: f.attributes,
+              notes: f.notes,
+              quantity: f.quantity,
+              purchaseUnit: f.purchaseUnit,
+              packQuantity: f.packQuantity,
+              baseUnit: f.unit,
+            },
+            ownerNotes
+          ),
+        },
+        "Split"
+      );
+      if (!call.ok) return call;
+      const parsed = lineSplitSchema.safeParse(call.output);
+      if (!parsed.success) {
+        return { ok: false, error: "The model's answer did not match the split schema" };
+      }
+      if (parsed.data.items.length < 2) {
+        return {
+          ok: false,
+          error:
+            "The model found only one item in the line, so nothing changed. Describe the items in the notes and try again.",
+        };
+      }
+
+      return inTransaction(() => {
+        requireOpen(id);
+        // Apply to the line as it is now, in case it was saved during the call.
+        const fresh = requireLine(id, lineId);
+        const [first, ...rest] = splitLine(context, fresh, parsed.data);
+        updateLineProposal(db, lineId, first);
+        updateLine(db, lineId, {
+          groupId: fresh.groupId,
+          fields: first.fields,
+          resolution: "new",
+          partId: null,
+        });
+        makeRoomAfter(db, id, fresh.position, rest.length);
+        rest.forEach((proposal, index) =>
+          insertLine(
+            db,
+            id,
+            {
+              groupId: fresh.groupId,
+              sourceRow: fresh.sourceRow,
+              sourceExcerpt: fresh.sourceExcerpt,
+              proposal,
+              fields: proposal.fields,
+              resolution: "new",
+              partId: null,
+            },
+            fresh.position + index + 1
+          )
+        );
+        return { ok: true as const, lineCount: rest.length + 1 };
+      });
     },
 
     /** Lines from the owner's CSV column roles, without a model. Replaces the lines. */

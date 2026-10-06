@@ -48,7 +48,9 @@
   const lineForm = $derived(editLine.for(line.id));
   const fields = $derived(lineForm.fields);
   /** True while a cleanup of this line is in flight. */
-  let cleaning = $state(false);
+  /** The model request of this line that is in flight, if any. */
+  let aiRequest = $state<'cleanup' | 'split' | null>(null);
+  let splitDialog = $state<HTMLDialogElement>();
   let choosePart = $state<HTMLButtonElement>()!;
 
   const f = $derived(line.fields);
@@ -115,11 +117,13 @@
 <!-- No reset after a submit: the form shows the stored line, which the page reloads. -->
 <form
   {...lineForm.enhance(async (instance) => {
-    cleaning = instance.fields.intent.value() === 'cleanup';
+    const intent = instance.fields.intent.value();
+    aiRequest = intent === 'cleanup' || intent === 'split' ? intent : null;
+    splitDialog?.close();
     try {
       await instance.submit();
     } finally {
-      cleaning = false;
+      aiRequest = null;
     }
   })}
   class="card"
@@ -337,14 +341,49 @@
         >
           AI clean up
         </button>
+        <button
+          type="button"
+          class="btn-secondary"
+          disabled={!cleanupAvailable || lineForm.pending > 0}
+          title={cleanupAvailable ? undefined : 'OPENAI_API_KEY is not set'}
+          onclick={() => splitDialog?.showModal()}
+        >
+          AI split
+        </button>
+        <!-- The dialog is in the form, so its fields and button submit this line. -->
+        <dialog
+          bind:this={splitDialog}
+          aria-labelledby="split-title-{line.id}"
+          class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-gray-200 bg-white p-4 text-gray-900 shadow-xl backdrop:bg-black/40"
+        >
+          <h4 id="split-title-{line.id}" class="mb-1 font-semibold">Split line {number} with AI</h4>
+          <p class="hint mb-3">
+            Splits a line that holds several different items, such as an assortment pack, into one
+            line per item. The first line keeps the price, and the other lines get a price of 0.
+            Sends the line and your notes to OpenAI.
+          </p>
+          <label class="block text-sm">
+            Notes (optional)
+            <textarea
+              {...fields.splitNotes.as('text')}
+              rows="3"
+              placeholder="e.g. 5 values, 20 of each: 5k, 10k, 20k, 50k, 100k"
+              class="input"
+            ></textarea>
+          </label>
+          <div class="mt-3 flex justify-end gap-2">
+            <button type="button" class="btn-secondary" onclick={() => splitDialog?.close()}>Cancel</button>
+            <button {...fields.intent.as('submit', 'split')} class="btn" disabled={lineForm.pending > 0}>Split</button>
+          </div>
+        </dialog>
       {/if}
       <span role="status" class="flex items-center gap-2 text-sm">
-        {#if cleaning}
+        {#if aiRequest}
           <span
             aria-hidden="true"
             class="inline-block size-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-700 motion-reduce:animate-none"
           ></span>
-          Saving the line and sending it to OpenAI…
+          Saving the line and sending it to OpenAI for {aiRequest === 'split' ? 'a split' : 'clean up'}…
         {/if}
       </span>
     </div>
