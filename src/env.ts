@@ -11,4 +11,9 @@ export const variables = defineEnvVars({
       "OpenAI API key for AI parsing and clean up of imports. Optional: without it, imports use manual entry or CSV column mapping.",
     schema: (value) => value || null,
   },
+  TYPESAFE_API_KEY: {
+    description:
+      "TypeSafe AI API key. Optional: with it, AI clean up of an order line uses the Jev model to choose the category and the matching catalog part.",
+    schema: (value) => value || null,
+  },
 });

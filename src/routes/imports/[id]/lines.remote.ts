@@ -1,7 +1,7 @@
 import { invalid } from "@sveltejs/kit";
 import { form } from "$app/server";
 import { lineFormSchema } from "#lib/schemas/import.ts";
-import { extractor, imports } from "#lib/server/imports/index.ts";
+import { classifier, extractor, imports } from "#lib/server/imports/index.ts";
 import { isUserError } from "#lib/server/inventory/index.ts";
 
 /**
@@ -28,7 +28,7 @@ export const editLine = form(
         return { text: `Split into ${outcome.lineCount} lines. Check each line.` };
       }
 
-      const outcome = await imports().cleanupLine(importId, lineId, extractor());
+      const outcome = await imports().cleanupLine(importId, lineId, extractor(), classifier());
       if (!outcome.ok) invalid(outcome.error);
       return {
         text: outcome.matchedPart

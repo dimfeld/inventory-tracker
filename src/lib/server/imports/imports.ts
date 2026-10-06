@@ -74,6 +74,7 @@ import {
   type ExtractionUsage,
   type Extractor,
 } from "./extractor";
+import type { ClassificationRequest, Classifier, LineClassification } from "./jev";
 import { cleanupLine, normalizeOutput, splitLine, type NormalizedImport } from "./normalize";
 import {
   cleanupPrompt,
@@ -83,9 +84,16 @@ import {
   PROMPT_VERSION,
   sourcePrompt,
   systemPrompt,
+  type CleanupLine,
   type PromptPart,
 } from "./prompt";
-import { lineCleanupSchema, lineSplitSchema, OUTPUT_SCHEMAS, SCHEMA_VERSION } from "./schema";
+import {
+  lineCleanupSchema,
+  lineSplitSchema,
+  OUTPUT_SCHEMAS,
+  SCHEMA_VERSION,
+  type LineCleanupOutput,
+} from "./schema";
 import { csvTable, defaultCsvSettings, formatCsv, sourceRows } from "./source";
 
 export type ImportService = ReturnType<typeof createImportService>;
@@ -218,6 +226,43 @@ async function extractLine(
       error: `${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+/** Classify a line, or give no classification when no classifier is configured. */
+async function classifyLine(
+  classifier: Classifier | null,
+  request: ClassificationRequest
+): Promise<{ ok: true; classification: LineClassification } | { ok: false; error: string }> {
+  if (!classifier) return { ok: true, classification: {} };
+  try {
+    return { ok: true, classification: await classifier(request) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Classification failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/** The cleanup answer with the classifier's category and match in place of the extractor's. */
+function withClassification(
+  output: LineCleanupOutput,
+  classification: LineClassification
+): LineCleanupOutput {
+  const result = { ...output };
+  if (classification.category !== undefined) {
+    result.category =
+      classification.category === null
+        ? null
+        : { value: classification.category, provenance: "inferred" };
+  }
+  if (classification.partId !== undefined) {
+    result.match =
+      classification.partId === null
+        ? null
+        : { partId: classification.partId, reason: "Chosen by Jev" };
+  }
+  return result;
 }
 
 export function createImportService(db: Database) {
@@ -719,11 +764,17 @@ export function createImportService(db: Database) {
     /**
      * Ask the extractor to clean up one order line: a cleaner description, the category, the
      * attributes, the purchase unit, pack size, and base unit when it can tell them, and the
-     * existing catalog part that is the same item. The line and its proposal
+     * existing catalog part that is the same item. A classifier, when given, chooses the
+     * category and the matched part instead of the extractor. The line and its proposal
      * change; a matched part makes the line commit as that part. A failed call or an invalid
      * answer changes nothing.
      */
-    async cleanupLine(id: number, lineId: number, extractor: Extractor): Promise<CleanupOutcome> {
+    async cleanupLine(
+      id: number,
+      lineId: number,
+      extractor: Extractor,
+      classifier: Classifier | null = null
+    ): Promise<CleanupOutcome> {
       const record = requireOpen(id);
       if (record.kind !== "order") throw new InventoryError("Only order lines can be cleaned up");
       const line = requireLine(id, lineId);
@@ -731,38 +782,46 @@ export function createImportService(db: Database) {
       const f = line.fields;
       const parts = promptParts(context);
 
-      const call = await extractLine(
-        extractor,
-        {
-          kind: "line_cleanup",
-          system: cleanupSystemPrompt(context),
-          prompt: cleanupPrompt(
-            {
-              supplier: record.header.supplier,
-              sourceExcerpt: line.sourceExcerpt,
-              description: f.description,
-              category: context.categories.find((c) => c.id === f.categoryId)?.path ?? null,
-              manufacturer: f.manufacturer,
-              partNumber: f.partNumber,
-              supplierSku: f.supplierSku,
-              attributes: f.attributes,
-              notes: f.notes,
-              purchaseUnit: f.purchaseUnit,
-              packQuantity: f.packQuantity,
-              baseUnit: f.unit,
-            },
-            parts,
-            lineCandidates(f).candidates.map((c) => c.part.id)
-          ),
-        },
-        "Cleanup"
-      );
+      const cleanupInput: CleanupLine = {
+        supplier: record.header.supplier,
+        sourceExcerpt: line.sourceExcerpt,
+        description: f.description,
+        category: context.categories.find((c) => c.id === f.categoryId)?.path ?? null,
+        manufacturer: f.manufacturer,
+        partNumber: f.partNumber,
+        supplierSku: f.supplierSku,
+        attributes: f.attributes,
+        notes: f.notes,
+        purchaseUnit: f.purchaseUnit,
+        packQuantity: f.packQuantity,
+        baseUnit: f.unit,
+      };
+
+      // Jev, when configured, chooses the category and the matched part instead of the
+      // extractor. Both calls run at the same time.
+      const [call, classified] = await Promise.all([
+        extractLine(
+          extractor,
+          {
+            kind: "line_cleanup",
+            system: cleanupSystemPrompt(context),
+            prompt: cleanupPrompt(
+              cleanupInput,
+              parts,
+              lineCandidates(f).candidates.map((c) => c.part.id)
+            ),
+          },
+          "Cleanup"
+        ),
+        classifyLine(classifier, { line: cleanupInput, categories: context.categories, parts }),
+      ]);
       if (!call.ok) return call;
+      if (!classified.ok) return classified;
       const parsed = lineCleanupSchema.safeParse(call.output);
       if (!parsed.success) {
         return { ok: false, error: "The model's answer did not match the cleanup schema" };
       }
-      const output = parsed.data;
+      const output = withClassification(parsed.data, classified.classification);
       // Only a part from the list can be chosen; another ID is not a match.
       const matched = parts.find((p) => p.id === output.match?.partId) ?? null;
 

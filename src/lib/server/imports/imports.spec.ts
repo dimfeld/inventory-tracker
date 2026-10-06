@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { emptyLineFields, type ImportLineFields } from "#lib/imports.ts";
 import { getImport } from "#lib/server/db/imports.ts";
 import { listBomLines, listComponents } from "#lib/server/db/projects.ts";
@@ -6,7 +6,9 @@ import { opId } from "#lib/server/inventory/test-helpers.ts";
 import * as bomFlat from "./fixtures/bom-flat";
 import * as bomSections from "./fixtures/bom-sections";
 import * as orderList from "./fixtures/order-list";
+import type { Extractor } from "./extractor";
 import type { LineEdit } from "./imports";
+import type { Classifier } from "./jev";
 import { SPLIT_PRICE_NOTE } from "./normalize";
 import { createOpenAIExtractor, MODEL_ID } from "./openai";
 import { PROMPT_VERSION } from "./prompt";
@@ -504,6 +506,8 @@ describe("manual lines", () => {
   );
 });
 
+const emptyUsage = { inputTokens: null, outputTokens: null, totalTokens: null };
+
 describe("order line cleanup", () => {
   /** An order import from extension CSV with one DigiKey resistor line. */
   function csvOrder(
@@ -643,6 +647,97 @@ ${line}`,
     expect(
       await ctx.imports.cleanupLine(ctx.id, ctx.lineId, fixtureExtractor({ description: 3 }))
     ).toMatchObject({ ok: false });
+    const line = review(ctx, ctx.id).lines[0];
+    expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);
+  });
+
+  it("uses Jev's category and match in place of the extractor's", async () => {
+    const ctx = csvOrder();
+    const classifier = vi.fn<Classifier>(async () => ({
+      category: "Hardware / Fasteners / Screws",
+      partId: ctx.parts.screw,
+    }));
+    const outcome = await ctx.imports.cleanupLine(
+      ctx.id,
+      ctx.lineId,
+      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
+      classifier
+    );
+    expect(outcome).toEqual({
+      ok: true,
+      matchedPart: { id: ctx.parts.screw, name: "M3 × 8 pan head screw" },
+    });
+    const request = classifier.mock.calls[0][0];
+    expect(request.line.description).toBe("RES SMD 4.7K OHM 1% 1/8W 0805 THICK FILM");
+    expect(request.categories.map((c) => c.path)).toContain("Hardware / Fasteners / Screws");
+    expect(request.parts.map((p) => p.id)).toContain(ctx.parts.screw);
+
+    const line = review(ctx, ctx.id).lines[0];
+    expect(line.fields.categoryId).toBe(ctx.categories.screws);
+    expect(line.proposal?.provenance.categoryId).toBe("inferred");
+    expect([line.resolution, line.partId]).toEqual(["existing", ctx.parts.screw]);
+  });
+
+  it("clears the extractor's category and match when Jev chooses none", async () => {
+    const ctx = csvOrder();
+    const outcome = await ctx.imports.cleanupLine(
+      ctx.id,
+      ctx.lineId,
+      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
+      async () => ({ category: null, partId: null })
+    );
+    expect(outcome).toEqual({ ok: true, matchedPart: null });
+    const line = review(ctx, ctx.id).lines[0];
+    expect([line.fields.categoryId, line.resolution, line.partId]).toEqual([null, "new", null]);
+  });
+
+  it("keeps the extractor's answers for the questions Jev did not ask", async () => {
+    const ctx = csvOrder();
+    const outcome = await ctx.imports.cleanupLine(
+      ctx.id,
+      ctx.lineId,
+      fixtureExtractor(cleanup(ctx.parts.resistor4k7)),
+      async () => ({ category: "Hardware / Fasteners / Screws" })
+    );
+    expect(outcome).toMatchObject({ ok: true, matchedPart: { id: ctx.parts.resistor4k7 } });
+  });
+
+  it("runs the extractor and Jev at the same time", async () => {
+    const ctx = csvOrder();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const started: string[] = [];
+    const extractor: Extractor = async () => {
+      started.push("extractor");
+      if (started.length === 2) release();
+      await gate;
+      return { output: cleanup(null), modelId: MODEL_ID, usage: emptyUsage };
+    };
+    const classifier: Classifier = async () => {
+      started.push("classifier");
+      if (started.length === 2) release();
+      await gate;
+      return {};
+    };
+    expect(await ctx.imports.cleanupLine(ctx.id, ctx.lineId, extractor, classifier)).toMatchObject({
+      ok: true,
+    });
+    expect(started.sort()).toEqual(["classifier", "extractor"]);
+  });
+
+  it("changes nothing when the Jev call fails", async () => {
+    const ctx = csvOrder();
+    const original = review(ctx, ctx.id).lines[0];
+    expect(
+      await ctx.imports.cleanupLine(
+        ctx.id,
+        ctx.lineId,
+        fixtureExtractor(cleanup(null)),
+        async () => {
+          throw new Error("rate limited");
+        }
+      )
+    ).toEqual({ ok: false, error: "Classification failed: rate limited" });
     const line = review(ctx, ctx.id).lines[0];
     expect([line.fields, line.proposal]).toEqual([original.fields, original.proposal]);
   });

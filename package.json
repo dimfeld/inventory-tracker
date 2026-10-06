@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.83",
+    "@typesafe-ai/sdk": "^0.6.0",
     "ai": "^7.0.127",
     "zod": "^4.6.5"
   },

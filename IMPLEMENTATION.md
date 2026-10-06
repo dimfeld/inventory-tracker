@@ -202,7 +202,7 @@ Save the draft before calling the model. A failed parse leaves the source availa
 
 Save model ID, prompt version, schema version, and available usage data with the import. Test extraction with stored representative source/expected-result fixtures. Run ordinary tests with model responses replaced by fixtures; use explicit live checks to assess model behavior.
 
-Do not add Jev in the initial build. No required workflow needs a separate boolean or multiple-choice classifier. If such a task emerges, confirm the intended Jev library and interface before adding it; do not assume what the name refers to. Under the current requirement, any LLM call made by that path must still use GPT-6 Luna through the Vercel AI SDK.
+AI clean up of an order line uses TypeSafe AI's Jev model (`@typesafe-ai/sdk`, `jev-latest`) for the category and the matching catalog part when `TYPESAFE_API_KEY` is set. It asks both choice questions in one request, at the same time as the GPT-6 Luna cleanup call, and its answers replace GPT-6 Luna's category and match. A question with more options than TypeSafe accepts (255) is not asked, and the GPT-6 Luna answer stays. Without the key, GPT-6 Luna answers all cleanup fields.
 
 Initial inputs are pasted text and CSV. PDF, image, spreadsheet, and URL imports are later options. They require separate extraction and source-review handling; do not make them prerequisites for the requested BOM parsing.
 
