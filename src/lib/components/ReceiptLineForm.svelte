@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { assignInSequence } from '#lib/commitments.ts';
-  import { describePackConversion } from '#lib/orders.ts';
+  import { describePackConversion, type DeliveryState } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
 
   /**
@@ -23,6 +23,8 @@
       purchaseUnit: string;
       packQuantity: number;
       outstanding: number;
+      deliveryState?: DeliveryState;
+      deliveredOn?: string | null;
     };
     /** The line's commitments in sequence order. */
     commitments: { id: number; projectName: string; lineDescription: string; quantity: number }[];
@@ -98,11 +100,19 @@
   });
 </script>
 
-<form method="POST" action="?/receiveLine" use:enhance class="space-y-2 rounded border p-3 text-sm">
+<form
+  method="POST"
+  action="?/receiveLine"
+  use:enhance
+  class="space-y-2 rounded border p-3 text-sm {line.deliveryState === 'awaiting_review' ? 'border-amber-300 bg-amber-50' : ''}"
+>
   <input type="hidden" name="operation_id" value={operationId} />
   <input type="hidden" name="received_on" value={today} />
   <input type="hidden" name="order_line_id" value={line.id} />
   <h3 class="font-semibold">{line.partName}</h3>
+  {#if line.deliveryState === 'awaiting_review'}
+    <p class="font-medium text-amber-800">Delivered {line.deliveredOn}, awaiting review.</p>
+  {/if}
   <p class="text-gray-700">
     Ordered {describePackConversion(line)}. Outstanding: {formatQuantity(line.outstanding, line.baseUnit)}.
   </p>

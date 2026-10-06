@@ -4,7 +4,7 @@
   import MoneyTotals from '#lib/components/MoneyTotals.svelte';
   import OrderLineFields from '#lib/components/OrderLineFields.svelte';
   import { formatMoney } from '#lib/money.ts';
-  import { DELIVERY_LABELS, describePackConversion } from '#lib/orders.ts';
+  import { DELIVERY_LABELS, ORDER_DELIVERY_LABELS, describePackConversion } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -12,6 +12,22 @@
 
   const order = $derived(data.order);
   const outstandingLines = $derived(data.lines.filter((l) => l.outstanding > 0));
+  const awaitingReview = $derived(data.lines.some((l) => l.deliveryState === 'awaiting_review'));
+  const waitingForDelivery = $derived(outstandingLines.some((l) => l.deliveryState === 'not_delivered'));
+  const canDeliver = $derived(order.status !== 'draft');
+
+  type Line = (typeof data.lines)[number];
+
+  function deliveryLabel(line: Line): string {
+    if (line.cancelledQuantity === line.quantity) return 'Cancelled';
+    if (line.deliveryState === 'not_delivered' && line.receivedQuantity + line.damagedQuantity > 0) {
+      return 'Partly delivered';
+    }
+    return DELIVERY_LABELS[line.deliveryState];
+  }
+
+  /** Lines that can be selected to mark delivered or to finish their review. */
+  const selectable = (line: Line) => line.outstanding > 0 || line.deliveryState === 'awaiting_review';
   const commitmentsByLine = $derived(Map.groupBy(data.commitments, (c) => c.orderLineId));
 
   function feedback(action: string) {
@@ -32,11 +48,9 @@
   {#if fb}<p class={fb.ok ? 'text-green-700' : 'text-red-700'}>{fb.text}</p>{/if}
 {/snippet}
 
-{#snippet stateButton(action: string, label: string, withDate = true)}
+{#snippet stateButton(action: string, label: string)}
   <form method="POST" action="?/{action}" use:enhance class="flex items-end gap-1">
-    {#if withDate}
-      <input type="date" name="date" value={data.today} aria-label="Date" class="rounded border border-gray-300 px-1" />
-    {/if}
+    <input type="date" name="date" value={data.today} aria-label="Date" class="rounded border border-gray-300 px-1" />
     <button class="btn-secondary">{label}</button>
   </form>
 {/snippet}
@@ -46,7 +60,7 @@
 <div class="mb-4 flex flex-wrap items-center gap-3">
   <h1 class="text-2xl font-semibold">{order.supplier} {order.reference ?? ''}</h1>
   <span class="rounded bg-gray-100 px-2 text-sm">{order.status}</span>
-  <span class="rounded bg-gray-100 px-2 text-sm">{DELIVERY_LABELS[order.deliveryState]}</span>
+  <span class="rounded bg-gray-100 px-2 text-sm">{ORDER_DELIVERY_LABELS[data.delivery]}</span>
   {#if order.status !== 'draft' && outstandingLines.length > 0}
     <a href="/orders/{order.id}/receive" class="btn ml-auto">Review and receive items</a>
   {/if}
@@ -68,7 +82,6 @@
     <dt class="text-gray-600">Placed</dt><dd>{order.placedOn ?? '—'}</dd>
     <dt class="text-gray-600">Shipped</dt><dd>{order.shippedOn ?? '—'}</dd>
     <dt class="text-gray-600">Expected</dt><dd>{order.expectedOn ?? '—'}</dd>
-    <dt class="text-gray-600">Delivered</dt><dd>{order.deliveredOn ?? '—'}</dd>
     <dt class="text-gray-600">Tracking</dt>
     <dd>
       {#if order.trackingUrl}
@@ -79,18 +92,12 @@
   <div class="flex flex-wrap gap-3">
     {#if order.status === 'draft'}
       {@render stateButton('place', 'Mark placed')}
-    {:else}
-      {#if order.status === 'placed'}{@render stateButton('ship', 'Mark shipped')}{/if}
-      {@render stateButton('deliver', 'Mark parcel delivered')}
-      {#if order.deliveryState === 'awaiting_review'}{@render stateButton('finishReview', 'Finish review', false)}{/if}
+    {:else if order.status === 'placed'}
+      {@render stateButton('ship', 'Mark shipped')}
     {/if}
   </div>
   {#if order.status === 'draft'}
     <p class="mt-2 text-sm text-gray-600">Draft orders are not incoming supply.</p>
-  {:else if order.deliveryState === 'awaiting_review'}
-    <p class="mt-2 text-sm text-gray-600">
-      The parcel is delivered. Only items you accept on the review page are added to stock.
-    </p>
   {/if}
   {@render message('state')}
 </section>
@@ -101,21 +108,48 @@
   {#if data.lines.length === 0}
     <p class="text-sm text-gray-600">No lines yet.</p>
   {:else}
+    {#if canDeliver}
+      <!-- The line checkboxes belong to this form through their form attribute. -->
+      <form id="delivery" method="POST" action="?/deliverLines" use:enhance class="mb-2 flex flex-wrap items-end gap-2 text-sm">
+        <input type="date" name="date" value={data.today} aria-label="Delivery date" class="rounded border border-gray-300 px-1" />
+        <button class="btn-secondary">Mark selected delivered</button>
+        {#if waitingForDelivery}
+          <button class="btn-secondary" formaction="?/deliverOutstanding">Mark all outstanding delivered</button>
+        {/if}
+        {#if awaitingReview}
+          <button class="btn-secondary" formaction="?/finishReview">Finish review of selected</button>
+        {/if}
+      </form>
+      <p class="mb-2 text-sm text-gray-600">
+        Marking lines delivered does not add stock. Receiving a line also counts as its delivery and review, so
+        you can go straight to receiving.
+      </p>
+      {@render message('delivery')}
+    {/if}
     <table class="mb-3 w-full text-left text-sm">
       <thead class="border-b text-gray-600">
         <tr>
+          {#if canDeliver}<th class="py-1"><span class="sr-only">Select</span></th>{/if}
           <th class="py-1">Part</th>
           <th>Purchase</th>
           <th class="text-right">Received</th>
           <th class="text-right">Damaged</th>
           <th class="text-right">Cancelled</th>
           <th class="text-right">Outstanding</th>
+          <th class="pl-3">Delivery</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {#each data.lines as line (line.id)}
           <tr class="border-b border-gray-100 align-top">
+            {#if canDeliver}
+              <td class="py-1 pr-2">
+                {#if selectable(line)}
+                  <input type="checkbox" form="delivery" name="line_id" value={line.id} aria-label="Select {line.partName}" />
+                {/if}
+              </td>
+            {/if}
             <td class="py-1">
               <a href="/parts/{line.partId}" class="text-blue-700 hover:underline">{line.partName}</a>
               {#if line.supplierSku}<div class="text-xs text-gray-600">SKU {line.supplierSku}</div>{/if}
@@ -141,6 +175,16 @@
             <td class="text-right">{formatQuantity(line.damagedQuantity, line.baseUnit)}</td>
             <td class="text-right">{formatQuantity(line.cancelledQuantity, line.baseUnit)}</td>
             <td class="text-right font-medium">{formatQuantity(line.outstanding, line.baseUnit)}</td>
+            <td class="pl-3">
+              <span class={line.deliveryState === 'awaiting_review' ? 'rounded bg-amber-100 px-1' : ''}>
+                {deliveryLabel(line)}
+              </span>
+              {#if line.deliveredOn}
+                <div class="text-xs text-gray-600">
+                  {line.deliveryState === 'not_delivered' ? 'Last delivery' : 'Delivered'} {line.deliveredOn}
+                </div>
+              {/if}
+            </td>
             <td class="pl-3">
               <details>
                 <summary class="cursor-pointer text-blue-700">Correct</summary>

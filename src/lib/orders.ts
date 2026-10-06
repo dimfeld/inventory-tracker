@@ -7,11 +7,55 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const DELIVERY_STATES = ["not_delivered", "awaiting_review", "reviewed"] as const;
 export type DeliveryState = (typeof DELIVERY_STATES)[number];
 
+/** Delivery state of one order line. */
 export const DELIVERY_LABELS: Record<DeliveryState, string> = {
   not_delivered: "Not delivered",
   awaiting_review: "Delivered, awaiting review",
   reviewed: "Delivery reviewed",
 };
+
+export const ORDER_DELIVERY_STATUSES = [
+  "not_delivered",
+  "partly_delivered",
+  "awaiting_review",
+  "reviewed",
+] as const;
+export type OrderDeliveryStatus = (typeof ORDER_DELIVERY_STATUSES)[number];
+
+export const ORDER_DELIVERY_LABELS: Record<OrderDeliveryStatus, string> = {
+  not_delivered: "Not delivered",
+  partly_delivered: "Partly delivered",
+  awaiting_review: "Delivered, awaiting review",
+  reviewed: "Delivery reviewed",
+};
+
+/** Delivery fields of an order line, for the order's delivery status. */
+export interface LineDelivery {
+  quantity: number;
+  receivedQuantity: number;
+  damagedQuantity: number;
+  cancelledQuantity: number;
+  deliveryState: DeliveryState;
+}
+
+/**
+ * Delivery status of an order, derived from its lines. It is for display only. Lines whose
+ * whole quantity is cancelled are ignored. A line that is not delivered but already had a
+ * partial receipt counts as partly delivered. Any line awaiting review makes the order await
+ * review.
+ */
+export function orderDeliveryStatus(lines: LineDelivery[]): OrderDeliveryStatus {
+  const active = lines.filter((line) => line.cancelledQuantity < line.quantity);
+  if (active.some((line) => line.deliveryState === "awaiting_review")) return "awaiting_review";
+  if (active.length > 0 && active.every((line) => line.deliveryState === "reviewed")) {
+    return "reviewed";
+  }
+  const delivered = active.some(
+    (line) =>
+      line.deliveryState !== "not_delivered" || line.receivedQuantity + line.damagedQuantity > 0
+  );
+  return delivered ? "partly_delivered" : "not_delivered";
+}
 
 /** Quantities of an order line, all in the part's base unit. */
 export interface LineQuantities {

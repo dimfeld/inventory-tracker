@@ -179,14 +179,126 @@ describe("outstanding supply", () => {
 });
 
 describe("delivery review", () => {
+  const LATER = "2026-10-05";
+  const delivery = (ctx: Ctx) => ctx.orders.getOrderDetails(ctx.orderId)!.delivery;
+  const lineAt = (ctx: Ctx, i: number) => getOrderLine(ctx.db, ctx.lineIds[i])!;
+
   it("marking delivered does not change stock or outstanding supply", () => {
     const ctx = setup();
-    ctx.orders.markDelivered(ctx.orderId, DAY);
-    const order = ctx.orders.getOrderDetails(ctx.orderId)!.order;
-    expect(order.deliveryState).toBe("awaiting_review");
+    expect(ctx.orders.markLinesDelivered(ctx.orderId, [ctx.lineId], DAY)).toBe(1);
+    expect(line(ctx)).toMatchObject({ deliveryState: "awaiting_review", deliveredOn: DAY });
+    expect(delivery(ctx)).toBe("awaiting_review");
     expect(stock(ctx)).toBe(0);
     expect(listPartMovements(ctx.db, ctx.screw)).toEqual([]);
     expect(line(ctx).outstanding).toBe(100);
+  });
+
+  it("marks only the selected lines delivered and finishes their review", () => {
+    const ctx = setup((id) => [lineInput(id), lineInput(id), lineInput(id)]);
+    expect(delivery(ctx)).toBe("not_delivered");
+    ctx.orders.markLinesDelivered(ctx.orderId, [ctx.lineIds[0], ctx.lineIds[2]], DAY);
+    expect(ctx.lineIds.map((_, i) => lineAt(ctx, i).deliveryState)).toEqual([
+      "awaiting_review",
+      "not_delivered",
+      "awaiting_review",
+    ]);
+    expect(lineAt(ctx, 1).deliveredOn).toBeNull();
+
+    expect(() => ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[1]])).toThrow(
+      /not awaiting review/
+    );
+    ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[0], ctx.lineIds[2]]);
+    expect(lineAt(ctx, 0)).toMatchObject({ deliveryState: "reviewed", deliveredOn: DAY });
+    expect(delivery(ctx)).toBe("partly_delivered");
+
+    // The rest of the order arrives in a later parcel.
+    expect(ctx.orders.markOutstandingDelivered(ctx.orderId, LATER)).toBe(1);
+    expect(lineAt(ctx, 1)).toMatchObject({ deliveryState: "awaiting_review", deliveredOn: LATER });
+    expect(lineAt(ctx, 0).deliveredOn).toBe(DAY);
+    expect(() => ctx.orders.markOutstandingDelivered(ctx.orderId, LATER)).toThrow(
+      /No outstanding line/
+    );
+    ctx.orders.finishLineReview(ctx.orderId, [ctx.lineIds[1]]);
+    expect(delivery(ctx)).toBe("reviewed");
+  });
+
+  it("does not mark lines of a draft order or lines with nothing outstanding delivered", () => {
+    const ctx = createTestInventory();
+    const screw = ctx.catalog.createPart(partInput());
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Bolt Depot", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [lineInput(screw)]
+    );
+    const lineId = ctx.orders.getOrderDetails(id)!.lines[0].id;
+    expect(() => ctx.orders.markLinesDelivered(id, [lineId], DAY)).toThrow(/Place the order/);
+
+    const placed = setup();
+    receive(placed, 100);
+    expect(() => placed.orders.markLinesDelivered(placed.orderId, [placed.lineId], DAY)).toThrow(
+      /no outstanding quantity/
+    );
+  });
+
+  it("a receipt of a line that was not marked delivered counts as delivery and review", () => {
+    const ctx = setup((id) => [lineInput(id), lineInput(id)]);
+    receive(ctx, 100);
+    expect(line(ctx)).toMatchObject({ deliveryState: "reviewed", deliveredOn: DAY });
+    expect(delivery(ctx)).toBe("partly_delivered");
+  });
+
+  it("a receipt of a line awaiting review keeps the earlier delivery date", () => {
+    const ctx = setup();
+    ctx.orders.markLinesDelivered(ctx.orderId, [ctx.lineId], DAY);
+    ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId: ctx.orderId,
+      receivedOn: LATER,
+      locationId: ctx.drawer,
+      notes: null,
+    });
+    expect(line(ctx)).toMatchObject({ deliveryState: "reviewed", deliveredOn: DAY });
+    expect(delivery(ctx)).toBe("reviewed");
+  });
+
+  it("a partial receipt leaves the rest expected and keeps the date of that delivery", () => {
+    const ctx = setup();
+    ctx.orders.markLinesDelivered(ctx.orderId, [ctx.lineId], DAY);
+    receive(ctx, 40);
+    expect(line(ctx)).toMatchObject({
+      deliveryState: "not_delivered",
+      deliveredOn: DAY,
+      outstanding: 60,
+    });
+    expect(delivery(ctx)).toBe("partly_delivered");
+
+    // The rest arrives later and is received without being marked delivered first.
+    ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId: ctx.orderId,
+      receivedOn: LATER,
+      locationId: ctx.drawer,
+      notes: null,
+    });
+    expect(line(ctx)).toMatchObject({ deliveryState: "reviewed", deliveredOn: LATER });
+    expect(delivery(ctx)).toBe("reviewed");
+  });
+
+  it("a cancelled remainder after a partial receipt makes the line reviewed", () => {
+    const ctx = setup();
+    receive(ctx, 40);
+    ctx.orders.cancelRemainder(ctx.orderId, ctx.lineId);
+    expect(line(ctx)).toMatchObject({ deliveryState: "reviewed", deliveredOn: DAY });
+    expect(delivery(ctx)).toBe("reviewed");
+  });
+
+  it("ignores lines whose whole quantity is cancelled", () => {
+    const ctx = setup((id) => [lineInput(id), lineInput(id)]);
+    ctx.orders.cancelRemainder(ctx.orderId, ctx.lineIds[1]);
+    expect(lineAt(ctx, 1).deliveryState).toBe("not_delivered");
+    expect(delivery(ctx)).toBe("not_delivered");
+    receive(ctx, 100);
+    expect(delivery(ctx)).toBe("reviewed");
+    expect(ctx.orders.listOrders().find((o) => o.id === ctx.orderId)!.delivery).toBe("reviewed");
   });
 });
 

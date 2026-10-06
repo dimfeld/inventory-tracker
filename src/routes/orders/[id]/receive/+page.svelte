@@ -30,7 +30,8 @@
 </p>
 <h1 class="mb-2 text-2xl font-semibold">Review and receive items</h1>
 <p class="mb-4 text-sm text-gray-600">
-  Only accepted usable quantities are added to stock. Damaged items are recorded but not added.
+  Only accepted usable quantities are added to stock. Damaged items are recorded but not added. Receiving a line
+  also records its delivery and review, even when it was not marked delivered.
 </p>
 
 {#if feedback}<p class="mb-4 {feedback.ok ? 'text-green-700' : 'text-red-700'}">{feedback.text}</p>{/if}

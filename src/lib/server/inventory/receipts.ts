@@ -10,6 +10,7 @@ import {
   insertReceiptLine,
   listOrderLines,
   listReceiptLines,
+  recordReceiptDelivery,
   type Order,
   type OrderLine,
   type Receipt,
@@ -102,8 +103,8 @@ export type ReceiptService = ReturnType<typeof createReceiptService>;
 
 /**
  * Order receipts. Each receipt runs in one SQLite transaction that writes the receipt, adds
- * accepted stock to storage, updates the order lines' outstanding supply, and reduces incoming
- * commitments that damaged or cancelled supply no longer covers.
+ * accepted stock to storage, updates the order lines' outstanding supply and delivery state,
+ * and reduces incoming commitments that damaged or cancelled supply no longer covers.
  */
 export function createReceiptService(db: Database, options: ReceiptServiceOptions = {}) {
   const hooks = options.hooks ?? noReceiptHooks;
@@ -202,6 +203,9 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
           damaged: lineInput.damagedQuantity,
           cancelled: lineInput.cancelRemainder ? remainder : 0,
         });
+        // A receipt is the delivery and the review of what arrived, even when the line was
+        // never marked delivered.
+        recordReceiptDelivery(db, line.id, input.receivedOn);
         if (lineInput.acceptedQuantity > 0) {
           const movement = insertMovement(db, {
             // Movement operation IDs are unique, so each line gets its own.

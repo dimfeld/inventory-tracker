@@ -1,4 +1,5 @@
 import { error, fail } from "@sveltejs/kit";
+import type { DeliveryState } from "#lib/orders.ts";
 import { parseReceiptLineForm, parseReceiveAllForm } from "#lib/schemas/order.ts";
 import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
@@ -7,12 +8,17 @@ import type { ReceiptResult } from "#lib/server/inventory/receipts.ts";
 import { formatQuantity } from "#lib/units.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
+const awaitingFirst = (state: DeliveryState) => (state === "awaiting_review" ? 0 : 1);
+
 export const load: PageServerLoad = ({ params }) => {
   const details = inventory().orders.getOrderDetails(Number(params.id));
   if (!details) error(404, "Order not found");
   return {
     order: details.order,
-    lines: details.lines.filter((line) => line.outstanding > 0),
+    // Lines awaiting review come first; any outstanding line can be received.
+    lines: details.lines
+      .filter((line) => line.outstanding > 0)
+      .toSorted((a, b) => awaitingFirst(a.deliveryState) - awaitingFirst(b.deliveryState)),
     commitments: details.commitments,
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),

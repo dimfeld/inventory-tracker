@@ -78,6 +78,7 @@ DigiKey,DK-12345,Precision resistor,5,each,1,pcs,Yageo,RC0805,123-ND,0.42,USD,Pr
     expect(mapped.record.header).toEqual({
       supplier: "DigiKey",
       reference: "DK-12345",
+      placedOn: null,
       projectId: null,
       projectName: null,
       notes: null,
@@ -331,8 +332,8 @@ Amazon,111-2,,Dust separator,1`,
       supplier: "DigiKey",
       reference: "DK-55012",
       status: "draft",
-      deliveryState: "not_delivered",
     });
+    expect(order.delivery).toBe("not_delivered");
     const newPart = ctx.imports.getReview(id)!.lines[0].createdPartId!;
     expect(
       order.lines.map((l) => [l.partId, l.purchaseQuantity, l.purchaseUnit, l.quantity])

@@ -1,6 +1,6 @@
 import { error, fail } from "@sveltejs/kit";
 import { parseDate, parseOrderForm, parseOrderLineForm } from "#lib/schemas/order.ts";
-import { parseId, text } from "#lib/schemas/result.ts";
+import { allText, parseId, text } from "#lib/schemas/result.ts";
 import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { inventory } from "#lib/server/inventory/index.ts";
@@ -16,6 +16,17 @@ export const load: PageServerLoad = ({ params }) => {
 function lineId(form: FormData): number | null {
   const id = parseId(text(form, "line_id"));
   return id === null || Number.isNaN(id) ? null : id;
+}
+
+/** The order line IDs of a delivery action. Returns null when one is invalid. */
+function lineIds(form: FormData): number[] | null {
+  const ids = allText(form, "line_id").map(parseId);
+  return ids.some((id) => id === null || Number.isNaN(id)) ? null : (ids as number[]);
+}
+
+/** Text such as "1 line" or "3 lines". */
+function lineCount(count: number): string {
+  return count === 1 ? "1 line" : `${count} lines`;
 }
 
 /** Text about project commitments that a line change reduced. */
@@ -49,11 +60,42 @@ export const actions: Actions = {
 
   place: stateAction((id, date) => inventory().orders.markPlaced(id, date), "Order placed."),
   ship: stateAction((id, date) => inventory().orders.markShipped(id, date), "Order shipped."),
-  deliver: stateAction(
-    (id, date) => inventory().orders.markDelivered(id, date),
-    "Marked delivered. No stock was added; review the items to receive them."
-  ),
-  finishReview: stateAction((id) => inventory().orders.finishReview(id), "Review finished."),
+
+  deliverLines: async ({ request, params }) => {
+    const form = await request.formData();
+    const ids = lineIds(form);
+    const date = parseDate(form, "date");
+    if (ids === null) return fail(400, { action: "delivery", message: "Choose valid lines" });
+    if (!date.success) return fail(400, { action: "delivery", errors: date.errors });
+    return runAction("delivery", () => {
+      const count = inventory().orders.markLinesDelivered(Number(params.id), ids, date.data);
+      return {
+        action: "delivery",
+        success: `Marked ${lineCount(count)} delivered. No stock was added; review the items to receive them.`,
+      };
+    });
+  },
+
+  deliverOutstanding: async ({ request, params }) => {
+    const date = parseDate(await request.formData(), "date");
+    if (!date.success) return fail(400, { action: "delivery", errors: date.errors });
+    return runAction("delivery", () => {
+      const count = inventory().orders.markOutstandingDelivered(Number(params.id), date.data);
+      return {
+        action: "delivery",
+        success: `Marked ${lineCount(count)} delivered. No stock was added; review the items to receive them.`,
+      };
+    });
+  },
+
+  finishReview: async ({ request, params }) => {
+    const ids = lineIds(await request.formData());
+    if (ids === null) return fail(400, { action: "delivery", message: "Choose valid lines" });
+    return runAction("delivery", () => {
+      const count = inventory().orders.finishLineReview(Number(params.id), ids);
+      return { action: "delivery", success: `Finished review of ${lineCount(count)}.` };
+    });
+  },
 
   addLine: async ({ request, params }) => {
     const parsed = parseOrderLineForm(await request.formData());

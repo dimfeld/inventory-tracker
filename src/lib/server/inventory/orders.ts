@@ -14,11 +14,14 @@ import {
   insertOrderLine,
   listIncomingLines,
   listLineCostFields,
+  listLineDeliveryFields,
   listOrderLines,
   listOrderReceipts,
   listOrders,
   listOrdersWithReference,
   listReceiptLines,
+  settleLineDelivery,
+  updateLineDelivery,
   updateOrder,
   updateOrderLine,
   updateOrderState,
@@ -26,7 +29,7 @@ import {
   type OrderLine,
 } from "#lib/server/db/orders.ts";
 import { parseCurrency, totalByCurrency } from "#lib/money.ts";
-import { orderLineCost, packConversion } from "#lib/orders.ts";
+import { orderDeliveryStatus, orderLineCost, packConversion } from "#lib/orders.ts";
 import type { OrderInput, OrderLineInput } from "#lib/schemas/order.ts";
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
@@ -53,8 +56,8 @@ export interface SaveOrderResult {
 export type OrderService = ReturnType<typeof createOrderService>;
 
 /**
- * Purchase orders: manual entry, purchase and delivery state, line corrections, and outstanding
- * supply. Nothing here changes stock; only the receipt service adds stock. Line prices and
+ * Purchase orders: manual entry, purchase state, line delivery state, line corrections, and
+ * outstanding supply. Nothing here changes stock; only the receipt service adds stock. Line prices and
  * actual purchase costs never change stock, reservations, or commitments. Corrections and
  * cancellations that lower a line's outstanding supply reduce its incoming project
  * commitments in the same transaction and return how many were reduced.
@@ -78,6 +81,15 @@ export function createOrderService(db: Database) {
     return line;
   }
 
+  /** The given lines of a placed or shipped order, each once. */
+  function requireDeliveryLines(orderId: number, lineIds: number[]): OrderLine[] {
+    if (requireOrder(orderId).status === "draft") {
+      throw new InventoryError("Place the order before you mark lines delivered");
+    }
+    if (lineIds.length === 0) throw new InventoryError("Choose at least one line");
+    return [...new Set(lineIds)].map((lineId) => requireLine(orderId, lineId));
+  }
+
   function sameReference(order: OrderInput, id: number | null): Order[] {
     return order.reference ? listOrdersWithReference(db, order.supplier, order.reference, id) : [];
   }
@@ -99,9 +111,11 @@ export function createOrderService(db: Database) {
     /** Orders with their actual purchase cost totals per currency. */
     listOrders() {
       const costs = Map.groupBy(listLineCostFields(db), (line) => line.orderId);
+      const deliveries = Map.groupBy(listLineDeliveryFields(db), (line) => line.orderId);
       return listOrders(db).map((order) => ({
         ...order,
         costs: totalByCurrency((costs.get(order.id) ?? []).map(orderLineCost)),
+        delivery: orderDeliveryStatus(deliveries.get(order.id) ?? []),
       }));
     },
 
@@ -130,6 +144,7 @@ export function createOrderService(db: Database) {
       return {
         order,
         lines,
+        delivery: orderDeliveryStatus(lines),
         costs: totalByCurrency(lines.map((line) => line.cost)),
         commitments: listOrderLineCommitments(
           db,
@@ -185,26 +200,65 @@ export function createOrderService(db: Database) {
     },
 
     /**
-     * Record that a parcel arrived. Its lines wait for review; usable stock changes only when
-     * a receipt is recorded.
+     * Record that a parcel with the given lines arrived on `deliveredOn`. The lines wait for
+     * review; usable stock changes only when a receipt is recorded. A line that is already
+     * awaiting review gets the new date. Returns the number of lines marked.
      */
-    markDelivered(id: number, deliveredOn: string): void {
-      inTransaction(() => {
-        if (requireOrder(id).status === "draft") {
-          throw new InventoryError("Place the order before you mark it delivered");
+    markLinesDelivered(orderId: number, lineIds: number[], deliveredOn: string): number {
+      return inTransaction(() => {
+        const lines = requireDeliveryLines(orderId, lineIds);
+        const settled = lines.find((line) => line.outstanding === 0);
+        if (settled) {
+          throw new InventoryError(`${settled.partName} has no outstanding quantity to deliver`);
         }
-        updateOrderState(db, id, { deliveryState: "awaiting_review", deliveredOn });
+        updateLineDelivery(
+          db,
+          lines.map((line) => line.id),
+          "awaiting_review",
+          deliveredOn
+        );
+        return lines.length;
       });
     },
 
-    /** Record that the delivered parcel has been reviewed. */
-    finishReview(id: number): void {
-      inTransaction(() => {
-        const order = requireOrder(id);
-        if (order.deliveryState !== "awaiting_review") {
-          throw new InventoryError("This order has no delivery awaiting review");
+    /**
+     * Mark every line that is not delivered and has outstanding quantity delivered on
+     * `deliveredOn`. Returns the number of lines marked.
+     */
+    markOutstandingDelivered(orderId: number, deliveredOn: string): number {
+      return inTransaction(() => {
+        const lineIds = listOrderLines(db, orderId)
+          .filter((line) => line.outstanding > 0 && line.deliveryState === "not_delivered")
+          .map((line) => line.id);
+        if (lineIds.length === 0) {
+          requireOrder(orderId);
+          throw new InventoryError("No outstanding line is waiting for delivery");
         }
-        updateOrderState(db, id, { deliveryState: "reviewed" });
+        requireDeliveryLines(orderId, lineIds);
+        updateLineDelivery(db, lineIds, "awaiting_review", deliveredOn);
+        return lineIds.length;
+      });
+    },
+
+    /**
+     * Record that the delivered lines have been reviewed. Usable stock changes only through
+     * receipts, which also finish the review of the lines they receive. Outstanding quantity of
+     * a reviewed line is still expected and can be received later. Returns the number of lines
+     * reviewed.
+     */
+    finishLineReview(orderId: number, lineIds: number[]): number {
+      return inTransaction(() => {
+        const lines = requireDeliveryLines(orderId, lineIds);
+        const notDelivered = lines.find((line) => line.deliveryState !== "awaiting_review");
+        if (notDelivered) {
+          throw new InventoryError(`${notDelivered.partName} is not awaiting review`);
+        }
+        updateLineDelivery(
+          db,
+          lines.map((line) => line.id),
+          "reviewed"
+        );
+        return lines.length;
       });
     },
 
@@ -237,6 +291,7 @@ export function createOrderService(db: Database) {
           );
         }
         updateOrderLine(db, lineId, input);
+        settleLineDelivery(db, lineId);
         return input.partId === line.partId
           ? fitOrderLineCommitments(db, lineId)
           : deleteOrderLineCommitments(db, lineId);
@@ -266,6 +321,7 @@ export function createOrderService(db: Database) {
           throw new InventoryError("This line has no outstanding quantity to cancel");
         }
         addToLineTotals(db, lineId, { received: 0, damaged: 0, cancelled: line.outstanding });
+        settleLineDelivery(db, lineId);
         return fitOrderLineCommitments(db, lineId);
       });
     },

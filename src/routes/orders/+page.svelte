@@ -1,6 +1,6 @@
 <script lang="ts">
   import MoneyTotals from '#lib/components/MoneyTotals.svelte';
-  import { DELIVERY_LABELS } from '#lib/orders.ts';
+  import { ORDER_DELIVERY_LABELS } from '#lib/orders.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -56,7 +56,7 @@
               <td>{order.reference ?? '—'}</td>
               <td>{order.placedOn ?? '—'}</td>
               <td>{order.expectedOn ?? '—'}</td>
-              <td>{DELIVERY_LABELS[order.deliveryState]}</td>
+              <td>{ORDER_DELIVERY_LABELS[order.delivery]}</td>
               <td class="text-right">{order.openLineCount} of {order.lineCount}</td>
               <td class="text-right"><MoneyTotals costs={order.costs} unknownLabel="no price" /></td>
             </tr>

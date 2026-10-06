@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { DeliveryState, OrderStatus } from "#lib/orders.ts";
+import type { DeliveryState, LineDelivery, OrderStatus } from "#lib/orders.ts";
 
 // Type aliases (not interfaces) so they can be passed as named SQL bindings.
 export type OrderFields = {
@@ -15,8 +15,6 @@ export type Order = OrderFields & {
   status: OrderStatus;
   placedOn: string | null;
   shippedOn: string | null;
-  deliveryState: DeliveryState;
-  deliveredOn: string | null;
   createdAt: string;
 };
 
@@ -52,6 +50,9 @@ export type OrderLine = OrderLineFields & {
   cancelledQuantity: number;
   /** quantity - received - damaged - cancelled. */
   outstanding: number;
+  deliveryState: DeliveryState;
+  /** Date of the line's latest delivery. */
+  deliveredOn: string | null;
 };
 
 /** Outstanding supply of one line of a placed or shipped order, in the part's base unit. */
@@ -100,8 +101,8 @@ export type NewReceiptLine = {
 };
 
 const ORDER_COLUMNS = `o.id, o.supplier, o.reference, o.status, o.placed_on AS placedOn,
-  o.shipped_on AS shippedOn, o.expected_on AS expectedOn, o.delivery_state AS deliveryState,
-  o.delivered_on AS deliveredOn, o.tracking_url AS trackingUrl, o.notes, o.created_at AS createdAt`;
+  o.shipped_on AS shippedOn, o.expected_on AS expectedOn, o.tracking_url AS trackingUrl, o.notes,
+  o.created_at AS createdAt`;
 
 const OUTSTANDING = `max(ol.quantity - ol.received_quantity - ol.damaged_quantity
   - ol.cancelled_quantity, 0)`;
@@ -112,7 +113,7 @@ const LINE_SELECT = `SELECT ol.id, ol.order_id AS orderId, ol.part_id AS partId,
     ol.purchase_unit AS purchaseUnit, ol.pack_quantity AS packQuantity, ol.quantity,
     ol.received_quantity AS receivedQuantity, ol.damaged_quantity AS damagedQuantity,
     ol.cancelled_quantity AS cancelledQuantity, ${OUTSTANDING} AS outstanding,
-    ol.unit_price AS unitPrice, ol.currency, ol.notes
+    ol.delivery_state AS deliveryState, ol.delivered_on AS deliveredOn, ol.unit_price AS unitPrice, ol.currency, ol.notes
   FROM order_lines ol
   JOIN parts p ON p.id = ol.part_id`;
 
@@ -140,18 +141,16 @@ export function updateOrder(db: Database, id: number, fields: OrderFields): void
   ).run({ ...fields, id });
 }
 
-/** Set the purchase and delivery state columns that are given. */
+/** Set the purchase state columns that are given. */
 export function updateOrderState(
   db: Database,
   id: number,
-  state: Partial<Pick<Order, "status" | "placedOn" | "shippedOn" | "deliveryState" | "deliveredOn">>
+  state: Partial<Pick<Order, "status" | "placedOn" | "shippedOn">>
 ): void {
   const columns = {
     status: "status",
     placedOn: "placed_on",
     shippedOn: "shipped_on",
-    deliveryState: "delivery_state",
-    deliveredOn: "delivered_on",
   } as const;
   const keys = (Object.keys(state) as (keyof typeof columns)[]).filter(
     (key) => state[key] !== undefined
@@ -198,6 +197,18 @@ export function listLineCostFields(db: Database): LineCostFields[] {
     .query<LineCostFields, []>(
       `SELECT order_id AS orderId, unit_price AS unitPrice, currency, quantity,
          cancelled_quantity AS cancelledQuantity, pack_quantity AS packQuantity
+       FROM order_lines ORDER BY id`
+    )
+    .all();
+}
+
+/** Quantities and delivery state of every order line. */
+export function listLineDeliveryFields(db: Database): (LineDelivery & { orderId: number })[] {
+  return db
+    .query<LineDelivery & { orderId: number }, []>(
+      `SELECT order_id AS orderId, quantity, received_quantity AS receivedQuantity,
+         damaged_quantity AS damagedQuantity, cancelled_quantity AS cancelledQuantity,
+         delivery_state AS deliveryState
        FROM order_lines ORDER BY id`
     )
     .all();
@@ -298,6 +309,60 @@ export function addToLineTotals(
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = ?`,
     [amounts.received, amounts.damaged, amounts.cancelled, id]
+  );
+}
+
+/** Set the delivery state of the given lines. `deliveredOn` is kept when it is undefined. */
+export function updateLineDelivery(
+  db: Database,
+  ids: number[],
+  deliveryState: DeliveryState,
+  deliveredOn?: string
+): void {
+  db.run(
+    `UPDATE order_lines SET delivery_state = ?, delivered_on = coalesce(?, delivered_on),
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id IN (SELECT value FROM json_each(?))`,
+    [deliveryState, deliveredOn ?? null, JSON.stringify(ids)]
+  );
+}
+
+/**
+ * Record that a receipt on `receivedOn` delivered and reviewed some of a line, after its totals
+ * are updated. A line awaiting review keeps the date it was marked delivered, unless the
+ * receipt is earlier; any other line was delivered on the receipt date. A line with nothing
+ * outstanding becomes reviewed. Otherwise the rest is still expected, so the line returns to
+ * not delivered and keeps this delivery's date.
+ */
+export function recordReceiptDelivery(db: Database, id: number, receivedOn: string): void {
+  db.run(
+    `UPDATE order_lines SET
+       delivered_on = CASE WHEN delivery_state = 'awaiting_review'
+         THEN min(coalesce(delivered_on, ?1), ?1) ELSE ?1 END,
+       delivery_state = CASE
+         WHEN quantity - received_quantity - damaged_quantity - cancelled_quantity = 0
+         THEN 'reviewed' ELSE 'not_delivered' END,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ?2`,
+    [receivedOn, id]
+  );
+}
+
+/**
+ * Mark a line reviewed when a cancellation or correction leaves it with nothing outstanding
+ * after some of it arrived. A line with nothing arrived is fully cancelled and is ignored by
+ * the order's delivery status.
+ */
+export function settleLineDelivery(db: Database, id: number): void {
+  db.run(
+    `UPDATE order_lines SET delivery_state = 'reviewed',
+       delivered_on = coalesce(delivered_on, (
+         SELECT max(r.received_on) FROM receipt_lines rl JOIN receipts r ON r.id = rl.receipt_id
+         WHERE rl.order_line_id = order_lines.id)),
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ? AND delivery_state <> 'reviewed' AND received_quantity + damaged_quantity > 0
+       AND quantity - received_quantity - damaged_quantity - cancelled_quantity = 0`,
+    [id]
   );
 }
 
