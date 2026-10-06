@@ -239,7 +239,7 @@
       const date = orderDate(cardText);
       const productLinks = [
         ...card.querySelectorAll(
-          '.yohtmlc-product-title, a[href*="/dp/"], a[href*="/gp/product/"], [data-component="ordered-item"] a'
+          '.yohtmlc-product-title a, a[href*="/dp/"], a[href*="/gp/product/"], [data-component="ordered-item"] a'
         ),
       ].filter((link) => {
         const label = clean(link.getAttribute("title")) || text(link);
