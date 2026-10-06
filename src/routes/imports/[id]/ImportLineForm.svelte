@@ -279,7 +279,7 @@
           disabled={!cleanupAvailable || cleaning}
           title={cleanupAvailable ? undefined : 'OPENAI_API_KEY is not set'}
         >
-          AI Clean up
+          AI clean up
         </button>
       {/if}
       <span role="status" class="flex items-center gap-2 text-sm">
