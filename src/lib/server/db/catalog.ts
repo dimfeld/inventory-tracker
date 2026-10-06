@@ -326,7 +326,7 @@ export function findSupplierPart(
 
 /**
  * Move every reference to part `sourceId` onto part `destinationId`, then delete the source.
- * The source's own details (attributes, aliases, tags, supplier SKUs) are deleted, not moved.
+ * Aliases and supplier SKUs of the source move too; its attributes and tags are deleted.
  * Both parts must use the same base unit, because the moved quantities are in that unit.
  * Run it in a transaction.
  */
@@ -335,9 +335,16 @@ export function mergePartInto(db: Database, sourceId: number, destinationId: num
   const run = (sql: string) => db.query<unknown, typeof ids>(sql).run(ids);
   // Details that belong only to the source part.
   db.run("DELETE FROM part_attributes WHERE part_id = ?", [sourceId]);
-  db.run("DELETE FROM part_aliases WHERE part_id = ?", [sourceId]);
   db.run("DELETE FROM part_tags WHERE part_id = ?", [sourceId]);
-  db.run("DELETE FROM supplier_parts WHERE part_id = ?", [sourceId]);
+
+  // Aliases and supplier SKUs still identify the part. The destination's own rows win.
+  run(`DELETE FROM part_aliases WHERE part_id = $source AND alias IN
+       (SELECT alias FROM part_aliases WHERE part_id = $destination)`);
+  run("UPDATE part_aliases SET part_id = $destination WHERE part_id = $source");
+  run(`DELETE FROM supplier_parts WHERE part_id = $source AND EXISTS
+       (SELECT 1 FROM supplier_parts d WHERE d.part_id = $destination
+          AND d.supplier = supplier_parts.supplier AND d.sku = supplier_parts.sku)`);
+  run("UPDATE supplier_parts SET part_id = $destination WHERE part_id = $source");
 
   // A BOM line that already approves the destination keeps that choice.
   run(`DELETE FROM bom_part_choices WHERE part_id = $source AND bom_line_id IN

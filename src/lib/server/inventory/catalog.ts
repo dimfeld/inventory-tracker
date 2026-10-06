@@ -316,8 +316,8 @@ export function createCatalogService(db: Database) {
 
     /**
      * Merge a duplicate part into another part. Stock history, orders, BOM rows, reservations,
-     * and import lines of the source move to the destination. The destination keeps its own
-     * details; the attributes, aliases, tags, and supplier SKUs of the source are deleted.
+     * import lines, aliases, and supplier SKUs of the source move to the destination. The
+     * destination keeps its own attributes and tags; those of the source are deleted.
      */
     mergePart(sourceId: number, destinationId: number): void {
       db.transaction(() => {

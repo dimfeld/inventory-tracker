@@ -35,7 +35,7 @@ function setup() {
     partInput({
       name: "M3 x 8 screw",
       attributes: [{ key: "head", label: "Head", value: "Button head" }],
-      aliases: ["M3x8"],
+      aliases: ["M3x8", "M3 SHCS"],
       tags: ["dupe"],
       supplierParts: [
         {
@@ -97,12 +97,12 @@ describe("part merge", () => {
     expect(ctx.orders.getOrderDetails(ctx.orderId)!.lines[0].partId).toBe(ctx.keep);
     expect(partIdsOf(ctx, "bom_lines")).toEqual([{ partId: ctx.keep }]);
 
-    // The destination keeps only its own details.
+    // Aliases and supplier SKUs move without duplicates; attributes and tags stay the destination's.
     const details = ctx.catalog.getPartDetails(ctx.keep)!;
     expect(details.attributes.map((a) => a.rawValue)).toEqual(["Socket head"]);
-    expect(details.aliases).toEqual(["M3 SHCS"]);
+    expect(details.aliases.toSorted()).toEqual(["M3 SHCS", "M3x8"]);
     expect(details.tags).toEqual(["metric"]);
-    expect(details.supplierParts.map((s) => s.sku)).toEqual(["BD-1"]);
+    expect(details.supplierParts.map((s) => s.sku).toSorted()).toEqual(["BD-1", "BD-2"]);
   });
 
   it("combines reservations and part choices that the destination already has", () => {

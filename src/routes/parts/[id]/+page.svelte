@@ -284,10 +284,10 @@
   <h2 class="section-title">Merge into another part</h2>
   <div class="card max-w-xl space-y-3 text-sm">
     <p class="text-gray-600">
-      Use this when this part is a duplicate. Its stock history, orders, project rows, and
-      reservations move to the part you choose, and then this part is deleted. The attributes,
-      aliases, tags, and supplier references of this part are not kept. Only parts with the same
-      base unit ({part.baseUnit}) can be chosen.
+      Use this when this part is a duplicate. Its stock history, orders, project rows,
+      reservations, aliases, and supplier references move to the part you choose, and then this
+      part is deleted. The attributes and tags of this part are not kept. Only parts with the
+      same base unit ({part.baseUnit}) can be chosen.
     </p>
     <form
       {...mergePart.enhance(async ({ submit }) => {
