@@ -956,6 +956,51 @@ export function createImportService(db: Database) {
       });
     },
 
+    /**
+     * Make the line a new part that starts as a copy of an existing part, such as an M5x16
+     * screw from the M5x12 screw, so that the new part has the same category and attributes.
+     * The line keeps its description, identifiers, notes, unit, and manufacturer when it has
+     * them, and its attribute values (also the ones they imply) replace the copied values of the
+     * same attribute. Returns the name of the copied part.
+     */
+    copyPartToLine(id: number, lineId: number, partId: number): string {
+      return inTransaction(() => {
+        requireOpen(id);
+        const line = requireLine(id, lineId);
+        const copy = catalog.copyPartInput(partId);
+        if (!copy) throw new NotFoundError(`Part ${partId} does not exist`);
+        const f = line.fields;
+        // A line thread such as M5x16 also states the length.
+        const own = new Set(
+          expandAttributes(
+            f.attributes.map((a) => ({
+              key: normalizeAttributeKey(a.key),
+              label: a.key,
+              value: a.value,
+            }))
+          ).map((a) => a.key)
+        );
+        updateLine(db, lineId, {
+          groupId: line.groupId,
+          resolution: "new",
+          partId: null,
+          fields: {
+            ...f,
+            categoryId: copy.categoryId,
+            unit: f.unit ?? copy.baseUnit,
+            manufacturer: f.manufacturer ?? copy.manufacturer,
+            attributes: [
+              ...copy.attributes
+                .filter((a) => !own.has(a.key))
+                .map((a) => ({ key: a.key, value: a.value })),
+              ...f.attributes,
+            ],
+          },
+        });
+        return copy.name;
+      });
+    },
+
     removeLine(id: number, lineId: number): void {
       inTransaction(() => {
         requireOpen(id);

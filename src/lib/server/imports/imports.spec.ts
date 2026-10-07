@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { emptyLineFields, type ImportLineFields } from "#lib/imports.ts";
+import { EMPTY_HEADER, emptyLineFields, type ImportLineFields } from "#lib/imports.ts";
 import { getImport } from "#lib/server/db/imports.ts";
 import { listBomLines, listComponents } from "#lib/server/db/projects.ts";
+import { categoryIdByPath } from "#lib/server/inventory/fixtures.ts";
 import { opId } from "#lib/server/inventory/test-helpers.ts";
 import * as bomFlat from "./fixtures/bom-flat";
 import * as bomSections from "./fixtures/bom-sections";
@@ -504,6 +505,77 @@ describe("manual lines", () => {
       expect(inventoryCounts(ctx.db)).toEqual(before);
     }
   );
+});
+
+describe("copy a part into a line", () => {
+  it.each(["order", "project"] as const)(
+    "makes a %s line a new part with the category and attributes of the part",
+    (kind) => {
+      const ctx = createTestImports();
+      const id = ctx.imports.createImport({ kind, sourceType: "text", sourceText: "M3x12 screws" });
+      const lineId = ctx.imports.addLine(id, {
+        fields: {
+          ...emptyLineFields("M3 × 12 pan head screw"),
+          supplierSku: "SKU-12",
+          attributes: [{ key: "thread", value: "M3x12" }],
+        },
+        groupId: null,
+        resolution: "existing",
+        partId: ctx.parts.resistor4k7,
+      });
+
+      expect(ctx.imports.copyPartToLine(id, lineId, ctx.parts.screw)).toBe("M3 × 8 pan head screw");
+
+      const line = review(ctx, id).lines[0];
+      expect(line).toMatchObject({ resolution: "new", partId: null });
+      expect(line.fields).toMatchObject({
+        description: "M3 × 12 pan head screw",
+        categoryId: categoryIdByPath(ctx.catalog, "Hardware / Fasteners / Screws"),
+        unit: "pcs",
+        supplierSku: "SKU-12",
+      });
+      // The copied length of 8 mm comes from the copied thread, so the line thread replaces it.
+      expect(line.fields.attributes).toEqual([
+        { key: "head", value: "pan" },
+        { key: "thread", value: "M3x12" },
+      ]);
+    }
+  );
+
+  it("commits the copy as a new part and leaves the copied part unchanged", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({ kind: "project", sourceType: "text", sourceText: "BOM" });
+    ctx.imports.updateHeader(id, { ...EMPTY_HEADER, projectName: "Robot" });
+    const lineId = ctx.imports.addLine(id, {
+      fields: {
+        ...emptyLineFields("M3 × 12 pan head screw"),
+        quantity: "4",
+        attributes: [{ key: "length", value: "12 mm" }],
+      },
+      groupId: null,
+      resolution: "new",
+      partId: null,
+    });
+    ctx.imports.copyPartToLine(id, lineId, ctx.parts.screw);
+    ctx.imports.commit(id, opId());
+
+    const createdPartId = review(ctx, id).lines[0].createdPartId!;
+    const created = ctx.catalog.getPartDetails(createdPartId)!;
+    expect(created.part).toMatchObject({ name: "M3 × 12 pan head screw", baseUnit: "pcs" });
+    expect(created.attributes.map((a) => [a.key, a.valueNumber ?? a.valueText])).toEqual([
+      ["head", "pan"],
+      ["length", 12],
+      ["thread", "M3"],
+    ]);
+    expect(ctx.catalog.getPartDetails(ctx.parts.screw)!.attributes).toHaveLength(3);
+  });
+
+  it("needs an open import and an existing part", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({ kind: "order", sourceType: "text", sourceText: "x" });
+    const lineId = ctx.imports.addLine(id);
+    expect(() => ctx.imports.copyPartToLine(id, lineId, 9999)).toThrow("Part 9999 does not exist");
+  });
 });
 
 const emptyUsage = { inputTokens: null, outputTokens: null, totalTokens: null };

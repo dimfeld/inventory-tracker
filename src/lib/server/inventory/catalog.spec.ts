@@ -40,6 +40,53 @@ describe("catalog service", () => {
     expect(details.supplierParts).toMatchObject([{ sku: "91290A113", packQuantity: 100 }]);
   });
 
+  it("copies a part without its part number, aliases, and supplier references", () => {
+    const { catalog } = createTestInventory();
+    const screws = catalog.createCategory("Screws", null);
+    const id = catalog.createPart(
+      partInput({
+        name: "M5 × 12 socket-head screw",
+        categoryId: screws,
+        manufacturer: "Bossard",
+        partNumber: "BN610-M5x12",
+        notes: "Black oxide",
+        attributes: [
+          { key: "thread", label: "Thread", value: "M5" },
+          { key: "length", label: "Length", value: "12 mm" },
+        ],
+        aliases: ["M5x12 SHCS"],
+        tags: ["metric"],
+        supplierParts: [
+          {
+            id: null,
+            supplier: "McMaster",
+            sku: "91290A228",
+            url: null,
+            purchaseUnit: null,
+            packQuantity: null,
+          },
+        ],
+      })
+    );
+
+    expect(catalog.copyPartInput(id)).toEqual({
+      name: "M5 × 12 socket-head screw",
+      categoryId: screws,
+      baseUnit: "pcs",
+      manufacturer: "Bossard",
+      partNumber: null,
+      notes: "Black oxide",
+      attributes: [
+        { key: "length", label: "Length", value: "12 mm" },
+        { key: "thread", label: "Thread", value: "M5" },
+      ],
+      aliases: [],
+      tags: ["metric"],
+      supplierParts: [],
+    });
+    expect(catalog.copyPartInput(id + 1000)).toBeNull();
+  });
+
   it("updates supplier references in place and removes dropped ones", () => {
     const { catalog } = createTestInventory();
     const id = catalog.createPart(

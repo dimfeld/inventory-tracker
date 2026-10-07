@@ -93,7 +93,8 @@ export type LineIntent = (typeof LINE_INTENTS)[number];
 
 /**
  * The review line form. `id` is the line ID and `intent` the pressed button; `choosePart` saves
- * the line with that existing part, and `splitNotes` guides a split. Attribute rows without a key or value are ignored.
+ * the line with that existing part, `copyFrom` saves the line and makes it a new part copied
+ * from that part, and `splitNotes` guides a split. Attribute rows without a key or value are ignored.
  * `resolution` is existing, new, requirement, or empty; `partId` applies to existing.
  */
 export const lineFormSchema = z
@@ -102,6 +103,7 @@ export const lineFormSchema = z
     importId: z.number().int(),
     intent: z.enum(LINE_INTENTS).optional(),
     choosePart: formId("Choose a valid part"),
+    copyFrom: formId("Choose a valid part to copy"),
     splitNotes: optionalFormText,
     description: formText,
     quantity: optionalFormText,
@@ -161,6 +163,7 @@ export const lineFormSchema = z
       importId: input.importId,
       intent: input.intent ?? ("save" as LineIntent),
       splitNotes: input.splitNotes,
+      copyFrom: input.copyFrom,
       // A chosen candidate saves the line as that existing part.
       edit:
         input.choosePart === null

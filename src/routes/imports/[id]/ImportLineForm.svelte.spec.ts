@@ -216,13 +216,45 @@ describe("ImportLineForm.svelte", () => {
     await expect.element(page.getByText("Part: 10k resistor 0805 — pcs")).toBeInTheDocument();
     const search = page.getByRole("combobox", { name: /Search the catalog for the existing part/ });
     await search.fill("RC0603");
-    await page.getByRole("listbox").getByRole("option", { name: /4.7k resistor 0603/ }).click();
+    await page
+      .getByRole("listbox")
+      .getByRole("option", { name: /4.7k resistor 0603/ })
+      .click();
     await expect
       .element(page.getByText("Part: 4.7k resistor 0603 (RC0603-4K7) — pcs"))
       .toBeInTheDocument();
 
     await page.getByRole("button", { name: "Save line" }).click();
     await expect.poll(() => submissions.length).toBe(1);
-    expect(submissions[0]).toMatchObject({ id: 8, intent: "save", resolution: "existing", partId: "2" });
+    expect(submissions[0]).toMatchObject({
+      id: 8,
+      intent: "save",
+      resolution: "existing",
+      partId: "2",
+    });
+  });
+  it("copies a chosen catalog part into a new-part line", async () => {
+    const base = props(saved, 9);
+    render(ImportLineForm, {
+      ...base,
+      line: { ...base.line, resolution: "new" },
+      options: {
+        ...base.options,
+        parts: [
+          { id: 1, name: "M5 × 12 socket-head screw", baseUnit: "pcs", partNumber: null },
+          { id: 2, name: "4.7k resistor 0603", baseUnit: "pcs", partNumber: null },
+        ],
+      },
+    });
+
+    const search = page.getByRole("combobox", { name: /Search the catalog for a part to copy/ });
+    await search.fill("M5");
+    await page
+      .getByRole("listbox")
+      .getByRole("option", { name: /M5 × 12 socket-head screw/ })
+      .click();
+    await expect.poll(() => submissions.length).toBe(1);
+    expect(submissions[0]).toMatchObject({ id: 9, copyFrom: "1", resolution: "new" });
+    expect(submissions[0].intent).toBeUndefined();
   });
 });

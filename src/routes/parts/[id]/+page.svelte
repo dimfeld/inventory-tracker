@@ -84,6 +84,7 @@
   <span class="text-lg text-gray-600">{formatQuantity(total, part.baseUnit)} in stock</span>
   <div class="flex gap-2 sm:ml-auto">
     <a href="/parts/{part.id}/edit" class="btn-secondary">Edit</a>
+    <a href="/parts/new?from={part.id}" class="btn-secondary">Copy</a>
     <form method="POST" action={part.archivedAt ? '?/restore' : '?/archive'} use:enhance>
       <button class="btn-secondary">{part.archivedAt ? 'Restore' : 'Archive'}</button>
     </form>

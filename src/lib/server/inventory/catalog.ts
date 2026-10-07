@@ -43,6 +43,7 @@ import {
 } from "#lib/attributes.ts";
 import { applicableAttributeKeys, categoryOptions } from "#lib/categories.ts";
 import type { AttributeInput, PartInput } from "#lib/schemas/part.ts";
+import { assertUnit } from "#lib/units.ts";
 import {
   listAttributesOfParts,
   listFacetDefinitions,
@@ -371,6 +372,33 @@ export function createCatalogService(db: Database) {
           .filter((s) => s.reserved > 0)
           .map(({ locationId, reserved }) => ({ locationId, reserved })),
         movements: listPartMovements(db, id),
+      };
+    },
+
+    /**
+     * The input of a new part that starts as a copy of part `id`: the same name, category,
+     * base unit, manufacturer, attributes, tags, and notes. Identifiers of that one part (the
+     * manufacturer part number, aliases, and supplier references) are not copied. Null when
+     * the part does not exist.
+     */
+    copyPartInput(id: number): PartInput | null {
+      const part = getPart(db, id);
+      if (!part) return null;
+      return {
+        name: part.name,
+        categoryId: part.categoryId,
+        baseUnit: assertUnit(part.baseUnit),
+        manufacturer: part.manufacturer,
+        partNumber: null,
+        notes: part.notes,
+        attributes: listPartAttributes(db, id).map((a) => ({
+          key: a.key,
+          label: a.label,
+          value: a.rawValue,
+        })),
+        aliases: [],
+        tags: listPartTags(db, id),
+        supplierParts: [],
       };
     },
 

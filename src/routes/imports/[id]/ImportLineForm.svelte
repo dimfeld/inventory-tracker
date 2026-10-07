@@ -52,6 +52,7 @@
   let aiRequest = $state<'cleanup' | 'split' | null>(null);
   let splitDialog = $state<HTMLDialogElement>();
   let choosePart = $state<HTMLButtonElement>()!;
+  let copyPart = $state<HTMLButtonElement>()!;
 
   const f = $derived(line.fields);
   const attributeRows = $derived([...f.attributes, { key: '', value: '' }, { key: '', value: '' }]);
@@ -286,6 +287,21 @@
         <p class="text-sm text-gray-600">
           The commit creates a part from the description, category, unit, identifiers, and attributes.
         </p>
+        {#if !readonly}
+          <SearchSelect
+            label="Search the catalog for a part to copy into line {number}"
+            placeholder="Copy the category and attributes from a part"
+            items={options.parts}
+            key={(part) => part.id}
+            text={(part) => `${part.name} ${part.partNumber ?? ''}`}
+            onselect={(part) => {
+              copyPart.value = String(part.id);
+              copyPart.form?.requestSubmit(copyPart);
+            }}
+          >
+            {#snippet option(part)}{@render partLabel(part)}{/snippet}
+          </SearchSelect>
+        {/if}
       {/if}
     </fieldset>
   </fieldset>
@@ -346,6 +362,14 @@
         hidden
         tabindex="-1"
         aria-hidden="true">Use this part</button
+      >
+      <!-- Choosing a part to copy submits the form with this button. -->
+      <button
+        bind:this={copyPart}
+        {...fields.copyFrom.as('submit', '')}
+        hidden
+        tabindex="-1"
+        aria-hidden="true">Copy this part</button
       >
       <button {...fields.intent.as('submit', 'remove')} class="btn-secondary" disabled={lineForm.pending > 0}>
         Remove line
