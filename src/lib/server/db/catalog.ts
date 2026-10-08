@@ -119,6 +119,18 @@ export function getPart(db: Database, id: number): Part | null {
     .get(id);
 }
 
+/** An active part with this name, ignoring case and surrounding spaces. */
+export function findActivePartByName(db: Database, name: string): Part | null {
+  return db
+    .query<Part, [string]>(
+      `SELECT ${PART_COLUMNS} FROM parts p
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE p.archived_at IS NULL AND lower(trim(p.name)) = lower(trim(?))
+       LIMIT 1`
+    )
+    .get(name);
+}
+
 export function insertPart(db: Database, fields: PartFields): number {
   const row = db
     .query<{ id: number }, PartFields>(

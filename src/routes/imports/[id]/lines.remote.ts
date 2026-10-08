@@ -23,7 +23,9 @@ export const editLine = form(
       imports().updateLine(importId, lineId, edit);
       if (copyFrom !== null) {
         const name = imports().copyPartToLine(importId, lineId, copyFrom);
-        return { text: `Copied from ${name}. Change the attributes that are different.` };
+        return {
+          text: `Copied from ${name}. Change the name and the attributes that are different.`,
+        };
       }
       if (intent === "save") return { text: "Line saved." };
 

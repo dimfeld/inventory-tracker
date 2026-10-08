@@ -528,8 +528,11 @@ describe("copy a part into a line", () => {
 
       const line = review(ctx, id).lines[0];
       expect(line).toMatchObject({ resolution: "new", partId: null });
+      expect(line.problems).toContain(
+        'A part named "M3 × 8 pan head screw" already exists. Change the description, which is the name of the new part'
+      );
       expect(line.fields).toMatchObject({
-        description: "M3 × 12 pan head screw",
+        description: "M3 × 8 pan head screw",
         categoryId: categoryIdByPath(ctx.catalog, "Hardware / Fasteners / Screws"),
         unit: "pcs",
         supplierSku: "SKU-12",
@@ -542,7 +545,7 @@ describe("copy a part into a line", () => {
     }
   );
 
-  it("commits the copy as a new part and leaves the copied part unchanged", () => {
+  it("commits the copy as a new part after a name change and leaves the copied part unchanged", () => {
     const ctx = createTestImports();
     const id = ctx.imports.createImport({ kind: "project", sourceType: "text", sourceText: "BOM" });
     ctx.imports.updateHeader(id, { ...EMPTY_HEADER, projectName: "Robot" });
@@ -557,6 +560,11 @@ describe("copy a part into a line", () => {
       partId: null,
     });
     ctx.imports.copyPartToLine(id, lineId, ctx.parts.screw);
+    expect(() => ctx.imports.commit(id, opId())).toThrow(
+      'Line 1: A part named "M3 × 8 pan head screw" already exists'
+    );
+    edit(ctx, id, 0, { fields: { description: "M3 × 12 pan head screw" } });
+    expect(review(ctx, id).lines[0].problems).toEqual([]);
     ctx.imports.commit(id, opId());
 
     const createdPartId = review(ctx, id).lines[0].createdPartId!;
@@ -1149,6 +1157,8 @@ describe("BOM import", () => {
       projectName: "Flat board",
       notes: null,
     });
+    // The catalog has this part already, so a new part with its name cannot be committed.
+    edit(ctx, ctx.id, 0, { resolution: "existing", partId: ctx.parts.resistor10k });
     const { projectId } = ctx.imports.commit(ctx.id, opId());
     expect(listComponents(ctx.db, projectId!)).toEqual([]);
     expect(listBomLines(ctx.db, projectId!).map((r) => r.componentId)).toEqual([null, null, null]);

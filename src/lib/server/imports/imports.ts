@@ -17,6 +17,7 @@ import { describePackConversion } from "#lib/orders.ts";
 import { normalizeAttributeKey, type PartInput } from "#lib/schemas/part.ts";
 import type { BomLineInput } from "#lib/schemas/project.ts";
 import {
+  findActivePartByName,
   getAttributeDefinition,
   getCategory,
   getPart,
@@ -136,8 +137,17 @@ export function sourceHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/** Line problems that block the commit. Other uncertainty is shown as a warning. */
-export function lineProblems(kind: ImportKind, line: LineEdit, part: Part | null): string[] {
+/**
+ * Line problems that block the commit. Other uncertainty is shown as a warning. `sameName` is
+ * the active part whose name is the line description, if any: a new part must have a different
+ * name, such as after a copy of that part.
+ */
+export function lineProblems(
+  kind: ImportKind,
+  line: LineEdit,
+  part: Part | null,
+  sameName: Part | null
+): string[] {
   const f = line.fields;
   const problems: string[] = [];
   if (!f.description.trim()) problems.push("Description is required");
@@ -155,6 +165,11 @@ export function lineProblems(kind: ImportKind, line: LineEdit, part: Part | null
   }
   if (line.resolution === "new" && !(f.unit && isUnit(f.unit))) {
     problems.push("Choose the base unit of the new part");
+  }
+  if (line.resolution === "new" && sameName) {
+    problems.push(
+      `A part named "${sameName.name}" already exists. Change the description, which is the name of the new part`
+    );
   }
 
   if (kind === "order") {
@@ -409,6 +424,11 @@ export function createImportService(db: Database) {
       if (edit.partId === null) throw new InventoryError("Choose the existing part");
       if (!getPart(db, edit.partId)) throw new NotFoundError(`Part ${edit.partId} does not exist`);
     }
+  }
+
+  /** The active part with the name of a new-part line. */
+  function sameNameOf(line: LineEdit): Part | null {
+    return line.resolution === "new" ? findActivePartByName(db, line.fields.description) : null;
   }
 
   function storedEdit(edit: LineEdit) {
@@ -959,7 +979,8 @@ export function createImportService(db: Database) {
     /**
      * Make the line a new part that starts as a copy of an existing part, such as an M5x16
      * screw from the M5x12 screw, so that the new part has the same category and attributes.
-     * The line keeps its description, identifiers, notes, unit, and manufacturer when it has
+     * The line gets the name of the part as its description, to change before the commit. The
+     * line keeps its identifiers, notes, unit, and manufacturer when it has
      * them, and its attribute values (also the ones they imply) replace the copied values of the
      * same attribute. Returns the name of the copied part.
      */
@@ -986,6 +1007,8 @@ export function createImportService(db: Database) {
           partId: null,
           fields: {
             ...f,
+            // The copied name keeps similar parts named alike; the commit needs a change to it.
+            description: copy.name,
             categoryId: copy.categoryId,
             unit: f.unit ?? copy.baseUnit,
             manufacturer: f.manufacturer ?? copy.manufacturer,
@@ -1090,7 +1113,7 @@ export function createImportService(db: Database) {
               formatAttributeValue(c.normalization, c) ?? c.rawValue,
             ])
           ),
-          problems: lineProblems(record.kind, line, part),
+          problems: lineProblems(record.kind, line, part, sameNameOf(line)),
         };
       });
       return {
@@ -1161,7 +1184,8 @@ export function createImportService(db: Database) {
             lineProblems(
               record.kind,
               line,
-              line.partId === null ? null : getPart(db, line.partId)
+              line.partId === null ? null : getPart(db, line.partId),
+              sameNameOf(line)
             ).map((problem) => `Line ${index + 1}: ${problem}`)
           ),
         ];
