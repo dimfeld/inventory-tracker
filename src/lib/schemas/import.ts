@@ -88,7 +88,7 @@ export function parseHeaderForm(form: FormData): ParseResult<ImportHeader> {
 }
 
 /** What a submission of the review line form does. */
-export const LINE_INTENTS = ["save", "remove", "cleanup", "split"] as const;
+export const LINE_INTENTS = ["save", "remove", "duplicate", "cleanup", "split"] as const;
 export type LineIntent = (typeof LINE_INTENTS)[number];
 
 /**

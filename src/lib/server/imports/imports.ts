@@ -836,8 +836,8 @@ export function createImportService(db: Database) {
     },
 
     /**
-     * Ask the extractor to split one order line into the different items it holds, such as the
-     * values of an assortment pack. The line becomes the first item and the other items are
+     * Ask the extractor to split one line into the different items it holds, such as the
+     * values of an assortment pack or a BOM row of screws with matching nuts. The line becomes the first item and the other items are
      * new lines after it. Each item commits as a new part until the owner matches it; the
      * owner's notes guide the split. A failed call, an invalid answer, or an answer with fewer
      * than two items changes nothing.
@@ -849,7 +849,6 @@ export function createImportService(db: Database) {
       ownerNotes: string | null
     ): Promise<SplitOutcome> {
       const record = requireOpen(id);
-      if (record.kind !== "order") throw new InventoryError("Only order lines can be split");
       const line = requireLine(id, lineId);
       const context = loadCatalogContext(db);
       const f = line.fields;
@@ -858,7 +857,7 @@ export function createImportService(db: Database) {
         extractor,
         {
           kind: "line_split",
-          system: splitSystemPrompt(context),
+          system: splitSystemPrompt(record.kind, context),
           prompt: splitPrompt(
             {
               supplier: record.header.supplier,
@@ -871,9 +870,10 @@ export function createImportService(db: Database) {
               attributes: f.attributes,
               notes: f.notes,
               quantity: f.quantity,
-              purchaseUnit: f.purchaseUnit,
-              packQuantity: f.packQuantity,
               baseUnit: f.unit,
+              ...(record.kind === "order"
+                ? { purchaseUnit: f.purchaseUnit, packQuantity: f.packQuantity }
+                : { referenceDesignators: f.referenceDesignators }),
             },
             ownerNotes
           ),
@@ -897,7 +897,7 @@ export function createImportService(db: Database) {
         requireOpen(id);
         // Apply to the line as it is now, in case it was saved during the call.
         const fresh = requireLine(id, lineId);
-        const [first, ...rest] = splitLine(context, fresh, parsed.data);
+        const [first, ...rest] = splitLine(record.kind, context, fresh, parsed.data);
         updateLineProposal(db, lineId, first);
         updateLine(db, lineId, {
           groupId: fresh.groupId,
@@ -1021,6 +1021,32 @@ export function createImportService(db: Database) {
           },
         });
         return copy.name;
+      });
+    },
+
+    /**
+     * Copy a line, with its fields, proposal, and resolution, to a new line right after it, so
+     * the owner can split the line by hand. Returns the ID of the new line.
+     */
+    duplicateLine(id: number, lineId: number): number {
+      return inTransaction(() => {
+        requireOpen(id);
+        const line = requireLine(id, lineId);
+        makeRoomAfter(db, id, line.position, 1);
+        return insertLine(
+          db,
+          id,
+          {
+            groupId: line.groupId,
+            sourceRow: line.sourceRow,
+            sourceExcerpt: line.sourceExcerpt,
+            proposal: line.proposal,
+            fields: line.fields,
+            resolution: line.resolution,
+            partId: line.partId,
+          },
+          line.position + 1
+        );
       });
     },
 

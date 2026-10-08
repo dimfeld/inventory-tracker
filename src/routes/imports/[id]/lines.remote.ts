@@ -5,8 +5,8 @@ import { classifier, extractor, imports } from "#lib/server/imports/index.ts";
 import { isUserError } from "#lib/server/inventory/index.ts";
 
 /**
- * The review form of one import line: save it, remove it, save it as a new part copied from an
- * existing part, or save it and let the model clean
+ * The review form of one import line: save it, remove it, save it and add a copy after it, save
+ * it as a new part copied from an existing part, or save it and let the model clean
  * up its name, category, and attributes and match it to a catalog part, or split it into the
  * different items it holds. Use one instance per
  * line with `editLine.for(lineId)`; each instance submits on its own, so several lines can be
@@ -28,6 +28,10 @@ export const editLine = form(
         };
       }
       if (intent === "save") return { text: "Line saved." };
+      if (intent === "duplicate") {
+        imports().duplicateLine(importId, lineId);
+        return { text: "Line saved and copied. The copy is the next line." };
+      }
 
       if (intent === "split") {
         const outcome = await imports().splitLine(importId, lineId, extractor(), splitNotes);

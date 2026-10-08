@@ -161,6 +161,24 @@ describe("ImportLineForm.svelte", () => {
     await expect.element(page.getByText("sending it to OpenAI for a split")).toBeVisible();
   });
 
+  it("offers an AI split, but not an AI clean up, on a BOM line", async () => {
+    render(ImportLineForm, { ...props(saved, 8), cleanupAvailable: true });
+    await expect.element(page.getByRole("button", { name: "AI split" })).toBeEnabled();
+    await expect.element(page.getByRole("button", { name: "AI clean up" })).not.toBeInTheDocument();
+  });
+
+  it("saves the line with its edits and asks for a copy", async () => {
+    render(ImportLineForm, props(saved, 9));
+    await description().fill("M3 screws and nuts");
+    await page.getByRole("button", { name: "Duplicate line" }).click();
+    await expect.poll(() => submissions.length).toBe(1);
+    expect(submissions[0]).toMatchObject({
+      id: 9,
+      intent: "duplicate",
+      description: "M3 screws and nuts",
+    });
+  });
+
   it("searches the catalog candidates and saves the chosen one as the existing part", async () => {
     const candidate = (id: number, name: string, status: "match" | "conflict") => ({
       part: { id, name },

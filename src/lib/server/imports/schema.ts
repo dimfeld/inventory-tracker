@@ -119,7 +119,10 @@ export const lineCleanupSchema = z.object({
     .describe("Fields that are missing, unclear, or contradictory, such as 'length'"),
 });
 
-/** One item of an order line that holds several different items, such as an assortment pack. */
+/**
+ * One item of a line that holds several different items, such as an assortment pack or a BOM
+ * row of screws with matching nuts.
+ */
 const splitItem = z.object({
   description: z
     .string()
@@ -132,7 +135,9 @@ const splitItem = z.object({
   purchaseQuantity: z
     .object({ value: z.number().int(), provenance })
     .nullable()
-    .describe("Purchase units of this item ordered; null when it is the line's quantity"),
+    .describe(
+      "Purchase units of this item ordered, or its required quantity in a BOM; null when it is the line's quantity"
+    ),
   packQuantity: z
     .object({ value: z.number().int(), provenance })
     .nullable()
@@ -143,7 +148,7 @@ const splitItem = z.object({
     .describe("Fields of this item that are missing, unclear, or contradictory"),
 });
 
-/** The split of one order line into the different items it holds. */
+/** The split of one line into the different items it holds. */
 export const lineSplitSchema = z.object({
   items: z.array(splitItem).describe("The different items of the line, in the order given"),
 });

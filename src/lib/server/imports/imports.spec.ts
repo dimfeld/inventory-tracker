@@ -805,7 +805,7 @@ ${line}`,
   });
 });
 
-describe("order line split", () => {
+describe("line split", () => {
   function assortmentOrder() {
     const ctx = createTestImports();
     const { ids } = ctx.imports.createCsvOrderBatch({
@@ -907,6 +907,73 @@ AliExpress,AE-9,M3 nut,1,each,1,pcs,,0.10,USD`,
       await ctx.imports.splitLine(ctx.id, ctx.lineId, fixtureExtractor({ items: "x" }), null)
     ).toMatchObject({ ok: false });
     expect(review(ctx, ctx.id).lines).toEqual(original);
+  });
+
+  it("splits a BOM row and keeps its quantity, unit, and reference designators", async () => {
+    const ctx = await parsedBom(bomFlat, "csv");
+    const screwLine = review(ctx, ctx.id).lines[2];
+    const part = (description: string, category: string, thread: string) => ({
+      ...item(description, "", null),
+      category: { value: category, provenance: "inferred" },
+      attributes: [{ key: "thread", value: thread, provenance: "source" }],
+      baseUnit: null,
+    });
+    const extractor = fixtureExtractor({
+      items: [
+        part("M3x8 pan head screw", "Hardware / Fasteners / Screws", "M3x8"),
+        {
+          ...part("M3 nut", "Hardware / Fasteners / Nuts", "M3"),
+          purchaseQuantity: { value: 6, provenance: "source" },
+        },
+      ],
+    });
+
+    expect(
+      await ctx.imports.splitLine(ctx.id, screwLine.id, extractor, "screws with matching nuts")
+    ).toEqual({ ok: true, lineCount: 2 });
+    expect(extractor.calls[0].system).toContain("bill of materials");
+    expect(extractor.calls[0].prompt).not.toContain("packQuantity");
+
+    const lines = review(ctx, ctx.id).lines;
+    expect(lines.map((l) => [l.fields.description, l.fields.quantity, l.fields.unit])).toEqual([
+      ["10k resistor 0805", "2", "pcs"],
+      ["1uF capacitor 0805", "1", "pcs"],
+      ["M3x8 pan head screw", "3", "pcs"],
+      ["M3 nut", "6", "pcs"],
+    ]);
+    expect(lines[3].fields).toMatchObject({
+      purchaseUnit: null,
+      packQuantity: null,
+      unitPrice: null,
+    });
+    expect(lines[3].proposal?.unresolved).not.toContain(SPLIT_PRICE_NOTE);
+  });
+});
+
+describe("duplicate a line", () => {
+  it("copies the line with its proposal and resolution to right after it", async () => {
+    const ctx = await parsedOrder();
+    const before = review(ctx, ctx.id).lines;
+    edit(ctx, ctx.id, 0, { resolution: "existing", partId: ctx.parts.screw });
+    const source = review(ctx, ctx.id).lines[0];
+
+    const copyId = ctx.imports.duplicateLine(ctx.id, source.id);
+
+    const lines = review(ctx, ctx.id).lines;
+    expect(lines.map((l) => l.id)).toEqual([
+      source.id,
+      copyId,
+      ...before.slice(1).map((l) => l.id),
+    ]);
+    const copy = lines[1];
+    expect(copy).toMatchObject({
+      fields: source.fields,
+      proposal: source.proposal,
+      resolution: "existing",
+      partId: ctx.parts.screw,
+      sourceRow: source.sourceRow,
+      sourceExcerpt: source.sourceExcerpt,
+    });
   });
 });
 

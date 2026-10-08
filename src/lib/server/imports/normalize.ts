@@ -328,11 +328,14 @@ export const SPLIT_PRICE_NOTE = "The price of the whole line is on the first lin
 
 /**
  * Split a line's current fields into one line per item of the split. Each item gets its own
- * identity and pack size. The ordered quantity, purchase unit, currency, and notes come from the
- * line unless the item gives its own quantity or base unit. The first line keeps the unit price,
- * and the other lines get a price of 0, so the order total does not change.
+ * identity. An order item gets its own pack size; the ordered quantity, purchase unit, currency,
+ * and notes come from the line unless the item gives its own quantity or base unit. The first
+ * order line keeps the unit price, and the other lines get a price of 0, so the order total does
+ * not change. A BOM item keeps the row's quantity, unit, reference designators, and notes unless
+ * it gives its own quantity or unit.
  */
 export function splitLine(
+  kind: ImportKind,
   context: CatalogContext,
   current: { fields: ImportLineFields; proposal: LineProposal | null },
   output: LineSplitOutput
@@ -341,19 +344,27 @@ export function splitLine(
   const kept = current.proposal?.provenance ?? {};
   return output.items.map((item, index) => {
     const b = new LineBuilder(context);
+    const order = kind === "order";
     b.fields = {
       ...emptyLineFields(item.description.trim()),
       quantity: f.quantity,
-      purchaseUnit: f.purchaseUnit,
-      currency: f.currency,
       notes: f.notes,
-      unitPrice: index === 0 || f.unitPrice === null ? f.unitPrice : "0",
+      ...(order
+        ? {
+            purchaseUnit: f.purchaseUnit,
+            currency: f.currency,
+            unitPrice: index === 0 || f.unitPrice === null ? f.unitPrice : "0",
+          }
+        : { referenceDesignators: f.referenceDesignators }),
     };
-    for (const field of ["quantity", "purchaseUnit", "currency", "notes"] as const) {
+    const keptFields = order
+      ? (["quantity", "purchaseUnit", "currency", "notes"] as const)
+      : (["quantity", "notes", "referenceDesignators"] as const);
+    for (const field of keptFields) {
       if (kept[field]) b.provenance[field] = kept[field];
     }
-    if (index === 0 && kept.unitPrice) b.provenance.unitPrice = kept.unitPrice;
-    if (index > 0 && f.unitPrice !== null) b.note(SPLIT_PRICE_NOTE);
+    if (order && index === 0 && kept.unitPrice) b.provenance.unitPrice = kept.unitPrice;
+    if (order && index > 0 && f.unitPrice !== null) b.note(SPLIT_PRICE_NOTE);
     b.provenance.description = "normalized";
 
     b.text("manufacturer", item.manufacturer);
@@ -376,7 +387,12 @@ export function splitLine(
       if (kept.unit) b.provenance.unit = kept.unit;
       baseUnit = f.unit === null ? null : normalizeUnit(f.unit);
     }
-    packFields(b, f.purchaseUnit, baseUnit, item.packQuantity);
+    if (order) {
+      packFields(b, f.purchaseUnit, baseUnit, item.packQuantity);
+    } else {
+      if (b.fields.quantity === null) b.note("Quantity is missing");
+      if (b.fields.unit === null) b.note("Unit is missing");
+    }
     return b.proposal(current.proposal?.groupName ?? null);
   });
 }
