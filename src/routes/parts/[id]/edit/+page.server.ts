@@ -17,6 +17,13 @@ export const load: PageServerLoad = ({ params }) => {
       aliases: details.aliases,
       tags: details.tags,
       supplierParts: details.supplierParts,
+      tracking: {
+        mode: details.part.trackingMode,
+        lengthKey: details.pieceDimensions?.length.key ?? null,
+        widthKey: details.pieceDimensions?.width?.key ?? null,
+        kerfMm: details.part.kerfMm,
+        minOffcutMm: details.part.minOffcutMm,
+      },
     },
     baseUnitLocked: catalog.hasMovements(details.part.id),
     categories: categoryOptions(catalog.listCategories()),

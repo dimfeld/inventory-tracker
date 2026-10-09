@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import type { TrackingInput } from '#lib/schemas/part.ts';
+
   export interface PartFormValues {
     name: string;
     categoryId: number | null;
@@ -16,11 +18,20 @@
       url: string | null;
       purchaseUnit: string | null;
       packQuantity: number | null;
+      stockLengthMm?: number | null;
+      stockWidthMm?: number | null;
     }[];
+    tracking?: TrackingInput;
   }
 
   export interface AttributeOptions {
-    definitions: { key: string; label: string; canonicalUnit: string | null; normalization: string | null }[];
+    definitions: {
+      key: string;
+      label: string;
+      valueType: string;
+      canonicalUnit: string | null;
+      normalization: string | null;
+    }[];
     /** Attribute keys that apply to each category ID, including inherited ones. */
     applicable: Record<number, string[]>;
   }
@@ -37,7 +48,7 @@
     categories: CategoryOption[];
     attributeOptions: AttributeOptions;
     initial?: PartFormValues;
-    /** True when stock exists, so the base unit cannot change. */
+    /** True when stock exists, so the base unit and the tracking mode cannot change. */
     baseUnitLocked?: boolean;
     message?: string;
     errors?: Record<string, string>;
@@ -61,7 +72,19 @@
     url: null,
     purchaseUnit: null,
     packQuantity: null,
+    stockLength: '',
+    stockWidth: '',
   });
+
+  // svelte-ignore state_referenced_locally
+  let trackingMode = $state(initial?.tracking?.mode ?? 'bulk');
+  // svelte-ignore state_referenced_locally
+  let pieceWidthKey = $state(initial?.tracking?.widthKey ?? '');
+  /** Number attributes in mm, which can be the dimensions of a piece. */
+  const dimensionOptions = $derived(
+    attributeOptions.definitions.filter((d) => d.valueType === 'number' && d.canonicalUnit === 'mm')
+  );
+  const lengthText = (mm: number | null | undefined) => (mm ? String(mm) : '');
 
   // Rows start from the initial values; the form owns them after that.
   // svelte-ignore state_referenced_locally
@@ -94,7 +117,13 @@
 
   // svelte-ignore state_referenced_locally
   let supplierParts = $state(
-    initial?.supplierParts.length ? initial.supplierParts.map((s) => ({ ...s })) : [emptySupplier()]
+    initial?.supplierParts.length
+      ? initial.supplierParts.map((s) => ({
+          ...s,
+          stockLength: lengthText(s.stockLengthMm),
+          stockWidth: lengthText(s.stockWidthMm),
+        }))
+      : [emptySupplier()]
   );
 </script>
 
@@ -152,6 +181,64 @@
       <input name="part_number" value={initial?.partNumber ?? ''} class="input" />
     </label>
   </div>
+
+  <fieldset class="card space-y-3">
+    <legend class="px-1 text-sm font-semibold">Stock tracking</legend>
+    <label class="block max-w-md">
+      <span class="text-sm">How stock is counted</span>
+      {#if baseUnitLocked}
+        <input type="hidden" name="tracking_mode" value={trackingMode} />
+      {/if}
+      <select name="tracking_mode" bind:value={trackingMode} disabled={baseUnitLocked} class="input disabled:bg-gray-100">
+        <option value="bulk">One quantity per location</option>
+        <option value="pieces">Individual pieces with their own size (cut stock)</option>
+      </select>
+      {#if baseUnitLocked}
+        <span class="text-sm text-gray-600">Stock is recorded this way, so it cannot change.</span>
+      {:else if trackingMode === 'pieces'}
+        <span class="text-sm text-gray-600">
+          For extrusion, sheet, and rod. Each piece keeps its own length (and width), so offcuts are kept.
+          Use the pcs base unit. Remove the per-piece attributes, such as the length, from the attributes below.
+        </span>
+      {/if}
+      {#if errors?.tracking_mode}<span class="text-sm text-red-700">{errors.tracking_mode}</span>{/if}
+    </label>
+    {#if trackingMode === 'pieces'}
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="block">
+          <span class="text-sm">Length of each piece</span>
+          <select name="piece_length_key" required class="input">
+            {#each dimensionOptions as definition (definition.key)}
+              <option value={definition.key} selected={definition.key === (initial?.tracking?.lengthKey ?? 'length')}>
+                {definition.label}
+              </option>
+            {/each}
+          </select>
+        </label>
+        <label class="block">
+          <span class="text-sm">Width of each piece</span>
+          <select name="piece_width_key" bind:value={pieceWidthKey} class="input">
+            <option value="">(none: 1D, such as extrusion or rod)</option>
+            {#each dimensionOptions as definition (definition.key)}
+              <option value={definition.key}>{definition.label}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="block">
+          <span class="text-sm">Kerf (mm or in)</span>
+          <input name="kerf" value={lengthText(initial?.tracking?.kerfMm)} placeholder="0" class="input" />
+          <span class="text-sm text-gray-600">Material lost to each cut.</span>
+          {#if errors?.kerf}<span class="text-sm text-red-700">{errors.kerf}</span>{/if}
+        </label>
+        <label class="block">
+          <span class="text-sm">Minimum offcut (mm or in)</span>
+          <input name="min_offcut" value={lengthText(initial?.tracking?.minOffcutMm)} placeholder="0" class="input" />
+          <span class="text-sm text-gray-600">Shorter offcuts are not worth keeping.</span>
+          {#if errors?.min_offcut}<span class="text-sm text-red-700">{errors.min_offcut}</span>{/if}
+        </label>
+      </div>
+    {/if}
+  </fieldset>
 
   <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Attributes</legend>
@@ -212,8 +299,32 @@
           bind:value={supplierPart.packQuantity}
           class="input"
         />
+        {#if trackingMode === 'pieces'}
+          <input
+            name="supplier_stock_length"
+            placeholder="Stock length, e.g. 1220 or 48 in"
+            aria-label="Stock length"
+            bind:value={supplierPart.stockLength}
+            class="input"
+          />
+          {#if pieceWidthKey}
+            <input
+              name="supplier_stock_width"
+              placeholder="Stock width (mm or in)"
+              aria-label="Stock width"
+              bind:value={supplierPart.stockWidth}
+              class="input"
+            />
+          {/if}
+        {/if}
       </div>
     {/each}
+    {#if trackingMode === 'pieces'}
+      <p class="mb-2 text-sm text-gray-600">
+        The stock size is the size of one piece as sold, such as a 1220 mm stick. A receipt makes one piece of this
+        size per unit.
+      </p>
+    {/if}
     {#if errors?.supplier_parts}<p class="text-sm text-red-700">{errors.supplier_parts}</p>{/if}
     <button type="button" class="btn-secondary" onclick={() => supplierParts.push(emptySupplier())}>
       Add supplier reference

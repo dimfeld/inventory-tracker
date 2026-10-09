@@ -37,7 +37,7 @@ import {
   listPartMovements,
 } from "#lib/server/db/movements.ts";
 import { countPartOrderLines } from "#lib/server/db/orders.ts";
-import { countPartPieces } from "#lib/server/db/pieces.ts";
+import { countPartPieces, listPartPieces, listPieceTotals } from "#lib/server/db/pieces.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
 import {
   expandAttributes,
@@ -47,7 +47,12 @@ import {
   normalizeAttributeValue,
 } from "#lib/attributes.ts";
 import { applicableAttributeKeys, categoryOptions } from "#lib/categories.ts";
-import type { AttributeInput, PartInput, TrackingInput } from "#lib/schemas/part.ts";
+import type {
+  AttributeInput,
+  PartInput,
+  SupplierPartInput,
+  TrackingInput,
+} from "#lib/schemas/part.ts";
 import { assertUnit } from "#lib/units.ts";
 import {
   listAttributesOfParts,
@@ -57,6 +62,7 @@ import {
   type AttributeCondition,
 } from "#lib/server/db/part-search.ts";
 import { InventoryError, NotFoundError } from "./errors";
+import { pieceDimensions } from "./pieces";
 
 export type CatalogService = ReturnType<typeof createCatalogService>;
 
@@ -156,7 +162,37 @@ export function createCatalogService(db: Database) {
     replacePartAttributes(db, partId, values);
   }
 
-  function saveSupplierParts(partId: number, input: PartInput["supplierParts"]) {
+  /** The stock size of a SKU fits the part: only for pieces, with a width only for 2D pieces. */
+  function stockSize(row: SupplierPartInput, tracking: PartTracking) {
+    const size = {
+      stockLengthMm: row.stockLengthMm ?? null,
+      stockWidthMm: row.stockWidthMm ?? null,
+    };
+    const name = `${row.supplier} SKU ${row.sku}`;
+    if (size.stockLengthMm === null && size.stockWidthMm === null) return size;
+    if (tracking.trackingMode !== "pieces") {
+      throw new InventoryError(`${name}: a stock size is only for parts tracked as pieces`);
+    }
+    for (const value of [size.stockLengthMm, size.stockWidthMm]) {
+      if (value !== null && (!Number.isFinite(value) || value <= 0)) {
+        throw new InventoryError(`${name}: the stock size must be greater than zero`);
+      }
+    }
+    if (tracking.pieceWidthAttributeId === null) {
+      if (size.stockWidthMm !== null) {
+        throw new InventoryError(`${name}: these pieces have no width. Enter only the length.`);
+      }
+    } else if ((size.stockLengthMm === null) !== (size.stockWidthMm === null)) {
+      throw new InventoryError(`${name}: enter both the length and the width of the stock size`);
+    }
+    return size;
+  }
+
+  function saveSupplierParts(
+    partId: number,
+    input: PartInput["supplierParts"],
+    tracking: PartTracking
+  ) {
     const existingIds = new Set(listSupplierParts(db, partId).map((row) => row.id));
     const keptIds = new Set(input.flatMap((row) => (row.id === null ? [] : [row.id])));
 
@@ -164,7 +200,8 @@ export function createCatalogService(db: Database) {
       if (!keptIds.has(id)) deleteSupplierPart(db, partId, id);
     }
 
-    for (const { id, ...fields } of input) {
+    for (const { id, ...row } of input) {
+      const fields = { ...row, ...stockSize({ id, ...row }, tracking) };
       // Several parts can share a supplier SKU, but one part lists it only once.
       const other = findSupplierPart(db, partId, fields.supplier, fields.sku);
       if (other !== null && other !== id) {
@@ -178,11 +215,11 @@ export function createCatalogService(db: Database) {
     }
   }
 
-  function saveDetails(partId: number, input: PartInput) {
+  function saveDetails(partId: number, input: PartInput, tracking: PartTracking) {
     saveAttributes(partId, input.attributes);
     replacePartAliases(db, partId, input.aliases);
     replacePartTags(db, partId, input.tags);
-    saveSupplierParts(partId, input.supplierParts);
+    saveSupplierParts(partId, input.supplierParts, tracking);
   }
 
   function partFields(input: PartInput, tracking: PartTracking) {
@@ -228,10 +265,10 @@ export function createCatalogService(db: Database) {
     }
     const settings = { kerfMm: tracking.kerfMm, minOffcutMm: tracking.minOffcutMm };
     if (tracking.mode === "bulk") return { ...BULK_TRACKING, ...settings };
-    return { ...pieceDimensions(input, tracking), ...settings };
+    return { ...pieceTracking(input, tracking), ...settings };
   }
 
-  function pieceDimensions(input: PartInput, tracking: TrackingInput) {
+  function pieceTracking(input: PartInput, tracking: TrackingInput) {
     if (input.baseUnit !== "pcs") {
       throw new InventoryError("A part tracked as pieces counts pieces. Use the pcs base unit.");
     }
@@ -301,9 +338,10 @@ export function createCatalogService(db: Database) {
     attributeOptions() {
       return {
         definitions: listAttributeDefinitions(db).map(
-          ({ key, label, canonicalUnit, normalization }) => ({
+          ({ key, label, valueType, canonicalUnit, normalization }) => ({
             key,
             label,
+            valueType,
             canonicalUnit,
             normalization,
           })
@@ -371,8 +409,9 @@ export function createCatalogService(db: Database) {
     createPart(input: PartInput): number {
       return db.transaction(() => {
         checkCategory(input.categoryId);
-        const id = insertPart(db, partFields(input, trackingOf(input, null)));
-        saveDetails(id, input);
+        const tracking = trackingOf(input, null);
+        const id = insertPart(db, partFields(input, tracking));
+        saveDetails(id, input, tracking);
         return id;
       })();
     },
@@ -392,7 +431,7 @@ export function createCatalogService(db: Database) {
         const tracking = trackingOf(input, part);
         checkTrackingChange(part, tracking);
         updatePart(db, id, partFields(input, tracking));
-        saveDetails(id, input);
+        saveDetails(id, input, tracking);
       })();
     },
 
@@ -458,6 +497,11 @@ export function createCatalogService(db: Database) {
           .filter((s) => s.reserved > 0)
           .map(({ locationId, reserved }) => ({ locationId, reserved })),
         movements: listPartMovements(db, id),
+        /** Dimension attributes of a part tracked as pieces, or null for a bulk part. */
+        pieceDimensions: part.trackingMode === "pieces" ? pieceDimensions(db, part) : null,
+        /** Pieces in stock and their totals per location. Empty for a bulk part. */
+        pieces: listPartPieces(db, id),
+        pieceTotals: listPieceTotals(db, id),
       };
     },
 

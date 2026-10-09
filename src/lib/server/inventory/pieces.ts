@@ -10,6 +10,7 @@ import {
   getMovementByOperationId,
   insertMovement,
   type Movement,
+  type NewMovement,
 } from "#lib/server/db/movements.ts";
 import {
   getCurrentPiece,
@@ -75,6 +76,65 @@ export function requireBulkPart(part: Pick<Part, "name" | "trackingMode">) {
   }
 }
 
+/** The dimension attributes of a part tracked as pieces. */
+export function pieceDimensions(db: Database, part: Part): PieceDimensions {
+  const length = getAttributeDefinitionById(db, part.pieceLengthAttributeId!)!;
+  const width =
+    part.pieceWidthAttributeId === null
+      ? null
+      : getAttributeDefinitionById(db, part.pieceWidthAttributeId);
+  return { length, width };
+}
+
+/** Check that a size has a positive length, and a positive width exactly for 2D pieces. */
+export function checkPieceSize(dimensions: PieceDimensions, size: PieceSizeInput) {
+  const { length, width } = dimensions;
+  if (!Number.isFinite(size.lengthMm) || size.lengthMm <= 0) {
+    throw new InventoryError(`${length.label} must be greater than zero`);
+  }
+  if (width === null) {
+    if (size.widthMm !== null) {
+      throw new InventoryError("These pieces have no width. Enter only the length.");
+    }
+  } else if (size.widthMm === null || !Number.isFinite(size.widthMm) || size.widthMm <= 0) {
+    throw new InventoryError(`${width.label} must be greater than zero`);
+  }
+}
+
+/**
+ * Insert new pieces that come from outside the inventory into `toLocationId`, each with its own
+ * quantity-1 movement. Movement operation IDs are `operationId` with the piece's position, such
+ * as `abc:1`. Sizes must already be checked. Run it in a transaction.
+ */
+export function insertIncomingPieces(
+  db: Database,
+  part: Part,
+  sizes: PieceSizeInput[],
+  movement: Pick<
+    NewMovement,
+    "operationId" | "toLocationId" | "movementType" | "occurredOn" | "reason" | "receiptLineId"
+  >
+): StockPiece[] {
+  return sizes.map((size, index) => {
+    const piece = insertPiece(db, {
+      partId: part.id,
+      lengthMm: size.lengthMm,
+      widthMm: size.widthMm,
+      parentPieceId: null,
+      label: size.label?.trim() || null,
+    });
+    insertMovement(db, {
+      ...movement,
+      operationId: `${movement.operationId}:${index + 1}`,
+      partId: part.id,
+      quantity: 1,
+      fromLocationId: null,
+      pieceId: piece.id,
+    });
+    return piece;
+  });
+}
+
 export type PieceService = ReturnType<typeof createPieceService>;
 
 /**
@@ -117,29 +177,6 @@ export function createPieceService(db: Database) {
     return location;
   }
 
-  function dimensionsOf(part: Part): PieceDimensions {
-    const length = getAttributeDefinitionById(db, part.pieceLengthAttributeId!)!;
-    const width =
-      part.pieceWidthAttributeId === null
-        ? null
-        : getAttributeDefinitionById(db, part.pieceWidthAttributeId);
-    return { length, width };
-  }
-
-  function checkSize(dimensions: PieceDimensions, size: PieceSizeInput) {
-    const { length, width } = dimensions;
-    if (!Number.isFinite(size.lengthMm) || size.lengthMm <= 0) {
-      throw new InventoryError(`${length.label} must be greater than zero`);
-    }
-    if (width === null) {
-      if (size.widthMm !== null) {
-        throw new InventoryError("These pieces have no width. Enter only the length.");
-      }
-    } else if (size.widthMm === null || !Number.isFinite(size.widthMm) || size.widthMm <= 0) {
-      throw new InventoryError(`${width.label} must be greater than zero`);
-    }
-  }
-
   /** The piece in stock with its part, or an error when it was retired. */
   function requireCurrentPiece(pieceId: number): { piece: CurrentPiece; part: Part } {
     const piece = getCurrentPiece(db, pieceId);
@@ -162,29 +199,14 @@ export function createPieceService(db: Database) {
         const part = requirePiecesPart(input.partId);
         requireStorage(input.locationId);
         if (input.pieces.length === 0) throw new InventoryError("Enter at least one piece");
-        const dimensions = dimensionsOf(part);
-        for (const size of input.pieces) checkSize(dimensions, size);
-
-        return input.pieces.map((size, index) => {
-          const piece = insertPiece(db, {
-            partId: part.id,
-            lengthMm: size.lengthMm,
-            widthMm: size.widthMm,
-            parentPieceId: null,
-            label: size.label?.trim() || null,
-          });
-          insertMovement(db, {
-            operationId: `${input.operationId}:${index + 1}`,
-            partId: part.id,
-            quantity: 1,
-            fromLocationId: null,
-            toLocationId: input.locationId,
-            movementType: input.movementType ?? "opening",
-            occurredOn: input.occurredOn,
-            reason: input.reason ?? null,
-            pieceId: piece.id,
-          });
-          return piece;
+        const dimensions = pieceDimensions(db, part);
+        for (const size of input.pieces) checkPieceSize(dimensions, size);
+        return insertIncomingPieces(db, part, input.pieces, {
+          operationId: input.operationId,
+          toLocationId: input.locationId,
+          movementType: input.movementType ?? "opening",
+          occurredOn: input.occurredOn,
+          reason: input.reason ?? null,
         });
       });
     },
@@ -236,7 +258,7 @@ export function createPieceService(db: Database) {
     /** The dimension attributes of a pieces part, or null for a bulk part. */
     getDimensions(partId: number): PieceDimensions | null {
       const part = getPart(db, partId);
-      return part?.trackingMode === "pieces" ? dimensionsOf(part) : null;
+      return part?.trackingMode === "pieces" ? pieceDimensions(db, part) : null;
     },
 
     /** A part's pieces in stock with their locations, and totals per location. */

@@ -327,3 +327,149 @@ describe("bulk-only actions", () => {
     expect(listPartMovements(ctx.db, ctx.extrusion)).toHaveLength(1);
   });
 });
+
+const sku = (code: string, stockLengthMm: number | null, stockWidthMm: number | null = null) => ({
+  id: null,
+  supplier: "Misumi",
+  sku: code,
+  url: null,
+  purchaseUnit: null,
+  packQuantity: null,
+  stockLengthMm,
+  stockWidthMm,
+});
+
+describe("supplier stock sizes", () => {
+  it("are saved for pieces parts and must fit the part's dimensions", () => {
+    const ctx = setup();
+    ctx.catalog.updatePart(
+      ctx.extrusion,
+      partInput({ name: "2020 extrusion", supplierParts: [sku("HFS5-1220", 1220)] })
+    );
+    expect(ctx.catalog.getPartDetails(ctx.extrusion)!.supplierParts).toMatchObject([
+      { sku: "HFS5-1220", stockLengthMm: 1220, stockWidthMm: null },
+    ]);
+    expect(() =>
+      ctx.catalog.updatePart(ctx.screw, partInput({ supplierParts: [sku("SCR", 10)] }))
+    ).toThrow(/only for parts tracked as pieces/);
+    expect(() =>
+      ctx.catalog.updatePart(
+        ctx.extrusion,
+        partInput({ name: "2020 extrusion", supplierParts: [sku("HFS5", 1220, 20)] })
+      )
+    ).toThrow(/no width/);
+    expect(() =>
+      ctx.catalog.updatePart(
+        ctx.sheet,
+        partInput({ name: "POM-C sheet 15 mm", supplierParts: [sku("POM", 150)] })
+      )
+    ).toThrow(/both the length and the width/);
+  });
+});
+
+describe("receipts of pieces parts", () => {
+  /** A placed order for 3 extrusions with the given SKU, and 100 screws. */
+  function order(ctx: Ctx, supplierSku: string | null) {
+    const line = (partId: number, packQuantity: number, code: string | null) => ({
+      partId,
+      supplierSku: code,
+      purchaseQuantity: 1,
+      purchaseUnit: "pack",
+      packQuantity,
+      unitPrice: null,
+      currency: null,
+      notes: null,
+    });
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Misumi", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [line(ctx.extrusion, 3, supplierSku), line(ctx.screw, 100, null)]
+    );
+    ctx.orders.markPlaced(id, DAY);
+    const [extrusionLine, screwLine] = ctx.orders.getOrderDetails(id)!.lines.map((l) => l.id);
+    return { orderId: id, extrusionLine, screwLine };
+  }
+
+  function receiveExtrusion(
+    ctx: Ctx,
+    o: ReturnType<typeof order>,
+    pieceSize?: { lengthMm: number; widthMm: number | null }
+  ) {
+    return ctx.receipts.receive({
+      operationId: opId(),
+      orderId: o.orderId,
+      receivedOn: DAY,
+      notes: null,
+      lines: [
+        {
+          orderLineId: o.extrusionLine,
+          acceptedQuantity: 3,
+          damagedQuantity: 0,
+          locationId: ctx.rack,
+          notes: null,
+          pieceSize,
+        },
+      ],
+    });
+  }
+
+  it("make one piece of the SKU's stock size per accepted unit", () => {
+    const ctx = setup();
+    ctx.catalog.updatePart(
+      ctx.extrusion,
+      partInput({ name: "2020 extrusion", supplierParts: [sku("HFS5-1220", 1220)] })
+    );
+    const o = order(ctx, "HFS5-1220");
+    const result = receiveExtrusion(ctx, o);
+
+    expect(result.lines).toMatchObject([{ acceptedQuantity: 3 }]);
+    expect(
+      ctx.pieces.listPartPieces(ctx.extrusion).pieces.map((p) => [p.locationName, p.lengthMm])
+    ).toEqual([
+      ["Rack", 1220],
+      ["Rack", 1220],
+      ["Rack", 1220],
+    ]);
+    const movements = listPartMovements(ctx.db, ctx.extrusion);
+    expect(movements).toHaveLength(3);
+    expect(
+      movements.every((m) => m.movementType === "receipt" && m.quantity === 1 && m.pieceId !== null)
+    ).toBe(true);
+    expect(ctx.orders.getOrderDetails(o.orderId)!.lines[0].outstanding).toBe(0);
+  });
+
+  it("use the given size when the SKU has no stock size, and fail without one", () => {
+    const ctx = setup();
+    const o = order(ctx, null);
+    expect(() => receiveExtrusion(ctx, o)).toThrow(/no stock size/);
+    expect(() => receiveExtrusion(ctx, o, { lengthMm: 700, widthMm: 20 })).toThrow(/no width/);
+    expect(listPartMovements(ctx.db, ctx.extrusion)).toEqual([]);
+
+    receiveExtrusion(ctx, o, { lengthMm: 700, widthMm: null });
+    expect(ctx.pieces.listPartPieces(ctx.extrusion).totals).toMatchObject([
+      { pieceCount: 3, totalLengthMm: 2100 },
+    ]);
+  });
+
+  it("receive bulk lines of the same order as before", () => {
+    const ctx = setup();
+    const o = order(ctx, null);
+    ctx.receipts.receive({
+      operationId: opId(),
+      orderId: o.orderId,
+      receivedOn: DAY,
+      notes: null,
+      lines: [
+        {
+          orderLineId: o.screwLine,
+          acceptedQuantity: 100,
+          damagedQuantity: 0,
+          locationId: ctx.shelf,
+          notes: null,
+        },
+      ],
+    });
+    expect(listPartMovements(ctx.db, ctx.screw)).toMatchObject([
+      { quantity: 100, pieceId: null, movementType: "receipt" },
+    ]);
+  });
+});

@@ -21,7 +21,7 @@
     <tbody>
       {#each data.locations as location (location.id)}
         <tr>
-          <td class="font-medium sm:font-normal">{location.name}</td>
+          <td class="font-medium sm:font-normal"><a href="/locations/{location.id}" class="link">{location.name}</a></td>
           <td data-label="Kind">{location.kind}</td>
           <td data-label="Notes" class="text-gray-600 {location.notes ? '' : 'max-sm:hidden'}">{location.notes ?? ''}</td>
         </tr>

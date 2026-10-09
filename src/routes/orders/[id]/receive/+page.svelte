@@ -84,6 +84,7 @@
         <ReceiptLineForm
           {line}
           commitments={data.commitments.filter((c) => c.orderLineId === line.id)}
+          pieces={data.pieceLines[line.id] ?? null}
           locations={data.storageLocations}
           operationId={data.operationId}
           today={data.today}

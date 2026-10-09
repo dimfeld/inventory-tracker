@@ -100,6 +100,10 @@ export interface SupplierPart {
   url: string | null;
   purchaseUnit: string | null;
   packQuantity: number | null;
+  /** Size in mm of one stock piece of a pieces part, such as a 1220 mm stick. */
+  stockLengthMm: number | null;
+  /** Width in mm of one stock piece of a 2D pieces part. */
+  stockWidthMm: number | null;
 }
 
 export type SupplierPartFields = Omit<SupplierPart, "id">;
@@ -326,19 +330,23 @@ export function replacePartTags(db: Database, partId: number, tags: string[]): v
   }
 }
 
+const SUPPLIER_PART_COLUMNS = `id, supplier, sku, url, purchase_unit AS purchaseUnit,
+  pack_quantity AS packQuantity, stock_length_mm AS stockLengthMm, stock_width_mm AS stockWidthMm`;
+
 export function listSupplierParts(db: Database, partId: number): SupplierPart[] {
   return db
     .query<SupplierPart, [number]>(
-      `SELECT id, supplier, sku, url, purchase_unit AS purchaseUnit, pack_quantity AS packQuantity
-       FROM supplier_parts WHERE part_id = ? ORDER BY supplier, sku`
+      `SELECT ${SUPPLIER_PART_COLUMNS} FROM supplier_parts WHERE part_id = ? ORDER BY supplier, sku`
     )
     .all(partId);
 }
 
 export function insertSupplierPart(db: Database, partId: number, fields: SupplierPartFields): void {
   db.query<unknown, SupplierPartFields & { partId: number }>(
-    `INSERT INTO supplier_parts (part_id, supplier, sku, url, purchase_unit, pack_quantity)
-     VALUES ($partId, $supplier, $sku, $url, $purchaseUnit, $packQuantity)`
+    `INSERT INTO supplier_parts (part_id, supplier, sku, url, purchase_unit, pack_quantity,
+       stock_length_mm, stock_width_mm)
+     VALUES ($partId, $supplier, $sku, $url, $purchaseUnit, $packQuantity, $stockLengthMm,
+       $stockWidthMm)`
   ).run({ ...fields, partId });
 }
 
@@ -350,7 +358,8 @@ export function updateSupplierPart(
 ): void {
   db.query<unknown, SupplierPartFields & { id: number; partId: number }>(
     `UPDATE supplier_parts SET supplier = $supplier, sku = $sku, url = $url,
-       purchase_unit = $purchaseUnit, pack_quantity = $packQuantity
+       purchase_unit = $purchaseUnit, pack_quantity = $packQuantity,
+       stock_length_mm = $stockLengthMm, stock_width_mm = $stockWidthMm
      WHERE id = $id AND part_id = $partId`
   ).run({ ...fields, id, partId });
 }
@@ -373,6 +382,21 @@ export function findSupplierPart(
       )
       .get(partId, supplier, sku)?.id ?? null
   );
+}
+
+/** The part's supplier SKU row for `supplier` and `sku`, or null. */
+export function getSupplierPartBySku(
+  db: Database,
+  partId: number,
+  supplier: string,
+  sku: string
+): SupplierPart | null {
+  return db
+    .query<SupplierPart, [number, string, string]>(
+      `SELECT ${SUPPLIER_PART_COLUMNS} FROM supplier_parts
+       WHERE part_id = ? AND supplier = ? AND sku = ?`
+    )
+    .get(partId, supplier, sku);
 }
 
 /**

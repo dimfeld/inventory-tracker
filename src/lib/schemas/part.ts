@@ -1,4 +1,4 @@
-import type { TrackingMode } from "#lib/pieces.ts";
+import { parseLengthMm, TRACKING_MODES, type TrackingMode } from "#lib/pieces.ts";
 import { isUnit, type Unit } from "#lib/units.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
@@ -19,6 +19,10 @@ export interface SupplierPartInput {
   purchaseUnit: string | null;
   /** Base units in one purchase unit, or null when not known. */
   packQuantity: number | null;
+  /** Length in mm of one stock piece, for a part tracked as pieces. */
+  stockLengthMm?: number | null;
+  /** Width in mm of one stock piece, for a 2D pieces part. */
+  stockWidthMm?: number | null;
 }
 
 /** How the part's stock is tracked. Dimensions are attribute keys. */
@@ -115,26 +119,47 @@ export function parsePartForm(form: FormData): ParseResult<PartInput> {
   const urls = allText(form, "supplier_url");
   const purchaseUnits = allText(form, "supplier_purchase_unit");
   const packQuantities = allText(form, "supplier_pack_quantity");
+  const stockLengths = allText(form, "supplier_stock_length");
+  const stockWidths = allText(form, "supplier_stock_width");
   const supplierParts: SupplierPartInput[] = [];
   supplierNames.forEach((supplier, index) => {
     const sku = skus[index] ?? "";
     const url = urls[index] || null;
     const purchaseUnit = purchaseUnits[index] || null;
     const packText = packQuantities[index] ?? "";
-    if (!supplier && !sku && !url && !purchaseUnit && !packText) return;
+    const lengthText = stockLengths[index] ?? "";
+    const widthText = stockWidths[index] ?? "";
+    if (!supplier && !sku && !url && !purchaseUnit && !packText && !lengthText && !widthText) {
+      return;
+    }
 
     const id = parseId(supplierIds[index] ?? "");
     const packQuantity = parseId(packText);
+    const stockLengthMm = optionalLength(lengthText);
+    const stockWidthMm = optionalLength(widthText);
     if (!supplier || !sku) {
       errors.supplier_parts = "Each supplier reference needs a supplier and a SKU";
     } else if (Number.isNaN(packQuantity)) {
       errors.supplier_parts = "Pack quantity must be a whole number greater than zero";
+    } else if (Number.isNaN(stockLengthMm) || Number.isNaN(stockWidthMm)) {
+      errors.supplier_parts = "Enter the stock size as a length, such as 1220 or 48 in";
     } else if (Number.isNaN(id)) {
       errors.supplier_parts = "Invalid supplier reference";
     } else {
-      supplierParts.push({ id, supplier, sku, url, purchaseUnit, packQuantity });
+      supplierParts.push({
+        id,
+        supplier,
+        sku,
+        url,
+        purchaseUnit,
+        packQuantity,
+        stockLengthMm,
+        stockWidthMm,
+      });
     }
   });
+
+  const tracking = parseTracking(form, errors);
 
   if (Object.keys(errors).length > 0) {
     return { success: false, errors };
@@ -153,6 +178,39 @@ export function parsePartForm(form: FormData): ParseResult<PartInput> {
       aliases,
       tags,
       supplierParts,
+      ...(tracking && { tracking }),
     },
+  };
+}
+
+/** A length in mm, null for empty text, or NaN for text that is not a length. */
+function optionalLength(raw: string): number | null {
+  if (raw === "") return null;
+  return parseLengthMm(raw) ?? NaN;
+}
+
+/**
+ * The tracking fields `tracking_mode`, `piece_length_key`, `piece_width_key`, `kerf`, and
+ * `min_offcut`. Undefined when the form has no tracking mode, so the part keeps its tracking.
+ */
+function parseTracking(form: FormData, errors: FieldErrors): TrackingInput | undefined {
+  const mode = text(form, "tracking_mode");
+  if (!mode) return undefined;
+  if (!(TRACKING_MODES as readonly string[]).includes(mode)) {
+    errors.tracking_mode = "Choose how the stock is tracked";
+    return undefined;
+  }
+  const kerfMm = optionalLength(text(form, "kerf")) ?? 0;
+  if (Number.isNaN(kerfMm)) errors.kerf = "Enter the kerf as a length, such as 2 or 0.1 in";
+  const minOffcutMm = optionalLength(text(form, "min_offcut")) ?? 0;
+  if (Number.isNaN(minOffcutMm)) {
+    errors.min_offcut = "Enter the minimum offcut as a length, such as 50 or 2 in";
+  }
+  return {
+    mode: mode as TrackingMode,
+    lengthKey: optionalText(form, "piece_length_key"),
+    widthKey: optionalText(form, "piece_width_key"),
+    kerfMm,
+    minOffcutMm,
   };
 }

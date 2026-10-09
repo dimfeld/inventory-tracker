@@ -407,6 +407,8 @@ export function createAllocationService(db: Database) {
           baseUnit: part.baseUnit,
           allowed: allowed.has(part.id),
           archived: part.archivedAt !== null,
+          /** Tracked as pieces, which cannot be reserved yet. */
+          pieces: part.trackingMode === "pieces",
           units: compatibleUnits(assertUnit(part.baseUnit)),
           storage: (storage.get(part.id) ?? []).map((s: StorageStock) => ({
             ...s,

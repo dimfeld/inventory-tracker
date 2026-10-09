@@ -1,5 +1,6 @@
 import type { CommitmentAssignment } from "#lib/commitments.ts";
 import { parseCurrency } from "#lib/money.ts";
+import { parseLengthMm } from "#lib/pieces.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 import { today } from "./stock";
 
@@ -38,6 +39,8 @@ export interface ReceiptLineFormInput {
   cancelRemainder: boolean;
   /** The owner's assignment to incoming commitments, or null for sequence order. */
   assignments: CommitmentAssignment[] | null;
+  /** Size of the received pieces of a part tracked as pieces, or null for the SKU's size. */
+  pieceSize: { lengthMm: number; widthMm: number | null } | null;
 }
 
 export interface ReceiveAllFormInput {
@@ -168,6 +171,7 @@ export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFor
   const locationId = parseId(text(form, "location_id"));
   if (Number.isNaN(locationId)) errors.location_id = "Choose a location";
   const assigned = assignments(form, errors);
+  const pieceSize = parsePieceSize(form, errors);
   return result(errors, () => ({
     operationId,
     receivedOn,
@@ -178,7 +182,22 @@ export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFor
     notes: optionalText(form, "notes"),
     cancelRemainder: text(form, "cancel_remainder") === "on",
     assignments: assigned,
+    pieceSize,
   }));
+}
+
+/** The optional `piece_length` and `piece_width` of received pieces, in mm or inches. */
+function parsePieceSize(form: FormData, errors: FieldErrors) {
+  const length = text(form, "piece_length");
+  const width = text(form, "piece_width");
+  if (!length && !width) return null;
+  const lengthMm = parseLengthMm(length);
+  const widthMm = width ? parseLengthMm(width) : null;
+  if (lengthMm === null || (width && widthMm === null)) {
+    errors.piece_size = "Enter the piece size as a length, such as 1220 or 48 in";
+    return null;
+  }
+  return { lengthMm, widthMm };
 }
 
 export function parseReceiveAllForm(form: FormData): ParseResult<ReceiveAllFormInput> {

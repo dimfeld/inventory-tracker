@@ -192,7 +192,9 @@
         <a href="/parts/{part.partId}" class="link">{part.partName}</a>
         {#if !part.allowed}<span class="rounded bg-red-100 px-1 text-xs text-red-800">no longer approved</span>{/if}
       </h3>
-      {#if part.storage.length === 0}
+      {#if part.pieces}
+        <p class="mb-2 text-gray-600">This part is tracked as pieces. Pieces cannot be reserved yet.</p>
+      {:else if part.storage.length === 0}
         <p class="mb-2 text-gray-600">No stock in storage.</p>
       {:else}
         <table class="data-table stack-table mb-2">

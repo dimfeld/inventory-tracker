@@ -215,8 +215,13 @@ export function createCommitmentService(db: Database) {
     listIncomingOptions(projectId: number, lineId: number): IncomingOption[] {
       const line = requireLine(projectId, lineId);
       const committed = committedByOrderLine(db);
+      // Supply of parts tracked as pieces cannot be committed yet.
       return listIncomingLines(db, [...allowedPartIds(db, line)])
-        .filter((incoming) => unitsCompatible(line.unit, incoming.baseUnit))
+        .filter(
+          (incoming) =>
+            unitsCompatible(line.unit, incoming.baseUnit) &&
+            getPart(db, incoming.partId)?.trackingMode !== "pieces"
+        )
         .map((incoming) => {
           const total = committed.get(incoming.orderLineId) ?? 0;
           return {

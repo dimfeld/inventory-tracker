@@ -2,9 +2,11 @@
   import { tick } from 'svelte';
   import { enhance } from '$app/forms';
   import { formatAttributeValue } from '#lib/attributes.ts';
+  import { formatArea, formatMm, formatPieceSize, formatPieceSizeInches } from '#lib/pieces.ts';
   import { formatQuantity } from '#lib/units.ts';
   import SearchSelect from '#lib/components/SearchSelect.svelte';
   import { mergePart } from './merge.remote';
+  import { addPieces, movePiece, removePiece } from './pieces.remote';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
@@ -22,6 +24,8 @@
   };
 
   const part = $derived(data.part);
+  const isPieces = $derived(part.trackingMode === 'pieces');
+  const dimensions = $derived(data.pieceDimensions);
   const total = $derived(data.balances.reduce((sum, b) => sum + b.quantity, 0));
   const reservedAt = (locationId: number) =>
     data.reserved.find((r) => r.locationId === locationId)?.reserved ?? 0;
@@ -57,6 +61,22 @@
   let stockLocationId = $state(data.balances[0]?.locationId ?? data.locations[0]?.id);
   let amountInput = $state<HTMLInputElement>();
 
+  // Number of size rows in the add pieces form. A row makes `count` equal pieces.
+  let pieceRowCount = $state(1);
+
+  // The piece that the move or remove form changes.
+  let pieceAction = $state<{ kind: 'move' | 'remove'; pieceId: number } | null>(null);
+  const actionPiece = $derived(data.pieces.find((p) => p.id === pieceAction?.pieceId));
+  let pieceActionForm = $state<HTMLElement>();
+  async function startPieceAction(kind: 'move' | 'remove', pieceId: number) {
+    pieceAction = { kind, pieceId };
+    await tick();
+    pieceActionForm?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    pieceActionForm?.querySelector<HTMLElement>('select, input:not([type=hidden])')?.focus({ preventScroll: true });
+  }
+  const issuesOf = (f: { fields: { allIssues(): { message: string }[] | undefined } }) =>
+    f.fields.allIssues()?.map((issue) => issue.message).join('. ');
+
   let mergeDestinationId = $state('');
   const mergeDestination = $derived(data.mergeTargets.find((p) => String(p.id) === mergeDestinationId));
 
@@ -81,7 +101,9 @@
   {#if part.archivedAt}
     <span class="badge">archived</span>
   {/if}
-  <span class="text-lg text-gray-600">{formatQuantity(total, part.baseUnit)} in stock</span>
+  <span class="text-lg text-gray-600">
+    {isPieces ? `${data.pieces.length} piece(s)` : formatQuantity(total, part.baseUnit)} in stock
+  </span>
   <div class="flex gap-2 sm:ml-auto">
     <a href="/parts/{part.id}/edit" class="btn-secondary">Edit</a>
     <a href="/parts/new?from={part.id}" class="btn-secondary">Copy</a>
@@ -99,6 +121,13 @@
   <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
     <dt class="text-gray-600">Category</dt><dd>{part.categoryName ?? '—'}</dd>
     <dt class="text-gray-600">Base unit</dt><dd>{part.baseUnit}</dd>
+    {#if dimensions}
+      <dt class="text-gray-600">Tracked as</dt>
+      <dd>
+        pieces by {dimensions.length.label.toLowerCase()}{dimensions.width ? ` × ${dimensions.width.label.toLowerCase()}` : ''};
+        kerf {formatMm(part.kerfMm)}, minimum offcut {formatMm(part.minOffcutMm)}
+      </dd>
+    {/if}
     <dt class="text-gray-600">Manufacturer</dt><dd>{part.manufacturer ?? '—'}</dd>
     <dt class="text-gray-600">Part number</dt><dd>{part.partNumber ?? '—'}</dd>
     <dt class="text-gray-600">Aliases</dt><dd>{data.aliases.join(', ') || '—'}</dd>
@@ -124,6 +153,11 @@
           <li>
             {sp.supplier}
             {#if sp.url}<a href={sp.url} class="link" rel="noreferrer" target="_blank">{sp.sku}</a>{:else}{sp.sku}{/if}
+            {#if sp.stockLengthMm !== null}
+              <span class="text-gray-600">
+                — stock size {formatPieceSize({ lengthMm: sp.stockLengthMm, widthMm: sp.stockWidthMm })}
+              </span>
+            {/if}
             {#if sp.purchaseUnit || sp.packQuantity}
               <span class="text-gray-600">
                 — {sp.purchaseUnit ?? 'purchase unit'}{#if sp.packQuantity} = {formatQuantity(sp.packQuantity, part.baseUnit)}{/if}
@@ -140,6 +174,9 @@
   </div>
 </section>
 
+{#if isPieces}
+  {@render piecesSection()}
+{:else}
 <section class="mb-6">
   <h2 class="section-title">Stock by location</h2>
   {#if data.balances.length === 0}
@@ -183,7 +220,11 @@
   {/if}
 </section>
 
-{#if !part.archivedAt}
+{/if}
+
+{#if !part.archivedAt && isPieces}
+  {@render addPiecesSection()}
+{:else if !part.archivedAt}
   <section class="mb-6" id="change-stock">
     <h2 class="section-title">Change stock</h2>
     {#if data.locations.length === 0}
@@ -281,6 +322,7 @@
   {/if}
 </section>
 
+{#if !isPieces}
 <section class="mt-6">
   <h2 class="section-title">Merge into another part</h2>
   <div class="card max-w-xl space-y-3 text-sm">
@@ -324,3 +366,178 @@
     </form>
   </div>
 </section>
+{/if}
+
+{#snippet pieceSize(piece: { lengthMm: number; widthMm: number | null })}
+  <span title={formatPieceSizeInches(piece)}>{formatPieceSize(piece)}</span>
+{/snippet}
+
+{#snippet piecesSection()}
+  <section class="mb-6">
+    <h2 class="section-title">Pieces by location</h2>
+    {#if data.pieces.length === 0}
+      <p class="text-gray-600">No pieces in stock.</p>
+    {:else}
+      <table class="data-table stack-table mb-4 max-w-3xl">
+        <thead>
+          <tr>
+            <th>Location</th>
+            <th class="text-right">Pieces</th>
+            <th class="text-right">{dimensions?.width ? 'Total area' : 'Total length'}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each data.pieceTotals as total (total.locationId)}
+            <tr>
+              <td class="font-medium sm:font-normal"><a href="/locations/{total.locationId}" class="link">{total.locationName}</a></td>
+              <td data-label="Pieces" class="text-right">{total.pieceCount}</td>
+              <td data-label="Total" class="text-right whitespace-nowrap">
+                {total.totalAreaMm2 === null ? formatMm(total.totalLengthMm) : formatArea(total.totalAreaMm2)}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+
+      <table class="data-table stack-table max-w-3xl">
+        <thead>
+          <tr><th>Size</th><th>Location</th><th>Label</th><th></th></tr>
+        </thead>
+        <tbody>
+          {#each data.pieces as piece (piece.id)}
+            <tr class={pieceAction?.pieceId === piece.id ? 'bg-blue-50' : ''}>
+              <td class="font-medium whitespace-nowrap sm:font-normal">{@render pieceSize(piece)}</td>
+              <td data-label="Location">{piece.locationName}</td>
+              <td data-label="Label" class="text-gray-600 {piece.label ? '' : 'max-sm:hidden'}">{piece.label ?? ''}</td>
+              <td class="whitespace-nowrap sm:text-right">
+                {#if !part.archivedAt && piece.locationKind === 'storage'}
+                  <div class="mt-1 flex gap-1 sm:mt-0 sm:justify-end">
+                    {#if data.locations.length > 1}
+                      <button type="button" class="btn-secondary" onclick={() => startPieceAction('move', piece.id)}>Move</button>
+                    {/if}
+                    <button type="button" class="btn-secondary" onclick={() => startPieceAction('remove', piece.id)}>Remove</button>
+                  </div>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+
+    {#if movePiece.result}<p class="msg-ok mt-3">{movePiece.result.text}</p>{/if}
+    {#if removePiece.result}<p class="msg-ok mt-3">{removePiece.result.text}</p>{/if}
+    {#if pieceAction && actionPiece}
+      <div bind:this={pieceActionForm} class="card mt-3 max-w-xl text-sm">
+        {#if pieceAction.kind === 'move'}
+          <form {...movePiece} class="space-y-3">
+            <h3 class="font-semibold">Move {formatPieceSize(actionPiece)} from {actionPiece.locationName}</h3>
+            <input {...movePiece.fields.operationId.as('hidden', data.operationId)} />
+            <input {...movePiece.fields.occurredOn.as('hidden', data.today)} />
+            <input {...movePiece.fields.pieceId.as('hidden', actionPiece.id)} />
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="block">
+                To
+                <select {...movePiece.fields.toLocationId.as('select')} required class="input">
+                  {#each data.locations.filter((l) => l.id !== actionPiece.locationId) as location (location.id)}
+                    <option value={String(location.id)}>{location.name}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="block">
+                Reason (optional)
+                <input {...movePiece.fields.reason.as('text')} class="input" />
+              </label>
+            </div>
+            {#if issuesOf(movePiece)}<p class="msg-error">{issuesOf(movePiece)}</p>{/if}
+            <div class="flex gap-2">
+              <button class="btn" disabled={movePiece.pending > 0}>Move piece</button>
+              <button type="button" class="btn-secondary" onclick={() => (pieceAction = null)}>Cancel</button>
+            </div>
+          </form>
+        {:else}
+          <form {...removePiece} class="space-y-3">
+            <h3 class="font-semibold">Remove {formatPieceSize(actionPiece)} from {actionPiece.locationName}</h3>
+            <input {...removePiece.fields.operationId.as('hidden', data.operationId)} />
+            <input {...removePiece.fields.occurredOn.as('hidden', data.today)} />
+            <input {...removePiece.fields.pieceId.as('hidden', actionPiece.id)} />
+            <label class="block">
+              Reason
+              <input {...removePiece.fields.reason.as('text')} required placeholder="Lost, bent, scrap…" class="input" />
+            </label>
+            {#if issuesOf(removePiece)}<p class="msg-error">{issuesOf(removePiece)}</p>{/if}
+            <div class="flex gap-2">
+              <button class="btn-danger" disabled={removePiece.pending > 0}>Remove piece</button>
+              <button type="button" class="btn-secondary" onclick={() => (pieceAction = null)}>Cancel</button>
+            </div>
+          </form>
+        {/if}
+      </div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet addPiecesSection()}
+  <section class="mb-6" id="add-pieces">
+    <h2 class="section-title">Add pieces</h2>
+    {#if data.locations.length === 0}
+      <p class="text-gray-600">
+        <a href="/settings/locations" class="link">Add a storage location</a> first.
+      </p>
+    {:else}
+      <form {...addPieces} class="card max-w-2xl space-y-3 text-sm">
+        <p class="text-gray-600">
+          Existing pieces, such as stock you have when you start, or pieces a count found. Enter sizes in mm, or add
+          <code>in</code> for inches. Receipts of orders add pieces on their own.
+        </p>
+        <input {...addPieces.fields.operationId.as('hidden', data.operationId)} />
+        <input {...addPieces.fields.partId.as('hidden', part.id)} />
+        {#each { length: pieceRowCount }, index (index)}
+          {@const row = addPieces.fields.pieces[index]}
+          <div class="flex flex-wrap items-end gap-2">
+            <label class="block w-32">
+              {dimensions?.length.label ?? 'Length'}
+              <input {...row.length.as('text')} required={index === 0} placeholder="e.g. 1220" class="input" />
+            </label>
+            {#if dimensions?.width}
+              <label class="block w-32">
+                {dimensions.width.label}
+                <input {...row.width.as('text')} required={index === 0} placeholder="e.g. 150" class="input" />
+              </label>
+            {/if}
+            <label class="block w-20">
+              Count
+              <input {...row.count.as('text', '1')} inputmode="numeric" class="input" />
+            </label>
+            <label class="block grow">
+              Label (optional)
+              <input {...row.label.as('text')} class="input" />
+            </label>
+          </div>
+        {/each}
+        <button type="button" class="btn-secondary" onclick={() => (pieceRowCount += 1)}>Add another size</button>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="block">
+            Into location
+            <select {...addPieces.fields.locationId.as('select', String(data.locations[0]?.id ?? ''))} required class="input">
+              {#each data.locations as location (location.id)}
+                <option value={String(location.id)}>{location.name}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="block">
+            Date
+            <input {...addPieces.fields.occurredOn.as('date', data.today)} required class="input" />
+          </label>
+          <label class="block sm:col-span-2">
+            Reason (optional)
+            <input {...addPieces.fields.reason.as('text')} class="input" />
+          </label>
+        </div>
+        {#if issuesOf(addPieces)}<p class="msg-error">{issuesOf(addPieces)}</p>{/if}
+        {#if addPieces.result}<p class="msg-ok">{addPieces.result.text}</p>{/if}
+        <button class="btn" disabled={addPieces.pending > 0}>Add pieces</button>
+      </form>
+    {/if}
+  </section>
+{/snippet}
