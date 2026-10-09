@@ -36,6 +36,7 @@ import {
   InventoryError,
   NotFoundError,
 } from "#lib/server/inventory/errors.ts";
+import { requireBulkPart } from "#lib/server/inventory/pieces.ts";
 import {
   assertUnit,
   compatibleUnits,
@@ -147,6 +148,13 @@ export function createAllocationService(db: Database) {
       throw new InventoryError(`${location.name} is not a storage location`);
     }
     return location;
+  }
+
+  /** A part whose stock the action changes. Pieces parts are not supported yet. */
+  function requireStockPart(id: number): Part {
+    const part = requirePart(id);
+    requireBulkPart(part);
+    return part;
   }
 
   function positiveQuantity(part: Part, input: { amount: string; unit: Unit }): number {
@@ -274,7 +282,7 @@ export function createAllocationService(db: Database) {
       inTransaction(() => {
         const project = requireProject(input.projectId);
         const line = requireLine(project.id, input.lineId);
-        const part = requirePart(input.partId);
+        const part = requireStockPart(input.partId);
         const location = requireStorage(input.locationId);
         reserveQuantity(project, line, part, location, positiveQuantity(part, input));
       });
@@ -284,7 +292,7 @@ export function createAllocationService(db: Database) {
     release(input: ReservationInput): void {
       inTransaction(() => {
         const line = requireLine(requireProject(input.projectId).id, input.lineId);
-        const part = requirePart(input.partId);
+        const part = requireStockPart(input.partId);
         const location = requireStorage(input.locationId);
         takeFromReservation(line, part, location, positiveQuantity(part, input), "release");
       });
@@ -299,7 +307,7 @@ export function createAllocationService(db: Database) {
         startMovement(input);
         const project = requireProject(input.projectId);
         const line = requireLine(project.id, input.lineId);
-        const part = requirePart(input.partId);
+        const part = requireStockPart(input.partId);
         const location = requireStorage(input.locationId);
         const quantity = positiveQuantity(part, input);
         takeFromReservation(line, part, location, quantity, "pick");
@@ -326,7 +334,7 @@ export function createAllocationService(db: Database) {
         startMovement(input);
         const project = requireProject(input.projectId);
         const line = requireLine(project.id, input.lineId);
-        const part = requirePart(input.partId);
+        const part = requireStockPart(input.partId);
         const quantity = positiveQuantity(part, input);
         requirePicked(line, part, quantity, "use");
         return insertMovement(db, {
@@ -349,7 +357,7 @@ export function createAllocationService(db: Database) {
         startMovement(input);
         const project = requireProject(input.projectId);
         const line = requireLine(project.id, input.lineId);
-        const part = requirePart(input.partId);
+        const part = requireStockPart(input.partId);
         const location = requireStorage(input.toLocationId);
         const quantity = positiveQuantity(part, input);
         requirePicked(line, part, quantity, "return");
@@ -399,6 +407,8 @@ export function createAllocationService(db: Database) {
           baseUnit: part.baseUnit,
           allowed: allowed.has(part.id),
           archived: part.archivedAt !== null,
+          /** Tracked as pieces, which cannot be reserved yet. */
+          pieces: part.trackingMode === "pieces",
           units: compatibleUnits(assertUnit(part.baseUnit)),
           storage: (storage.get(part.id) ?? []).map((s: StorageStock) => ({
             ...s,

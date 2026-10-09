@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import {
+  getLocation,
   getLocationByName,
   insertLocation,
   listLocations,
@@ -14,6 +15,8 @@ export function createLocationService(db: Database) {
     listLocations: () => listLocations(db),
 
     listStorageLocations: () => listStorageLocations(db),
+
+    getLocation: (id: number) => getLocation(db, id),
 
     createLocation(fields: { name: string; notes: string | null }): number {
       return db.transaction(() => {

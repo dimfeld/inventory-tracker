@@ -71,7 +71,7 @@ export function listSupplyOptions(
       let freeStock = 0;
       if (lineCoverage.uncovered > 0) {
         for (const part of allocations().getLineStock(projectId, lineId).parts) {
-          if (!part.allowed || part.archived) continue;
+          if (!part.allowed || part.archived || part.pieces) continue;
           const need = wholeOf(lineCoverage.uncovered, lineCoverage, part.baseUnit);
           for (const stock of part.storage) {
             freeStock += inCoverageUnit(Math.max(stock.available, 0), part.baseUnit, lineCoverage);

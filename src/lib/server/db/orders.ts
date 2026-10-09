@@ -88,6 +88,7 @@ export interface ReceiptLine {
   locationId: number | null;
   locationName: string | null;
   notes: string | null;
+  /** The stock movement of the accepted stock; the first one when the line made pieces. */
   movementId: number | null;
 }
 
@@ -454,12 +455,12 @@ export function listReceiptLines(db: Database, receiptIds: number[]): ReceiptLin
       `SELECT rl.id, rl.receipt_id AS receiptId, rl.order_line_id AS orderLineId,
          p.name AS partName, p.base_unit AS baseUnit, rl.accepted_quantity AS acceptedQuantity,
          rl.damaged_quantity AS damagedQuantity, rl.location_id AS locationId,
-         loc.name AS locationName, rl.notes, m.id AS movementId
+         loc.name AS locationName, rl.notes,
+         (SELECT min(m.id) FROM stock_movements m WHERE m.receipt_line_id = rl.id) AS movementId
        FROM receipt_lines rl
        JOIN order_lines ol ON ol.id = rl.order_line_id
        JOIN parts p ON p.id = ol.part_id
        LEFT JOIN locations loc ON loc.id = rl.location_id
-       LEFT JOIN stock_movements m ON m.receipt_line_id = rl.id
        WHERE rl.receipt_id IN (SELECT value FROM json_each(?))
        ORDER BY rl.id`
     )

@@ -16,6 +16,7 @@ import {
   InventoryError,
   NotFoundError,
 } from "./errors";
+import { requireBulkPart } from "./pieces";
 import { noReservations, type ReservationAdjustment, type ReservationGuard } from "./reservations";
 
 interface StockActionBase {
@@ -95,6 +96,7 @@ export function createStockService(db: Database, options: StockServiceOptions = 
     if (part.archivedAt) {
       throw new InventoryError(`${part.name} is archived. Restore it before changing its stock.`);
     }
+    requireBulkPart(part);
     return part;
   }
 

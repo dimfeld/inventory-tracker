@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { assignInSequence } from '#lib/commitments.ts';
   import { describePackConversion, type DeliveryState } from '#lib/orders.ts';
+  import { formatPieceSize } from '#lib/pieces.ts';
   import { formatQuantity } from '#lib/units.ts';
 
   /**
@@ -12,6 +13,7 @@
   let {
     line,
     commitments,
+    pieces = null,
     locations,
     operationId,
     today,
@@ -29,6 +31,12 @@
     };
     /** The line's commitments in sequence order. */
     commitments: { id: number; projectName: string; lineDescription: string; quantity: number }[];
+    /** For a part tracked as pieces: its dimension labels and the SKU stock size, if any. */
+    pieces?: {
+      lengthLabel: string;
+      widthLabel: string | null;
+      stockSize: { lengthMm: number; widthMm: number | null } | null;
+    } | null;
     locations: { id: number; name: string }[];
     operationId: string;
     today: string;
@@ -42,6 +50,8 @@
   let locationId = $state(String(locations[0]?.id ?? ''));
   let cancelRemainder = $state(false);
   let customAssignment = $state(false);
+  let pieceLength = $state('');
+  let pieceWidth = $state('');
   // Owner-entered quantities by commitment ID, used when the assignment is changed.
   let custom = $state<Record<number, string>>({});
 
@@ -69,6 +79,10 @@
     }
     const location = locations.find((l) => String(l.id) === locationId);
     if (usable > 0 && !location) return { ok: false, text: 'Choose a destination.' };
+    const needsSize = pieces && !pieces.stockSize && usable > 0;
+    if (needsSize && (!pieceLength.trim() || (pieces.widthLabel && !pieceWidth.trim()))) {
+      return { ok: false, text: 'Enter the size of the pieces.' };
+    }
     let assigned = 0;
     for (const commitment of commitments) {
       const quantity = assignedTo(commitment.id);
@@ -87,7 +101,7 @@
     const remainder = line.outstanding - usable - bad;
     const parts = [
       usable > 0
-        ? `Adds ${formatQuantity(usable, line.baseUnit)} to ${location!.name}`
+        ? `Adds ${pieces ? `${usable} piece(s)` : formatQuantity(usable, line.baseUnit)} to ${location!.name}`
         : 'Adds no usable stock',
     ];
     if (assigned > 0) parts.push(`${formatQuantity(assigned, line.baseUnit)} of it reserved for projects`);
@@ -139,6 +153,28 @@
       </select>
     </label>
   </div>
+  {#if pieces}
+    <div class="flex flex-wrap items-end gap-3">
+      {#if pieces.stockSize}
+        <p class="text-gray-700">
+          Each usable unit becomes one piece of {formatPieceSize(pieces.stockSize)}, the stock size of the SKU.
+          Enter another size to change it.
+        </p>
+      {:else}
+        <p class="w-full text-gray-700">The SKU has no stock size. Enter the size of each piece (mm, or add in).</p>
+      {/if}
+      <label class="block">
+        <span>{pieces.lengthLabel}</span>
+        <input name="piece_length" bind:value={pieceLength} placeholder={pieces.stockSize ? String(pieces.stockSize.lengthMm) : ''} class="input w-28" />
+      </label>
+      {#if pieces.widthLabel}
+        <label class="block">
+          <span>{pieces.widthLabel}</span>
+          <input name="piece_width" bind:value={pieceWidth} placeholder={pieces.stockSize?.widthMm ? String(pieces.stockSize.widthMm) : ''} class="input w-28" />
+        </label>
+      {/if}
+    </div>
+  {/if}
   {#if commitments.length > 0}
     <fieldset class="overflow-x-auto rounded border border-gray-200 p-2">
       <legend class="px-1">

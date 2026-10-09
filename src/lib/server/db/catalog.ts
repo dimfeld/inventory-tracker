@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { TrackingMode } from "#lib/pieces.ts";
 
 export interface Category {
   id: number;
@@ -18,7 +19,28 @@ export interface PartSummary {
   totalQuantity: number;
 }
 
-export interface Part {
+/** How a part's stock is tracked. Dimension attributes are attribute definition IDs. */
+export type PartTracking = {
+  trackingMode: TrackingMode;
+  /** The per-piece length dimension. Set exactly when the part is tracked as pieces. */
+  pieceLengthAttributeId: number | null;
+  /** The per-piece width dimension of 2D pieces, or null. */
+  pieceWidthAttributeId: number | null;
+  /** Material lost to each cut, in mm. */
+  kerfMm: number;
+  /** The shortest offcut worth keeping, in mm. */
+  minOffcutMm: number;
+};
+
+export const BULK_TRACKING: PartTracking = {
+  trackingMode: "bulk",
+  pieceLengthAttributeId: null,
+  pieceWidthAttributeId: null,
+  kerfMm: 0,
+  minOffcutMm: 0,
+};
+
+export interface Part extends PartTracking {
   id: number;
   name: string;
   categoryId: number | null;
@@ -31,7 +53,7 @@ export interface Part {
 }
 
 // A type alias (not an interface) so it can be passed as named SQL bindings.
-export type PartFields = {
+export type PartFields = PartTracking & {
   name: string;
   categoryId: number | null;
   baseUnit: string;
@@ -78,13 +100,20 @@ export interface SupplierPart {
   url: string | null;
   purchaseUnit: string | null;
   packQuantity: number | null;
+  /** Size in mm of one stock piece of a pieces part, such as a 1220 mm stick. */
+  stockLengthMm: number | null;
+  /** Width in mm of one stock piece of a 2D pieces part. */
+  stockWidthMm: number | null;
 }
 
 export type SupplierPartFields = Omit<SupplierPart, "id">;
 
 const PART_COLUMNS = `p.id, p.name, p.category_id AS categoryId, c.name AS categoryName,
   p.base_unit AS baseUnit, p.manufacturer, p.part_number AS partNumber, p.notes,
-  p.archived_at AS archivedAt`;
+  p.archived_at AS archivedAt, p.tracking_mode AS trackingMode,
+  p.piece_length_attribute_id AS pieceLengthAttributeId,
+  p.piece_width_attribute_id AS pieceWidthAttributeId, p.kerf_mm AS kerfMm,
+  p.min_offcut_mm AS minOffcutMm`;
 
 export function listCategories(db: Database): Category[] {
   return db
@@ -134,8 +163,11 @@ export function findActivePartByName(db: Database, name: string): Part | null {
 export function insertPart(db: Database, fields: PartFields): number {
   const row = db
     .query<{ id: number }, PartFields>(
-      `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes)
-       VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes)
+      `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes,
+         tracking_mode, piece_length_attribute_id, piece_width_attribute_id, kerf_mm,
+         min_offcut_mm)
+       VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes, $trackingMode,
+         $pieceLengthAttributeId, $pieceWidthAttributeId, $kerfMm, $minOffcutMm)
        RETURNING id`
     )
     .get(fields);
@@ -146,9 +178,30 @@ export function updatePart(db: Database, id: number, fields: PartFields): void {
   db.query<unknown, PartFields & { id: number }>(
     `UPDATE parts SET name = $name, category_id = $categoryId, base_unit = $baseUnit,
        manufacturer = $manufacturer, part_number = $partNumber, notes = $notes,
+       tracking_mode = $trackingMode, piece_length_attribute_id = $pieceLengthAttributeId,
+       piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
+       min_offcut_mm = $minOffcutMm,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
+}
+
+/** Change how a part's stock is tracked. Run it in a transaction with the stock changes. */
+export function setPartTracking(db: Database, id: number, tracking: PartTracking): void {
+  db.query<unknown, PartTracking & { id: number }>(
+    `UPDATE parts SET tracking_mode = $trackingMode,
+       piece_length_attribute_id = $pieceLengthAttributeId,
+       piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
+       min_offcut_mm = $minOffcutMm, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = $id`
+  ).run({ ...tracking, id });
+}
+
+export function renamePart(db: Database, id: number, name: string): void {
+  db.run(
+    "UPDATE parts SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+    [name, id]
+  );
 }
 
 export function setPartArchived(db: Database, id: number, archived: boolean): void {
@@ -188,6 +241,14 @@ export function getAttributeDefinition(db: Database, key: string): AttributeDefi
       `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions WHERE key = ?`
     )
     .get(key);
+}
+
+export function getAttributeDefinitionById(db: Database, id: number): AttributeDefinition | null {
+  return db
+    .query<AttributeDefinition, [number]>(
+      `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions WHERE id = ?`
+    )
+    .get(id);
 }
 
 export function insertAttributeDefinition(
@@ -244,6 +305,18 @@ export function replacePartAttributes(
   }
 }
 
+export function deletePartAttributes(db: Database, partId: number, attributeIds: number[]): void {
+  db.run(
+    "DELETE FROM part_attributes WHERE part_id = ? AND attribute_id IN (SELECT value FROM json_each(?))",
+    [partId, JSON.stringify(attributeIds)]
+  );
+}
+
+/** Add an alias to a part unless it already has it. */
+export function addPartAlias(db: Database, partId: number, alias: string): void {
+  db.run("INSERT OR IGNORE INTO part_aliases (part_id, alias) VALUES (?, ?)", [partId, alias]);
+}
+
 export function listPartAliases(db: Database, partId: number): string[] {
   return db
     .query<{ alias: string }, [number]>(
@@ -287,19 +360,23 @@ export function replacePartTags(db: Database, partId: number, tags: string[]): v
   }
 }
 
+const SUPPLIER_PART_COLUMNS = `id, supplier, sku, url, purchase_unit AS purchaseUnit,
+  pack_quantity AS packQuantity, stock_length_mm AS stockLengthMm, stock_width_mm AS stockWidthMm`;
+
 export function listSupplierParts(db: Database, partId: number): SupplierPart[] {
   return db
     .query<SupplierPart, [number]>(
-      `SELECT id, supplier, sku, url, purchase_unit AS purchaseUnit, pack_quantity AS packQuantity
-       FROM supplier_parts WHERE part_id = ? ORDER BY supplier, sku`
+      `SELECT ${SUPPLIER_PART_COLUMNS} FROM supplier_parts WHERE part_id = ? ORDER BY supplier, sku`
     )
     .all(partId);
 }
 
 export function insertSupplierPart(db: Database, partId: number, fields: SupplierPartFields): void {
   db.query<unknown, SupplierPartFields & { partId: number }>(
-    `INSERT INTO supplier_parts (part_id, supplier, sku, url, purchase_unit, pack_quantity)
-     VALUES ($partId, $supplier, $sku, $url, $purchaseUnit, $packQuantity)`
+    `INSERT INTO supplier_parts (part_id, supplier, sku, url, purchase_unit, pack_quantity,
+       stock_length_mm, stock_width_mm)
+     VALUES ($partId, $supplier, $sku, $url, $purchaseUnit, $packQuantity, $stockLengthMm,
+       $stockWidthMm)`
   ).run({ ...fields, partId });
 }
 
@@ -311,7 +388,8 @@ export function updateSupplierPart(
 ): void {
   db.query<unknown, SupplierPartFields & { id: number; partId: number }>(
     `UPDATE supplier_parts SET supplier = $supplier, sku = $sku, url = $url,
-       purchase_unit = $purchaseUnit, pack_quantity = $packQuantity
+       purchase_unit = $purchaseUnit, pack_quantity = $packQuantity,
+       stock_length_mm = $stockLengthMm, stock_width_mm = $stockWidthMm
      WHERE id = $id AND part_id = $partId`
   ).run({ ...fields, id, partId });
 }
@@ -334,6 +412,35 @@ export function findSupplierPart(
       )
       .get(partId, supplier, sku)?.id ?? null
   );
+}
+
+/** Set the stock size of every supplier SKU of a part. */
+export function setSupplierStockSizes(
+  db: Database,
+  partId: number,
+  lengthMm: number | null,
+  widthMm: number | null
+): void {
+  db.run("UPDATE supplier_parts SET stock_length_mm = ?, stock_width_mm = ? WHERE part_id = ?", [
+    lengthMm,
+    widthMm,
+    partId,
+  ]);
+}
+
+/** The part's supplier SKU row for `supplier` and `sku`, or null. */
+export function getSupplierPartBySku(
+  db: Database,
+  partId: number,
+  supplier: string,
+  sku: string
+): SupplierPart | null {
+  return db
+    .query<SupplierPart, [number, string, string]>(
+      `SELECT ${SUPPLIER_PART_COLUMNS} FROM supplier_parts
+       WHERE part_id = ? AND supplier = ? AND sku = ?`
+    )
+    .get(partId, supplier, sku);
 }
 
 /**

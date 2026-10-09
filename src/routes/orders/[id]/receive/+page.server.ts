@@ -20,6 +20,7 @@ export const load: PageServerLoad = ({ params }) => {
       .filter((line) => line.outstanding > 0)
       .toSorted((a, b) => awaitingFirst(a.deliveryState) - awaitingFirst(b.deliveryState)),
     commitments: details.commitments,
+    pieceLines: inventory().receipts.pieceLines(details.order.id),
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission returns the receipt it already created.

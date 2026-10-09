@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { CommitmentAssignment } from "#lib/commitments.ts";
+import { getPart, getSupplierPartBySku, type Part } from "#lib/server/db/catalog.ts";
 import { getLocation } from "#lib/server/db/locations.ts";
 import { insertMovement } from "#lib/server/db/movements.ts";
 import {
@@ -19,6 +20,12 @@ import {
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
+import {
+  checkPieceSize,
+  insertIncomingPieces,
+  pieceDimensions,
+  type PieceSizeInput,
+} from "./pieces";
 
 export interface ReceiptLineInput {
   orderLineId: number;
@@ -36,6 +43,11 @@ export interface ReceiptLineInput {
    * assigns it in commitment sequence order.
    */
   assignments?: CommitmentAssignment[] | null;
+  /**
+   * Size of every accepted piece of a part tracked as pieces. Absent uses the stock size of the
+   * line's supplier SKU.
+   */
+  pieceSize?: { lengthMm: number; widthMm: number | null } | null;
 }
 
 export interface ReceiptInput {
@@ -97,6 +109,15 @@ export const noReceiptHooks: ReceiptHooks = {
   onLineReceived() {},
 };
 
+/** An order line of a part tracked as pieces, as the receipt form needs it. */
+export interface PieceReceiptLine {
+  lengthLabel: string;
+  /** Null for 1D pieces. */
+  widthLabel: string | null;
+  /** The supplier SKU's stock size, or null when the receipt must give the size. */
+  stockSize: PieceSizeInput | null;
+}
+
 export interface ReceiptServiceOptions {
   hooks?: ReceiptHooks;
 }
@@ -138,6 +159,41 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
     }
   }
 
+  /** The stock size of the order line's supplier SKU, or null when it has none. */
+  function skuStockSize(order: Order, line: OrderLine): PieceSizeInput | null {
+    if (!line.supplierSku) return null;
+    const sku = getSupplierPartBySku(db, line.partId, order.supplier, line.supplierSku);
+    if (sku?.stockLengthMm == null) return null;
+    return { lengthMm: sku.stockLengthMm, widthMm: sku.stockWidthMm };
+  }
+
+  /**
+   * The size of the pieces a receipt line makes: the input's size, or else the stock size of
+   * the order line's supplier SKU.
+   */
+  function receivedPieceSize(
+    order: Order,
+    line: OrderLine,
+    part: Part,
+    input: ReceiptLineInput
+  ): PieceSizeInput {
+    const size = input.pieceSize ?? skuStockSize(order, line);
+    if (!size) {
+      throw new InventoryError(
+        `${line.partName}: the supplier SKU has no stock size. Enter the size of the pieces.`
+      );
+    }
+    try {
+      checkPieceSize(pieceDimensions(db, part), size);
+    } catch (error) {
+      if (error instanceof InventoryError) {
+        throw new InventoryError(`${line.partName}: ${error.message}`);
+      }
+      throw error;
+    }
+    return size;
+  }
+
   function checkLine(line: OrderLine, input: ReceiptLineInput) {
     const amounts = [input.acceptedQuantity, input.damagedQuantity];
     if (amounts.some((amount) => !Number.isInteger(amount) || amount < 0)) {
@@ -169,10 +225,12 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
       const existing = existingResult(input.operationId);
       if (existing) return existing;
 
-      requireReceivable(input.orderId);
+      const order = requireReceivable(input.orderId);
       if (input.lines.length === 0) throw new InventoryError("Choose at least one line to receive");
       const orderLines = new Map(listOrderLines(db, input.orderId).map((l) => [l.id, l]));
       const seen = new Set<number>();
+      // Size of the received pieces of each pieces line, by order line ID.
+      const pieceSizes = new Map<number, PieceSizeInput>();
       for (const lineInput of input.lines) {
         const line = orderLines.get(lineInput.orderLineId);
         if (!line) {
@@ -181,6 +239,10 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
         if (seen.has(line.id)) throw new InventoryError(`${line.partName} is listed twice`);
         seen.add(line.id);
         checkLine(line, lineInput);
+        const part = getPart(db, line.partId)!;
+        if (part.trackingMode === "pieces" && lineInput.acceptedQuantity > 0) {
+          pieceSizes.set(line.id, receivedPieceSize(order, line, part, lineInput));
+        }
       }
 
       const receiptId = insertReceipt(db, {
@@ -208,7 +270,24 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
         // A receipt is the delivery and the review of what arrived, even when the line was
         // never marked delivered.
         recordReceiptDelivery(db, line.id, input.receivedOn);
-        if (lineInput.acceptedQuantity > 0) {
+        const pieceSize = pieceSizes.get(line.id);
+        if (pieceSize) {
+          // One new piece per accepted unit. Commitments to pieces parts cannot be made yet,
+          // so the commitment hook does not run; fitting below releases any that remain.
+          insertIncomingPieces(
+            db,
+            getPart(db, line.partId)!,
+            Array.from({ length: lineInput.acceptedQuantity }, () => pieceSize),
+            {
+              operationId: `${input.operationId}:${line.id}`,
+              toLocationId: lineInput.locationId,
+              movementType: "receipt",
+              occurredOn: input.receivedOn,
+              reason: null,
+              receiptLineId,
+            }
+          );
+        } else if (lineInput.acceptedQuantity > 0) {
           const movement = insertMovement(db, {
             // Movement operation IDs are unique, so each line gets its own.
             operationId: `${input.operationId}:${line.id}`,
@@ -243,6 +322,27 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
   }
 
   return {
+    /**
+     * Receipt details of the order's lines of parts tracked as pieces, by order line ID: the
+     * dimension labels, and the SKU stock size that receipts use when no size is entered.
+     */
+    pieceLines(orderId: number): Record<number, PieceReceiptLine> {
+      const order = getOrder(db, orderId);
+      if (!order) return {};
+      const result: Record<number, PieceReceiptLine> = {};
+      for (const line of listOrderLines(db, orderId)) {
+        const part = getPart(db, line.partId)!;
+        if (part.trackingMode !== "pieces") continue;
+        const { length, width } = pieceDimensions(db, part);
+        result[line.id] = {
+          lengthLabel: length.label,
+          widthLabel: width?.label ?? null,
+          stockSize: skuStockSize(order, line),
+        };
+      }
+      return result;
+    },
+
     /**
      * Record one receipt of some or all of an order's lines. A repeated operation ID returns
      * the receipt it created without writing again. Accepted and damaged amounts together

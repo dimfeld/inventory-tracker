@@ -9,7 +9,9 @@ import {
 } from "#lib/server/db/commitments.ts";
 import { getOrder, getOrderLine, listIncomingLines } from "#lib/server/db/orders.ts";
 import { getBomLine, getProject, type BomLine, type Project } from "#lib/server/db/projects.ts";
+import { getPart } from "#lib/server/db/catalog.ts";
 import { InventoryError, NotFoundError } from "#lib/server/inventory/errors.ts";
+import { requireBulkPart } from "#lib/server/inventory/pieces.ts";
 import { assertUnit, formatQuantity, UNITS } from "#lib/units.ts";
 import { absoluteQuantity, allowedPartIds, lineCoverage, loadAllocations } from "./coverage";
 import { unitsCompatible } from "./matching";
@@ -140,6 +142,10 @@ export function createCommitmentService(db: Database) {
         const orderLine = getOrderLine(db, input.orderLineId);
         if (!orderLine) throw new NotFoundError(`Order line ${input.orderLineId} does not exist`);
         const { baseUnit, partName } = orderLine;
+        requireBulkPart({
+          name: partName,
+          trackingMode: getPart(db, orderLine.partId)!.trackingMode,
+        });
         wholeQuantity(input.quantity, baseUnit);
         if (getOrder(db, orderLine.orderId)?.status === "draft") {
           throw new InventoryError("Draft orders are not incoming supply. Place the order first.");
@@ -209,8 +215,13 @@ export function createCommitmentService(db: Database) {
     listIncomingOptions(projectId: number, lineId: number): IncomingOption[] {
       const line = requireLine(projectId, lineId);
       const committed = committedByOrderLine(db);
+      // Supply of parts tracked as pieces cannot be committed yet.
       return listIncomingLines(db, [...allowedPartIds(db, line)])
-        .filter((incoming) => unitsCompatible(line.unit, incoming.baseUnit))
+        .filter(
+          (incoming) =>
+            unitsCompatible(line.unit, incoming.baseUnit) &&
+            getPart(db, incoming.partId)?.trackingMode !== "pieces"
+        )
         .map((incoming) => {
           const total = committed.get(incoming.orderLineId) ?? 0;
           return {
