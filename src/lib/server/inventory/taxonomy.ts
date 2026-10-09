@@ -234,6 +234,18 @@ export function createTaxonomyService(db: Database) {
       });
     },
 
+    /** Set one attribute value on several parts, such as to make parts equal before a merge. */
+    setPartsValue(partIds: number[], key: string, value: string): void {
+      inTransaction(() => {
+        const definition = requireAttribute(key);
+        if (!value.trim()) throw new InventoryError("Enter the value");
+        for (const partId of partIds) {
+          if (!getPart(db, partId)) throw new NotFoundError(`Part ${partId} does not exist`);
+          storeValue(definition, partId, value.trim());
+        }
+      });
+    },
+
     /** Move a part to a category, or with null remove its category. Its attributes stay. */
     setPartCategory(partId: number, categoryId: number | null): void {
       inTransaction(() => {

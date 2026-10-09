@@ -22,6 +22,11 @@ export const load: PageServerLoad = ({ params }) => {
       .partOptions()
       .filter((p) => p.id !== details.part.id && p.baseUnit === baseUnit),
     units: isUnit(baseUnit) ? compatibleUnits(baseUnit) : [],
+    /** Number attributes in mm, which can be piece dimensions. */
+    dimensionOptions: catalog
+      .attributeOptions()
+      .definitions.filter((d) => d.valueType === "number" && d.canonicalUnit === "mm")
+      .map(({ key, label }) => ({ key, label })),
     today: today(),
     // One ID per page load; a repeated submission of the same form is rejected.
     operationId: crypto.randomUUID(),

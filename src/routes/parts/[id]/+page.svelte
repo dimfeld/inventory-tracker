@@ -7,6 +7,7 @@
   import SearchSelect from '#lib/components/SearchSelect.svelte';
   import { mergePart } from './merge.remote';
   import { addPieces, movePiece, removePiece } from './pieces.remote';
+  import ConvertToPieces from './ConvertToPieces.svelte';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
@@ -21,6 +22,7 @@
     project_use: 'Used by project',
     project_return: 'Returned from project',
     receipt: 'Order receipt',
+    conversion: 'Converted to pieces',
   };
 
   const part = $derived(data.part);
@@ -76,6 +78,8 @@
   }
   const issuesOf = (f: { fields: { allIssues(): { message: string }[] | undefined } }) =>
     f.fields.allIssues()?.map((issue) => issue.message).join('. ');
+
+  let converting = $state(false);
 
   let mergeDestinationId = $state('');
   const mergeDestination = $derived(data.mergeTargets.find((p) => String(p.id) === mergeDestinationId));
@@ -366,6 +370,26 @@
     </form>
   </div>
 </section>
+{/if}
+
+{#if !isPieces && !part.archivedAt && part.baseUnit === 'pcs'}
+  <section class="mt-6">
+    <h2 class="section-title">Convert to piece-tracked</h2>
+    {#if converting}
+      <ConvertToPieces
+        part={{ id: part.id, name: part.name }}
+        candidates={data.mergeTargets}
+        dimensionOptions={data.dimensionOptions}
+        operationId={data.operationId}
+        today={data.today}
+      />
+    {:else}
+      <p class="mb-2 text-sm text-gray-600">
+        Track this part, and other lengths or sizes of it, as individual pieces with their own size.
+      </p>
+      <button type="button" class="btn-secondary" onclick={() => (converting = true)}>Start conversion</button>
+    {/if}
+  </section>
 {/if}
 
 {#snippet pieceSize(piece: { lengthMm: number; widthMm: number | null })}

@@ -186,6 +186,24 @@ export function updatePart(db: Database, id: number, fields: PartFields): void {
   ).run({ ...fields, id });
 }
 
+/** Change how a part's stock is tracked. Run it in a transaction with the stock changes. */
+export function setPartTracking(db: Database, id: number, tracking: PartTracking): void {
+  db.query<unknown, PartTracking & { id: number }>(
+    `UPDATE parts SET tracking_mode = $trackingMode,
+       piece_length_attribute_id = $pieceLengthAttributeId,
+       piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
+       min_offcut_mm = $minOffcutMm, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = $id`
+  ).run({ ...tracking, id });
+}
+
+export function renamePart(db: Database, id: number, name: string): void {
+  db.run(
+    "UPDATE parts SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+    [name, id]
+  );
+}
+
 export function setPartArchived(db: Database, id: number, archived: boolean): void {
   db.query<unknown, [number, number]>(
     `UPDATE parts SET archived_at = CASE WHEN ? THEN coalesce(archived_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) END,
@@ -287,6 +305,18 @@ export function replacePartAttributes(
   }
 }
 
+export function deletePartAttributes(db: Database, partId: number, attributeIds: number[]): void {
+  db.run(
+    "DELETE FROM part_attributes WHERE part_id = ? AND attribute_id IN (SELECT value FROM json_each(?))",
+    [partId, JSON.stringify(attributeIds)]
+  );
+}
+
+/** Add an alias to a part unless it already has it. */
+export function addPartAlias(db: Database, partId: number, alias: string): void {
+  db.run("INSERT OR IGNORE INTO part_aliases (part_id, alias) VALUES (?, ?)", [partId, alias]);
+}
+
 export function listPartAliases(db: Database, partId: number): string[] {
   return db
     .query<{ alias: string }, [number]>(
@@ -382,6 +412,20 @@ export function findSupplierPart(
       )
       .get(partId, supplier, sku)?.id ?? null
   );
+}
+
+/** Set the stock size of every supplier SKU of a part. */
+export function setSupplierStockSizes(
+  db: Database,
+  partId: number,
+  lengthMm: number | null,
+  widthMm: number | null
+): void {
+  db.run("UPDATE supplier_parts SET stock_length_mm = ?, stock_width_mm = ? WHERE part_id = ?", [
+    lengthMm,
+    widthMm,
+    partId,
+  ]);
 }
 
 /** The part's supplier SKU row for `supplier` and `sku`, or null. */

@@ -134,6 +134,18 @@ export function typedAttributeValue(
   return value;
 }
 
+/** The definition of a piece dimension attribute: a numeric attribute measured in mm. */
+export function pieceDimensionDefinition(db: Database, key: string): AttributeDefinition {
+  const definition = getAttributeDefinition(db, key);
+  if (!definition) throw new NotFoundError(`Attribute "${key}" does not exist`);
+  if (definition.valueType !== "number" || definition.canonicalUnit !== "mm") {
+    throw new InventoryError(
+      `${definition.label} cannot be a piece dimension. Make it a number attribute in mm first.`
+    );
+  }
+  return definition;
+}
+
 export function createCatalogService(db: Database) {
   function requirePart(id: number) {
     const part = getPart(db, id);
@@ -234,18 +246,6 @@ export function createCatalogService(db: Database) {
     };
   }
 
-  /** A piece dimension must be a numeric attribute measured in mm. */
-  function dimensionDefinition(key: string): AttributeDefinition {
-    const definition = getAttributeDefinition(db, key);
-    if (!definition) throw new NotFoundError(`Attribute "${key}" does not exist`);
-    if (definition.valueType !== "number" || definition.canonicalUnit !== "mm") {
-      throw new InventoryError(
-        `${definition.label} cannot be a piece dimension. Make it a number attribute in mm first.`
-      );
-    }
-    return definition;
-  }
-
   /** The tracking to save: the input's, or else the existing part's, or else bulk. */
   function trackingOf(input: PartInput, existing: Part | null): PartTracking {
     const tracking = input.tracking;
@@ -275,8 +275,8 @@ export function createCatalogService(db: Database) {
     if (!tracking.lengthKey) {
       throw new InventoryError("Choose the attribute that is the length of each piece");
     }
-    const length = dimensionDefinition(tracking.lengthKey);
-    const width = tracking.widthKey ? dimensionDefinition(tracking.widthKey) : null;
+    const length = pieceDimensionDefinition(db, tracking.lengthKey);
+    const width = tracking.widthKey ? pieceDimensionDefinition(db, tracking.widthKey) : null;
     if (width?.id === length.id) {
       throw new InventoryError("The length and width of a piece must be different attributes");
     }

@@ -13,7 +13,12 @@ export type MovementType =
   /** Project holding location back to storage, for one BOM line. */
   | "project_return"
   /** Accepted stock from an order receipt, from outside to storage. */
-  | "receipt";
+  | "receipt"
+  /**
+   * Conversion of a bulk part to pieces: its bulk balance leaves each location, and the same
+   * stock comes back as pieces.
+   */
+  | "conversion";
 
 // A type alias (not an interface) so it can be passed as named SQL bindings.
 export type NewMovement = {
