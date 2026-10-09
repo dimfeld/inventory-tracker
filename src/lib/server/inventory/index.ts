@@ -3,6 +3,7 @@ import { createCatalogService } from "./catalog";
 import { commitmentReceipts } from "./commitments";
 import { createLocationService } from "./locations";
 import { createOrderService } from "./orders";
+import { createPieceService } from "./pieces";
 import { createReceiptService } from "./receipts";
 import { storageReservations } from "./reservations";
 import { createStockService } from "./stock";
@@ -19,6 +20,7 @@ function createServices() {
     taxonomy: createTaxonomyService(db),
     locations: createLocationService(db),
     stock: createStockService(db, { reservations: storageReservations }),
+    pieces: createPieceService(db),
     orders: createOrderService(db),
     receipts: createReceiptService(db, { hooks: commitmentReceipts }),
   };

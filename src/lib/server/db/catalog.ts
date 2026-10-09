@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { TrackingMode } from "#lib/pieces.ts";
 
 export interface Category {
   id: number;
@@ -18,7 +19,28 @@ export interface PartSummary {
   totalQuantity: number;
 }
 
-export interface Part {
+/** How a part's stock is tracked. Dimension attributes are attribute definition IDs. */
+export type PartTracking = {
+  trackingMode: TrackingMode;
+  /** The per-piece length dimension. Set exactly when the part is tracked as pieces. */
+  pieceLengthAttributeId: number | null;
+  /** The per-piece width dimension of 2D pieces, or null. */
+  pieceWidthAttributeId: number | null;
+  /** Material lost to each cut, in mm. */
+  kerfMm: number;
+  /** The shortest offcut worth keeping, in mm. */
+  minOffcutMm: number;
+};
+
+export const BULK_TRACKING: PartTracking = {
+  trackingMode: "bulk",
+  pieceLengthAttributeId: null,
+  pieceWidthAttributeId: null,
+  kerfMm: 0,
+  minOffcutMm: 0,
+};
+
+export interface Part extends PartTracking {
   id: number;
   name: string;
   categoryId: number | null;
@@ -31,7 +53,7 @@ export interface Part {
 }
 
 // A type alias (not an interface) so it can be passed as named SQL bindings.
-export type PartFields = {
+export type PartFields = PartTracking & {
   name: string;
   categoryId: number | null;
   baseUnit: string;
@@ -84,7 +106,10 @@ export type SupplierPartFields = Omit<SupplierPart, "id">;
 
 const PART_COLUMNS = `p.id, p.name, p.category_id AS categoryId, c.name AS categoryName,
   p.base_unit AS baseUnit, p.manufacturer, p.part_number AS partNumber, p.notes,
-  p.archived_at AS archivedAt`;
+  p.archived_at AS archivedAt, p.tracking_mode AS trackingMode,
+  p.piece_length_attribute_id AS pieceLengthAttributeId,
+  p.piece_width_attribute_id AS pieceWidthAttributeId, p.kerf_mm AS kerfMm,
+  p.min_offcut_mm AS minOffcutMm`;
 
 export function listCategories(db: Database): Category[] {
   return db
@@ -134,8 +159,11 @@ export function findActivePartByName(db: Database, name: string): Part | null {
 export function insertPart(db: Database, fields: PartFields): number {
   const row = db
     .query<{ id: number }, PartFields>(
-      `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes)
-       VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes)
+      `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes,
+         tracking_mode, piece_length_attribute_id, piece_width_attribute_id, kerf_mm,
+         min_offcut_mm)
+       VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes, $trackingMode,
+         $pieceLengthAttributeId, $pieceWidthAttributeId, $kerfMm, $minOffcutMm)
        RETURNING id`
     )
     .get(fields);
@@ -146,6 +174,9 @@ export function updatePart(db: Database, id: number, fields: PartFields): void {
   db.query<unknown, PartFields & { id: number }>(
     `UPDATE parts SET name = $name, category_id = $categoryId, base_unit = $baseUnit,
        manufacturer = $manufacturer, part_number = $partNumber, notes = $notes,
+       tracking_mode = $trackingMode, piece_length_attribute_id = $pieceLengthAttributeId,
+       piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
+       min_offcut_mm = $minOffcutMm,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
@@ -188,6 +219,14 @@ export function getAttributeDefinition(db: Database, key: string): AttributeDefi
       `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions WHERE key = ?`
     )
     .get(key);
+}
+
+export function getAttributeDefinitionById(db: Database, id: number): AttributeDefinition | null {
+  return db
+    .query<AttributeDefinition, [number]>(
+      `SELECT ${DEFINITION_COLUMNS} FROM attribute_definitions WHERE id = ?`
+    )
+    .get(id);
 }
 
 export function insertAttributeDefinition(

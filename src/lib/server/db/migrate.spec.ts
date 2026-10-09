@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "./connection";
 import { migrations, runMigrations } from "./migrate";
+import { getBalance } from "./movements";
 
 describe("migrations", () => {
   it("apply to a fresh database once", () => {
@@ -96,7 +97,9 @@ describe("migrations", () => {
        VALUES (7, 1, 'AliExpress', '100', 'https://example.com', 'pack', 10)`
     );
 
-    expect(runMigrations(db)).toContain("0009_shared_supplier_sku.sql");
+    expect(runMigrations(db, migrations.slice(0, index + 1))).toContain(
+      "0009_shared_supplier_sku.sql"
+    );
     expect(db.query("SELECT * FROM supplier_parts").all()).toEqual([
       {
         id: 7,
@@ -112,6 +115,49 @@ describe("migrations", () => {
     expect(() =>
       db.run("INSERT INTO supplier_parts (part_id, supplier, sku) VALUES (2, 'AliExpress', '100')")
     ).toThrow(/UNIQUE/);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
+  it("adds piece tracking and keeps existing parts and stock as bulk", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.run("PRAGMA foreign_keys = ON");
+    const index = migrations.findIndex((m) => m.name === "0010_stock_pieces.sql");
+    runMigrations(db, migrations.slice(0, index));
+    db.run("INSERT INTO parts (id, name, base_unit) VALUES (1, '2020 extrusion 1220 mm', 'pcs')");
+    db.run("INSERT INTO locations (id, name) VALUES (1, 'Rack'), (2, 'Shelf')");
+    db.run(
+      `INSERT INTO stock_movements (operation_id, part_id, quantity, from_location_id,
+         to_location_id, movement_type, occurred_on) VALUES
+         ('a', 1, 4, NULL, 1, 'opening', '2026-10-01'),
+         ('b', 1, 1, 1, 2, 'transfer', '2026-10-02')`
+    );
+    db.run("INSERT INTO supplier_parts (part_id, supplier, sku) VALUES (1, 'Misumi', 'HFS5')");
+
+    expect(runMigrations(db, migrations.slice(0, index + 1))).toEqual(["0010_stock_pieces.sql"]);
+    expect(
+      db
+        .query(
+          `SELECT tracking_mode, piece_length_attribute_id, piece_width_attribute_id, kerf_mm,
+             min_offcut_mm FROM parts`
+        )
+        .values()
+    ).toEqual([["bulk", null, null, 0, 0]]);
+    expect(db.query("SELECT operation_id, piece_id FROM stock_movements").values()).toEqual([
+      ["a", null],
+      ["b", null],
+    ]);
+    expect(getBalance(db, 1, 1)).toBe(3);
+    expect(getBalance(db, 1, 2)).toBe(1);
+    expect(db.query("SELECT stock_length_mm, stock_width_mm FROM supplier_parts").values()).toEqual(
+      [[null, null]]
+    );
+    // Bulk movements still need no piece.
+    db.run(
+      `INSERT INTO stock_movements (operation_id, part_id, quantity, from_location_id,
+         to_location_id, movement_type, occurred_on)
+       VALUES ('c', 1, 2, 1, NULL, 'loss', '2026-10-03')`
+    );
+    expect(getBalance(db, 1, 1)).toBe(1);
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });

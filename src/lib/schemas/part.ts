@@ -1,3 +1,4 @@
+import type { TrackingMode } from "#lib/pieces.ts";
 import { isUnit, type Unit } from "#lib/units.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
@@ -20,6 +21,19 @@ export interface SupplierPartInput {
   packQuantity: number | null;
 }
 
+/** How the part's stock is tracked. Dimensions are attribute keys. */
+export interface TrackingInput {
+  mode: TrackingMode;
+  /** The per-piece length attribute of a pieces part, such as `length`. */
+  lengthKey: string | null;
+  /** The per-piece width attribute of a 2D pieces part, or null. */
+  widthKey: string | null;
+  /** Material lost to each cut, in mm. */
+  kerfMm: number;
+  /** The shortest offcut worth keeping, in mm. */
+  minOffcutMm: number;
+}
+
 export interface PartInput {
   name: string;
   categoryId: number | null;
@@ -32,6 +46,8 @@ export interface PartInput {
   /** Optional organization labels, lower case. */
   tags: string[];
   supplierParts: SupplierPartInput[];
+  /** Omitted: a new part is bulk, and an updated part keeps its tracking. */
+  tracking?: TrackingInput;
 }
 
 export function normalizeAttributeKey(label: string): string {

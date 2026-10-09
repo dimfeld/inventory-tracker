@@ -83,6 +83,7 @@ describe("catalog service", () => {
       aliases: [],
       tags: ["metric"],
       supplierParts: [],
+      tracking: { mode: "bulk", lengthKey: null, widthKey: null, kerfMm: 0, minOffcutMm: 0 },
     });
     expect(catalog.copyPartInput(id + 1000)).toBeNull();
   });

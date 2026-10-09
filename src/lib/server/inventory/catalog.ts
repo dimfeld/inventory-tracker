@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 import {
+  BULK_TRACKING,
   deleteSupplierPart,
   findSupplierPart,
   getAttributeDefinition,
+  getAttributeDefinitionById,
   getCategory,
   getPart,
   insertAttributeDefinition,
@@ -25,7 +27,9 @@ import {
   updatePart,
   updateSupplierPart,
   type AttributeDefinition,
+  type Part,
   type PartAttributeValue,
+  type PartTracking,
 } from "#lib/server/db/catalog.ts";
 import {
   countPartMovements,
@@ -33,6 +37,7 @@ import {
   listPartMovements,
 } from "#lib/server/db/movements.ts";
 import { countPartOrderLines } from "#lib/server/db/orders.ts";
+import { countPartPieces } from "#lib/server/db/pieces.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
 import {
   expandAttributes,
@@ -42,7 +47,7 @@ import {
   normalizeAttributeValue,
 } from "#lib/attributes.ts";
 import { applicableAttributeKeys, categoryOptions } from "#lib/categories.ts";
-import type { AttributeInput, PartInput } from "#lib/schemas/part.ts";
+import type { AttributeInput, PartInput, TrackingInput } from "#lib/schemas/part.ts";
 import { assertUnit } from "#lib/units.ts";
 import {
   listAttributesOfParts,
@@ -180,7 +185,7 @@ export function createCatalogService(db: Database) {
     saveSupplierParts(partId, input.supplierParts);
   }
 
-  function partFields(input: PartInput) {
+  function partFields(input: PartInput, tracking: PartTracking) {
     return {
       name: input.name,
       categoryId: input.categoryId,
@@ -188,7 +193,81 @@ export function createCatalogService(db: Database) {
       manufacturer: input.manufacturer,
       partNumber: input.partNumber,
       notes: input.notes,
+      ...tracking,
     };
+  }
+
+  /** A piece dimension must be a numeric attribute measured in mm. */
+  function dimensionDefinition(key: string): AttributeDefinition {
+    const definition = getAttributeDefinition(db, key);
+    if (!definition) throw new NotFoundError(`Attribute "${key}" does not exist`);
+    if (definition.valueType !== "number" || definition.canonicalUnit !== "mm") {
+      throw new InventoryError(
+        `${definition.label} cannot be a piece dimension. Make it a number attribute in mm first.`
+      );
+    }
+    return definition;
+  }
+
+  /** The tracking to save: the input's, or else the existing part's, or else bulk. */
+  function trackingOf(input: PartInput, existing: Part | null): PartTracking {
+    const tracking = input.tracking;
+    if (!tracking) {
+      if (!existing) return BULK_TRACKING;
+      const { trackingMode, pieceLengthAttributeId, pieceWidthAttributeId, kerfMm, minOffcutMm } =
+        existing;
+      return { trackingMode, pieceLengthAttributeId, pieceWidthAttributeId, kerfMm, minOffcutMm };
+    }
+    for (const [label, value] of [
+      ["Kerf", tracking.kerfMm],
+      ["Minimum offcut", tracking.minOffcutMm],
+    ] as const) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw new InventoryError(`${label} must be zero or more mm`);
+      }
+    }
+    const settings = { kerfMm: tracking.kerfMm, minOffcutMm: tracking.minOffcutMm };
+    if (tracking.mode === "bulk") return { ...BULK_TRACKING, ...settings };
+    return { ...pieceDimensions(input, tracking), ...settings };
+  }
+
+  function pieceDimensions(input: PartInput, tracking: TrackingInput) {
+    if (input.baseUnit !== "pcs") {
+      throw new InventoryError("A part tracked as pieces counts pieces. Use the pcs base unit.");
+    }
+    if (!tracking.lengthKey) {
+      throw new InventoryError("Choose the attribute that is the length of each piece");
+    }
+    const length = dimensionDefinition(tracking.lengthKey);
+    const width = tracking.widthKey ? dimensionDefinition(tracking.widthKey) : null;
+    if (width?.id === length.id) {
+      throw new InventoryError("The length and width of a piece must be different attributes");
+    }
+    return {
+      trackingMode: "pieces" as const,
+      pieceLengthAttributeId: length.id,
+      pieceWidthAttributeId: width?.id ?? null,
+    };
+  }
+
+  /** Stock already recorded must keep the tracking it was recorded with. */
+  function checkTrackingChange(part: Part, tracking: PartTracking) {
+    if (tracking.trackingMode !== part.trackingMode && countPartMovements(db, part.id) > 0) {
+      throw new InventoryError(
+        "The tracking mode cannot change after stock has been recorded. Convert the part instead."
+      );
+    }
+    const wasFlat = part.pieceWidthAttributeId !== null;
+    const isFlat = tracking.pieceWidthAttributeId !== null;
+    if (wasFlat !== isFlat && countPartPieces(db, part.id) > 0) {
+      throw new InventoryError(
+        "A width dimension cannot be added or removed after pieces have been recorded"
+      );
+    }
+  }
+
+  function attributeKey(id: number | null): string | null {
+    return id === null ? null : (getAttributeDefinitionById(db, id)?.key ?? null);
   }
 
   /** Typed conditions for a filter. Values are normalized with the attribute's own rule. */
@@ -292,7 +371,7 @@ export function createCatalogService(db: Database) {
     createPart(input: PartInput): number {
       return db.transaction(() => {
         checkCategory(input.categoryId);
-        const id = insertPart(db, partFields(input));
+        const id = insertPart(db, partFields(input, trackingOf(input, null)));
         saveDetails(id, input);
         return id;
       })();
@@ -310,7 +389,9 @@ export function createCatalogService(db: Database) {
             "The base unit cannot change after stock or orders have been recorded, because existing quantities use it"
           );
         }
-        updatePart(db, id, partFields(input));
+        const tracking = trackingOf(input, part);
+        checkTrackingChange(part, tracking);
+        updatePart(db, id, partFields(input, tracking));
         saveDetails(id, input);
       })();
     },
@@ -327,6 +408,11 @@ export function createCatalogService(db: Database) {
         }
         const source = requirePart(sourceId);
         const destination = requirePart(destinationId);
+        if (source.trackingMode === "pieces" || destination.trackingMode === "pieces") {
+          throw new InventoryError(
+            "Parts tracked as pieces cannot be merged. Convert the parts to pieces instead."
+          );
+        }
         if (source.baseUnit !== destination.baseUnit) {
           throw new InventoryError(
             `Both parts must use the same base unit, because quantities use it (${source.baseUnit} and ${destination.baseUnit})`
@@ -399,6 +485,13 @@ export function createCatalogService(db: Database) {
         aliases: [],
         tags: listPartTags(db, id),
         supplierParts: [],
+        tracking: {
+          mode: part.trackingMode,
+          lengthKey: attributeKey(part.pieceLengthAttributeId),
+          widthKey: attributeKey(part.pieceWidthAttributeId),
+          kerfMm: part.kerfMm,
+          minOffcutMm: part.minOffcutMm,
+        },
       };
     },
 

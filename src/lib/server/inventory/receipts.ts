@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { CommitmentAssignment } from "#lib/commitments.ts";
+import { getPart } from "#lib/server/db/catalog.ts";
 import { getLocation } from "#lib/server/db/locations.ts";
 import { insertMovement } from "#lib/server/db/movements.ts";
 import {
@@ -19,6 +20,7 @@ import {
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
+import { requireBulkPart } from "./pieces";
 
 export interface ReceiptLineInput {
   orderLineId: number;
@@ -156,6 +158,7 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
           "Correct the order line first if more arrived."
       );
     }
+    requireBulkPart({ name: line.partName, trackingMode: getPart(db, line.partId)!.trackingMode });
     if (input.acceptedQuantity > 0) {
       requireStorage(input.locationId);
       if (line.partArchived) {
