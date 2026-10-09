@@ -53,6 +53,7 @@ Check each of these and collect concrete proposals with the affected parts and v
 for the plan):
 
 **Categories**
+
 - Parts without a category, and parts in a parent category that fit a child category.
 - Parts in the wrong category (for example, a tool in Hardware).
 - Groups of similar parts that have no category of their own, or categories that are empty
@@ -60,6 +61,7 @@ for the plan):
 - Hierarchy that does not make sense (a category under the wrong parent).
 
 **Attribute definitions**
+
 - Useful attributes that do not exist yet, which part names show clearly (for example, shank
   diameter for CNC bits, or color for LEDs).
 - Two definitions for the same property (synonyms such as `od` and `outer_diameter`).
@@ -69,6 +71,7 @@ for the plan):
   required flags that do not fit.
 
 **Attribute values**
+
 - Values that mean the same but are written differently: case, spelling, or synonyms (for
   example `Socket head`, `socket-head`, and `Hexagon socket head cap`). Propose one standard
   form for each group.
@@ -114,16 +117,36 @@ category created earlier in the same plan can be used by its path in later opera
 ```json
 [
   { "op": "createCategory", "name": "Nuts", "parent": "Hardware / Fasteners" },
-  { "op": "updateCategory", "category": "Hardware / Materials", "name": "Raw materials", "parent": null },
+  {
+    "op": "updateCategory",
+    "category": "Hardware / Materials",
+    "name": "Raw materials",
+    "parent": null
+  },
   { "op": "deleteCategory", "category": "Electronics / Passives / Capacitors" },
   { "op": "setPartCategory", "partIds": [80, 91], "category": "Hardware / Fasteners / Nuts" },
-  { "op": "createAttribute", "key": "shank_diameter", "label": "Shank diameter",
-    "valueType": "number", "normalization": "length", "canonicalUnit": "mm" },
+  {
+    "op": "createAttribute",
+    "key": "shank_diameter",
+    "label": "Shank diameter",
+    "valueType": "number",
+    "normalization": "length",
+    "canonicalUnit": "mm"
+  },
   { "op": "updateAttribute", "key": "head", "label": "Head type" },
   { "op": "deleteAttribute", "key": "unused_key" },
-  { "op": "setApplicability", "key": "shank_diameter", "category": "Tooling / CNC bits", "required": true },
+  {
+    "op": "setApplicability",
+    "key": "shank_diameter",
+    "category": "Tooling / CNC bits",
+    "required": true
+  },
   { "op": "replaceValue", "key": "head", "from": "socket-head", "to": "Socket head" },
-  { "op": "setPartValues", "key": "shank_diameter", "values": { "65": "3.175 mm", "70": "6.35 mm" } }
+  {
+    "op": "setPartValues",
+    "key": "shank_diameter",
+    "values": { "65": "3.175 mm", "70": "6.35 mm" }
+  }
 ]
 ```
 
@@ -140,14 +163,14 @@ Keys are lowercase with `_` (`shank_diameter`); the key cannot change later. Val
 `text`, `number`, and `boolean`. The rules (from `src/lib/attributes.ts`) turn raw text into a
 typed value for filters and BOM matching:
 
-| Rule | Reads | Notes |
-|---|---|---|
-| `length` | `8`, `8 mm`, `1.2 cm`, `0.125 in`, `0.1"` | Stored in mm. A bare number is mm. **No fractions** (`1/8"`) and **no feet**: write `3.175 mm` or `0.125 in`, and `1000 mm` for `3.28 ft`. |
-| `thread` | `M3`, `M3x8` | Metric threads. |
-| `resistance`, `capacitance`, `voltage`, `power`, `percent` | `4k7`, `100n`, `5V`, `0.5W`, `5%` | Engineering notation. |
-| `count` | `2`, `4 pin`, `3POS` | Whole numbers. |
-| `keyword` | any text | Compared without case. Use for types and materials. |
-| `code` | any text | Compared in upper case. Use for part codes, packages, and IC names. |
+| Rule                                                       | Reads                                     | Notes                                                                                                                                      |
+| ---------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `length`                                                   | `8`, `8 mm`, `1.2 cm`, `0.125 in`, `0.1"` | Stored in mm. A bare number is mm. **No fractions** (`1/8"`) and **no feet**: write `3.175 mm` or `0.125 in`, and `1000 mm` for `3.28 ft`. |
+| `thread`                                                   | `M3`, `M3x8`                              | Metric threads.                                                                                                                            |
+| `resistance`, `capacitance`, `voltage`, `power`, `percent` | `4k7`, `100n`, `5V`, `0.5W`, `5%`         | Engineering notation.                                                                                                                      |
+| `count`                                                    | `2`, `4 pin`, `3POS`                      | Whole numbers.                                                                                                                             |
+| `keyword`                                                  | any text                                  | Compared without case. Use for types and materials.                                                                                        |
+| `code`                                                     | any text                                  | Compared in upper case. Use for part codes, packages, and IC names.                                                                        |
 
 A `number` attribute without a rule takes only plain numbers (for example `tip_angle`: `90`).
 
