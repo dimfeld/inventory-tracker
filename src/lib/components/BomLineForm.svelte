@@ -131,7 +131,8 @@
   <div class="grid gap-4 sm:grid-cols-2">
     <label class="block sm:col-span-2">
       <span class="text-sm">Description (as written in the BOM)</span>
-      <input name="description" required bind:value={description} class="input" />
+      <input name="description" bind:value={description} class="input" />
+      <span class="text-sm text-gray-600">Optional. Empty uses the part name, or the category and constraints, with the cut size.</span>
       {#if errors?.description}<span class="text-sm text-red-700">{errors.description}</span>{/if}
     </label>
 

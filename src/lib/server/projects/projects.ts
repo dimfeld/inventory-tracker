@@ -55,7 +55,7 @@ import {
 import { parseId } from "#lib/schemas/result.ts";
 import { typedAttributeValue } from "#lib/server/inventory/catalog.ts";
 import { InventoryError, NotFoundError } from "#lib/server/inventory/errors.ts";
-import type { PieceDisplayUnit } from "#lib/pieces.ts";
+import { formatSize, type PieceDisplayUnit } from "#lib/pieces.ts";
 import { assertUnit, toBaseQuantity } from "#lib/units.ts";
 import {
   noBomAllocations,
@@ -214,7 +214,48 @@ export function createProjectService(db: Database, options: ProjectServiceOption
     }
   }
 
-  /** Validate a line form and convert its amount to an exact integer quantity. */
+  /**
+   * A description for a row without one: the exact part's name, or else the requirement, such
+   * as "Screws: thread M3x8, head pan, length at least 8 mm", followed by the cut size, such as
+   * "2020 extrusion, 415 mm". Throws when the row has neither a part nor a requirement.
+   */
+  function generatedDescription(input: BomLineInput, part: Part | null): string {
+    const name = requirementName(input, part);
+    if (input.cutLengthMm === null) return name;
+    const unit = part?.trackingMode === "pieces" ? part.pieceDisplayUnit : "mm";
+    const size = { lengthMm: input.cutLengthMm, widthMm: input.cutWidthMm };
+    return `${name}, ${formatSize(size, unit)}`;
+  }
+
+  /** The part's name, or the requirement's category, identifiers, and constraints. */
+  function requirementName(input: BomLineInput, part: Part | null): string {
+    if (part) return part.name;
+    const constraints = input.constraints.map((constraint) => {
+      const label = getAttributeDefinition(db, constraint.key)?.label ?? constraint.key;
+      if (constraint.comparison === "at_least") return `${label} at least ${constraint.value}`;
+      if (constraint.comparison === "range") {
+        return `${label} ${constraint.value} to ${constraint.maxValue}`;
+      }
+      return `${label} ${constraint.value}`;
+    });
+    const details = [input.manufacturer, input.partNumber, ...constraints].filter(
+      (detail): detail is string => !!detail
+    );
+    const category =
+      input.categoryId === null ? null : (getCategory(db, input.categoryId)?.name ?? null);
+    if (category === null && details.length === 0) {
+      throw new InventoryError(
+        "Enter a description, or choose a part, a category, or constraints to name the row"
+      );
+    }
+    if (category === null) return details.join(", ");
+    return details.length === 0 ? category : `${category}: ${details.join(", ")}`;
+  }
+
+  /**
+   * Validate a line form and convert its amount to an exact integer quantity. An empty
+   * description is generated from the part or requirement.
+   */
   function lineFields(
     projectId: number,
     input: BomLineInput,
@@ -245,7 +286,7 @@ export function createProjectService(db: Database, options: ProjectServiceOption
 
     return {
       componentId: input.componentId,
-      description: input.description,
+      description: input.description.trim() || generatedDescription(input, part),
       quantity,
       unit,
       partId: input.partId,

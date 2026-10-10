@@ -140,6 +140,54 @@ describe("projects and BOM lines", () => {
   });
 });
 
+describe("generated BOM row descriptions", () => {
+  it("names an empty description after the part or requirement, with the cut size", () => {
+    const { catalog, projects } = createTestProjects();
+    const screws = categoryIdByPath(catalog, "Hardware / Fasteners / Screws");
+    const tracking = (widthKey: string | null) => ({
+      mode: "pieces" as const,
+      lengthKey: "length",
+      widthKey,
+      kerfMm: 3,
+      minOffcutMm: 20,
+    });
+    const extrusion = catalog.createPart(
+      partInput({ name: "2020 extrusion", tracking: tracking(null) })
+    );
+    const plate = catalog.createPart(
+      partInput({
+        name: "6061 aluminum plate",
+        tracking: { ...tracking("width"), displayUnit: "in" },
+      })
+    );
+    const projectId = projects.createProject(projectInput());
+    const describe = (input: Parameters<typeof lineInput>[0]) =>
+      projects.getLine(
+        projectId,
+        projects.createBomLine(projectId, lineInput({ description: "", ...input }))
+      )!.description;
+
+    expect(describe({ partId: extrusion })).toBe("2020 extrusion");
+    expect(describe({ partId: extrusion, cutLengthMm: 415 })).toBe("2020 extrusion, 415 mm");
+    expect(describe({ partId: plate, cutLengthMm: 152.4, cutWidthMm: 101.6 })).toBe(
+      "6061 aluminum plate, 6 × 4 in"
+    );
+    expect(
+      describe({
+        categoryId: screws,
+        manufacturer: "Bossard",
+        constraints: [
+          equal("thread", "M3x8"),
+          { key: "length", comparison: "at_least", value: "8 mm", maxValue: null },
+        ],
+      })
+    ).toBe("Screws: Bossard, Thread M3x8, Length at least 8 mm");
+    expect(describe({ categoryId: screws })).toBe("Screws");
+    expect(describe({ description: "  Frame rail  ", partId: extrusion })).toBe("Frame rail");
+    expect(() => describe({})).toThrow(/Enter a description/);
+  });
+});
+
 describe("BOM component groups", () => {
   it("supports flat, grouped, and ungrouped rows without changing quantities", () => {
     const { catalog, projects } = createTestProjects();

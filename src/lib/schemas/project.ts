@@ -121,8 +121,8 @@ export function parseBomLineForm(
 ): ParseResult<BomLineInput> {
   const errors: FieldErrors = {};
 
+  // Empty: the service names the row after its part or requirement.
   const description = text(form, "description");
-  if (!description) errors.description = "Description is required";
 
   const amount = text(form, "amount");
   if (!AMOUNT.test(amount)) errors.amount = "Enter a quantity";
