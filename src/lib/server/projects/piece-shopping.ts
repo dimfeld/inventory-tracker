@@ -51,6 +51,11 @@ export interface ShoppingCutPlan {
   pieces: ShoppingStockPiece[];
   /** Cuts that no known stock size fits, such as when the part has no SKU with a stock size. */
   unplaced: ShoppingCut[];
+  /**
+   * Whole pieces to buy when the part has no SKU with a stock size. They need no planning, so
+   * they are not `unplaced`. Their size is 0.
+   */
+  unsizedWhole: ShoppingCut[];
 }
 
 /** Cut pieces of one requirement that its reservations and commitments do not cover. */
@@ -216,6 +221,7 @@ export function createPieceSupply(db: Database) {
         kerfMm: part.kerfMm,
         pieces: [],
         unplaced: [],
+        unsizedWhole: [],
       };
       const addPieces = (planned: StockPlan<StockSku, Cut>) => {
         for (const piece of planned.pieces) {
@@ -261,7 +267,7 @@ export function createPieceSupply(db: Database) {
       const whole = wholePieceOption(options);
       for (const cut of afterOrders.filter((c) => c.whole)) {
         if (!whole) {
-          plan.unplaced.push(toShoppingCut(cut));
+          plan.unsizedWhole.push(toShoppingCut(cut));
           continue;
         }
         const size = { lengthMm: whole.lengthMm, widthMm: whole.widthMm };

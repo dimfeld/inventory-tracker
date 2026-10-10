@@ -140,7 +140,7 @@
           <tr>
             <td>
               <a href="/parts/{item.partId}" class="link font-medium sm:font-normal">{item.label}</a>
-              {#if item.cutPlan}{@render cutPlan(item.cutPlan)}{/if}
+              {#if item.cutPlan && item.cutPlan.pieces.length + item.cutPlan.unplaced.length > 0}{@render cutPlan(item.cutPlan)}{/if}
             </td>
             <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
               {formatQuantity(item.coverage.toBuy, item.unit)}

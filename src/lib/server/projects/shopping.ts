@@ -260,7 +260,10 @@ export function createShoppingService(db: Database) {
           );
           item.coverage.freeStock = result.freeStock;
           item.coverage.freeOrdered = result.freeOrdered;
-          item.coverage.toBuy = result.plan.pieces.length + result.plan.unplaced.length;
+          item.coverage.toBuy =
+            result.plan.pieces.length +
+            result.plan.unplaced.length +
+            result.plan.unsizedWhole.length;
           item.cutPlan = result.plan;
           continue;
         }

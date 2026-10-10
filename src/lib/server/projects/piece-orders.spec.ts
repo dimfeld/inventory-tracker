@@ -175,6 +175,36 @@ describe("shopping for cut-size rows", () => {
   });
 });
 
+describe("shopping for whole pieces", () => {
+  it("buys whole pieces of a part without a stock size, without a cut plan problem", () => {
+    const ctx = createTestAllocations();
+    const plywood = ctx.catalog.createPart(
+      partInput({
+        name: "1/2 in plywood, 4 x 8 ft",
+        tracking: {
+          mode: "pieces",
+          lengthKey: "length",
+          widthKey: "width",
+          kerfMm: 3,
+          minOffcutMm: 0,
+        },
+      })
+    );
+    const project = ctx.projects.createProject(projectInput());
+    ctx.projects.createBomLine(
+      project,
+      lineInput({ description: "Base", partId: plywood, amount: "2" })
+    );
+    const [item] = ctx.shopping.getShoppingList({ projectIds: null, component: null });
+    expect(item.coverage.toBuy).toBe(2);
+    expect(item.cutPlan).toMatchObject({
+      pieces: [],
+      unplaced: [],
+      unsizedWhole: [{ lineDescription: "Base" }, { lineDescription: "Base" }],
+    });
+  });
+});
+
 describe("estimates of cut-size rows", () => {
   it("splits the price of a shared stick by length plus kerf", () => {
     const ctx = setup();
