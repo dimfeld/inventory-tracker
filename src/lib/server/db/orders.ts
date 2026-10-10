@@ -34,6 +34,12 @@ export type OrderLineFields = {
   unitPrice: string | null;
   currency: string | null;
   notes: string | null;
+  /**
+   * Size in mm of each stock piece of a part tracked as pieces. Null uses the stock size of
+   * the supplier SKU. Width is null for 1D pieces.
+   */
+  pieceLengthMm: number | null;
+  pieceWidthMm: number | null;
 };
 
 /** An order line with its part. Quantities are in the part's `baseUnit`. */
@@ -114,7 +120,8 @@ const LINE_SELECT = `SELECT ol.id, ol.order_id AS orderId, ol.part_id AS partId,
     ol.purchase_unit AS purchaseUnit, ol.pack_quantity AS packQuantity, ol.quantity,
     ol.received_quantity AS receivedQuantity, ol.damaged_quantity AS damagedQuantity,
     ol.cancelled_quantity AS cancelledQuantity, ${OUTSTANDING} AS outstanding,
-    ol.delivery_state AS deliveryState, ol.delivered_on AS deliveredOn, ol.unit_price AS unitPrice, ol.currency, ol.notes
+    ol.delivery_state AS deliveryState, ol.delivered_on AS deliveredOn, ol.unit_price AS unitPrice, ol.currency, ol.notes,
+    ol.piece_length_mm AS pieceLengthMm, ol.piece_width_mm AS pieceWidthMm
   FROM order_lines ol
   JOIN parts p ON p.id = ol.part_id`;
 
@@ -309,9 +316,9 @@ export function insertOrderLine(db: Database, orderId: number, fields: OrderLine
   return db
     .query<{ id: number }, OrderLineFields & { orderId: number }>(
       `INSERT INTO order_lines (order_id, part_id, supplier_sku, purchase_quantity, purchase_unit,
-         pack_quantity, unit_price, currency, notes)
+         pack_quantity, unit_price, currency, notes, piece_length_mm, piece_width_mm)
        VALUES ($orderId, $partId, $supplierSku, $purchaseQuantity, $purchaseUnit, $packQuantity,
-         $unitPrice, $currency, $notes)
+         $unitPrice, $currency, $notes, $pieceLengthMm, $pieceWidthMm)
        RETURNING id`
     )
     .get({ ...fields, orderId })!.id;
@@ -322,9 +329,25 @@ export function updateOrderLine(db: Database, id: number, fields: OrderLineField
     `UPDATE order_lines SET part_id = $partId, supplier_sku = $supplierSku,
        purchase_quantity = $purchaseQuantity, purchase_unit = $purchaseUnit,
        pack_quantity = $packQuantity, unit_price = $unitPrice, currency = $currency,
-       notes = $notes, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       notes = $notes, piece_length_mm = $pieceLengthMm, piece_width_mm = $pieceWidthMm,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
+}
+
+/** Give every order line of the part that has no piece size this size. */
+export function setPartOrderLinePieceSize(
+  db: Database,
+  partId: number,
+  lengthMm: number,
+  widthMm: number | null
+): void {
+  db.run(
+    `UPDATE order_lines SET piece_length_mm = ?, piece_width_mm = ?,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE part_id = ? AND piece_length_mm IS NULL`,
+    [lengthMm, widthMm, partId]
+  );
 }
 
 export function deleteOrderLine(db: Database, id: number): void {

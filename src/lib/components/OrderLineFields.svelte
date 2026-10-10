@@ -1,13 +1,20 @@
 <script lang="ts">
   import PartPicker from '#lib/components/PartPicker.svelte';
   import { describePackConversion } from '#lib/orders.ts';
+  import { lengthInputValue, type PieceDisplayUnit } from '#lib/pieces.ts';
 
-  /** Order line inputs with a live pack conversion. The parent supplies the form element. */
+  /**
+   * Order line inputs with a live pack conversion. A part tracked as pieces also gets the size
+   * of each ordered piece. The parent supplies the form element.
+   */
   let {
     parts,
+    pieceParts = [],
     line = null,
   }: {
     parts: { id: number; name: string; baseUnit: string; partNumber: string | null }[];
+    /** Display unit and dimensions of each part tracked as pieces. */
+    pieceParts?: { id: number; displayUnit: PieceDisplayUnit; twoD: boolean }[];
     line?: {
       partId: number;
       supplierSku: string | null;
@@ -17,6 +24,8 @@
       unitPrice: string | null;
       currency: string | null;
       notes: string | null;
+      pieceLengthMm: number | null;
+      pieceWidthMm: number | null;
     } | null;
   } = $props();
 
@@ -31,6 +40,9 @@
   let packQuantity = $state(String(line?.packQuantity ?? ''));
 
   const baseUnit = $derived(parts.find((p) => String(p.id) === partId)?.baseUnit);
+  const pieces = $derived(pieceParts.find((p) => String(p.id) === partId));
+  const sizeText = (mm: number | null | undefined) =>
+    mm ? lengthInputValue(mm, pieces?.displayUnit ?? 'mm') : '';
   const conversion = $derived.by(() => {
     const purchase = Number(purchaseQuantity);
     const pack = Number(packQuantity);
@@ -61,6 +73,23 @@
     <span class="text-sm">Supplier SKU</span>
     <input name="supplier_sku" value={line?.supplierSku ?? ''} class="input" />
   </label>
+  {#if pieces}
+    <input type="hidden" name="piece_unit" value={pieces.displayUnit} />
+    <label class="block">
+      <span class="text-sm">Piece length ({pieces.displayUnit})</span>
+      <input name="piece_length" value={sizeText(line?.pieceLengthMm)} placeholder="SKU stock size" class="input" />
+    </label>
+    {#if pieces.twoD}
+      <label class="block">
+        <span class="text-sm">Piece width ({pieces.displayUnit})</span>
+        <input name="piece_width" value={sizeText(line?.pieceWidthMm)} placeholder="SKU stock size" class="input" />
+      </label>
+    {/if}
+    <p class="text-xs text-gray-600 sm:col-span-2">
+      The size of each ordered piece. Leave it empty to use the stock size of the supplier SKU. For more than one
+      size under one SKU, add one line for each size.
+    </p>
+  {/if}
   <label class="block">
     <span class="text-sm">Price per purchase unit, excl. shipping and tax (optional)</span>
     <input name="unit_price" inputmode="decimal" value={line?.unitPrice ?? ''} class="input" />

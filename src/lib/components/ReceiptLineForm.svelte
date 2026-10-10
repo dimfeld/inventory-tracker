@@ -31,11 +31,12 @@
     };
     /** The line's commitments in sequence order. */
     commitments: { id: number; projectName: string; lineDescription: string; quantity: number }[];
-    /** For a part tracked as pieces: its dimension labels and the SKU stock size, if any. */
+    /** For a part tracked as pieces: its dimension labels and the default piece size, if any. */
     pieces?: {
       lengthLabel: string;
       widthLabel: string | null;
       stockSize: { lengthMm: number; widthMm: number | null } | null;
+      sizeSource?: 'line' | 'sku' | null;
     } | null;
     locations: { id: number; name: string }[];
     operationId: string;
@@ -157,11 +158,13 @@
     <div class="flex flex-wrap items-end gap-3">
       {#if pieces.stockSize}
         <p class="text-gray-700">
-          Each usable unit becomes one piece of {formatPieceSize(pieces.stockSize)}, the stock size of the SKU.
+          Each usable unit becomes one piece of {formatPieceSize(pieces.stockSize)}, the {pieces.sizeSource === 'line'
+            ? 'piece size of the order line'
+            : 'stock size of the SKU'}.
           Enter another size to change it.
         </p>
       {:else}
-        <p class="w-full text-gray-700">The SKU has no stock size. Enter the size of each piece (mm, or add in).</p>
+        <p class="w-full text-gray-700">The order line has no piece size and the SKU has no stock size. Enter the size of each piece (mm, or add in).</p>
       {/if}
       <label class="block">
         <span>{pieces.lengthLabel}</span>

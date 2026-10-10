@@ -450,6 +450,86 @@ describe("receipts of pieces parts", () => {
     ]);
   });
 
+  it("use the order line's piece size before the SKU's stock size", () => {
+    const ctx = setup();
+    ctx.catalog.updatePart(
+      ctx.extrusion,
+      partInput({ name: "2020 extrusion", supplierParts: [sku("2020-MIX", 1220)] })
+    );
+    const line = (pieceLengthMm: number | null) => ({
+      partId: ctx.extrusion,
+      supplierSku: "2020-MIX",
+      purchaseQuantity: 2,
+      purchaseUnit: "each",
+      packQuantity: 1,
+      unitPrice: null,
+      currency: null,
+      notes: null,
+      pieceLengthMm,
+      pieceWidthMm: null,
+    });
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Misumi", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [line(500), line(null)]
+    );
+    ctx.orders.markPlaced(id, DAY);
+    const [cut, stock] = ctx.orders.getOrderDetails(id)!.lines;
+    expect(cut).toMatchObject({ pieceLengthMm: 500, pieceWidthMm: null });
+    expect(ctx.receipts.pieceLines(id)).toMatchObject({
+      [cut.id]: { stockSize: { lengthMm: 500, widthMm: null }, sizeSource: "line" },
+      [stock.id]: { stockSize: { lengthMm: 1220, widthMm: null }, sizeSource: "sku" },
+    });
+
+    ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId: id,
+      receivedOn: DAY,
+      locationId: ctx.rack,
+      notes: null,
+    });
+    expect(
+      ctx.pieces
+        .listPartPieces(ctx.extrusion)
+        .pieces.map((p) => p.lengthMm)
+        .toSorted((x, y) => x - y)
+    ).toEqual([500, 500, 1220, 1220]);
+  });
+
+  it("check the order line's piece size against the part", () => {
+    const ctx = setup();
+    const { id } = ctx.orders.createOrder({
+      supplier: "Misumi",
+      reference: null,
+      expectedOn: null,
+      trackingUrl: null,
+      notes: null,
+    });
+    const line = (partId: number, pieceLengthMm: number | null, pieceWidthMm: number | null) => ({
+      partId,
+      supplierSku: null,
+      purchaseQuantity: 1,
+      purchaseUnit: "each",
+      packQuantity: 1,
+      unitPrice: null,
+      currency: null,
+      notes: null,
+      pieceLengthMm,
+      pieceWidthMm,
+    });
+    expect(() => ctx.orders.addLine(id, line(ctx.screw, 100, null))).toThrow(
+      /not tracked as pieces/
+    );
+    expect(() => ctx.orders.addLine(id, line(ctx.extrusion, 500, 20))).toThrow(/no width/);
+    expect(() => ctx.orders.addLine(id, line(ctx.sheet, 500, null))).toThrow(/greater than zero/);
+    expect(() => ctx.orders.addLine(id, line(ctx.extrusion, null, 20))).toThrow(/piece length/);
+
+    const lineId = ctx.orders.addLine(id, line(ctx.sheet, 600, 300));
+    ctx.orders.updateLine(id, lineId, line(ctx.sheet, 1000, 500));
+    expect(ctx.orders.getOrderDetails(id)!.lines).toMatchObject([
+      { pieceLengthMm: 1000, pieceWidthMm: 500 },
+    ]);
+  });
+
   it("receive bulk lines of the same order as before", () => {
     const ctx = setup();
     const o = order(ctx, null);

@@ -28,13 +28,16 @@ import {
   type IncomingLine,
   type Order,
   type OrderLine,
+  type OrderLineFields,
 } from "#lib/server/db/orders.ts";
+import { deletePieceCommitments } from "#lib/server/db/piece-commitments.ts";
 import { parseCurrency, totalByCurrency } from "#lib/money.ts";
 import { orderDeliveryStatus, orderLineCost, packConversion } from "#lib/orders.ts";
 import type { OrderInput, OrderLineInput } from "#lib/schemas/order.ts";
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
+import { checkPieceSize, pieceDimensions } from "./pieces";
 
 /**
  * Placed and shipped outstanding supply of one part, in its base unit, with the order lines that
@@ -99,17 +102,35 @@ export function createOrderService(db: Database) {
     return order.reference ? listOrdersWithReference(db, order.supplier, order.reference, id) : [];
   }
 
-  /** Check a line's part and quantities. Returns the ordered base quantity. */
-  function checkLine(fields: OrderLineInput): number {
-    const part = getPart(db, fields.partId);
-    if (!part) throw new NotFoundError(`Part ${fields.partId} does not exist`);
+  /**
+   * Check a line's part, quantities, and piece size. Returns the fields to save and the ordered
+   * base quantity.
+   */
+  function checkLine(input: OrderLineInput): { fields: OrderLineFields; quantity: number } {
+    const part = getPart(db, input.partId);
+    if (!part) throw new NotFoundError(`Part ${input.partId} does not exist`);
     if (part.archivedAt) {
       throw new InventoryError(`${part.name} is archived. Restore it before ordering it.`);
     }
-    if (fields.unitPrice !== null && parseCurrency(fields.currency) !== fields.currency) {
+    if (input.unitPrice !== null && parseCurrency(input.currency) !== input.currency) {
       throw new InventoryError("Enter the currency of the price as a three-letter code");
     }
-    return packConversion(fields.purchaseQuantity, fields.packQuantity);
+    const fields = {
+      ...input,
+      pieceLengthMm: input.pieceLengthMm ?? null,
+      pieceWidthMm: input.pieceWidthMm ?? null,
+    };
+    if (fields.pieceLengthMm !== null || fields.pieceWidthMm !== null) {
+      if (part.trackingMode !== "pieces") {
+        throw new InventoryError(`${part.name} is not tracked as pieces, so it has no piece size`);
+      }
+      if (fields.pieceLengthMm === null) throw new InventoryError("Enter the piece length");
+      checkPieceSize(pieceDimensions(db, part), {
+        lengthMm: fields.pieceLengthMm,
+        widthMm: fields.pieceWidthMm,
+      });
+    }
+    return { fields, quantity: packConversion(input.purchaseQuantity, input.packQuantity) };
   }
 
   return {
@@ -160,10 +181,7 @@ export function createOrderService(db: Database) {
     createOrder(input: OrderInput, lines: OrderLineInput[] = []): SaveOrderResult {
       return inTransaction(() => {
         const id = insertOrder(db, input);
-        for (const line of lines) {
-          checkLine(line);
-          insertOrderLine(db, id, line);
-        }
+        for (const line of lines) insertOrderLine(db, id, checkLine(line).fields);
         return { id, sameReference: sameReference(input, id) };
       });
     },
@@ -242,20 +260,20 @@ export function createOrderService(db: Database) {
     addLine(orderId: number, input: OrderLineInput): number {
       return inTransaction(() => {
         requireOrder(orderId);
-        checkLine(input);
-        return insertOrderLine(db, orderId, input);
+        return insertOrderLine(db, orderId, checkLine(input).fields);
       });
     },
 
     /**
      * Correct a line. The ordered quantity cannot go below what already arrived or was
      * cancelled, and the part cannot change after any of it arrived. A part change releases
-     * the line's commitments, which were for the old part.
+     * the line's commitments, which were for the old part. A piece size change releases the
+     * line's piece commitments, which were cut from pieces of the old size.
      */
     updateLine(orderId: number, lineId: number, input: OrderLineInput): number {
       return inTransaction(() => {
         const line = requireLine(orderId, lineId);
-        const quantity = checkLine(input);
+        const { fields, quantity } = checkLine(input);
         const arrived = line.receivedQuantity + line.damagedQuantity;
         if (input.partId !== line.partId && arrived > 0) {
           throw new InventoryError("The part cannot change after some of the line has arrived");
@@ -267,11 +285,22 @@ export function createOrderService(db: Database) {
               `cancelled; the corrected quantity cannot be less`
           );
         }
-        updateOrderLine(db, lineId, input);
+        updateOrderLine(db, lineId, fields);
         settleLineDelivery(db, lineId);
-        return input.partId === line.partId
-          ? fitOrderLineCommitments(db, lineId)
-          : deleteOrderLineCommitments(db, lineId);
+        if (input.partId !== line.partId) return deleteOrderLineCommitments(db, lineId);
+        let released = 0;
+        if (
+          fields.pieceLengthMm !== line.pieceLengthMm ||
+          fields.pieceWidthMm !== line.pieceWidthMm
+        ) {
+          const pieceCommitments = listOrderLinePieceCommitments(db, [lineId]);
+          deletePieceCommitments(
+            db,
+            pieceCommitments.map((c) => c.id)
+          );
+          released = pieceCommitments.length;
+        }
+        return released + fitOrderLineCommitments(db, lineId);
       });
     },
 

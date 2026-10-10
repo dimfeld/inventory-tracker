@@ -17,6 +17,7 @@ export const load: PageServerLoad = ({ params }) => {
   return {
     ...details,
     parts: inventory().catalog.partOptions(),
+    pieceParts: inventory().catalog.piecePartSettings(),
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission returns the receipt it already created.

@@ -100,9 +100,12 @@ export function shiftPieceCommitments(db: Database, orderLineId: number, count: 
   );
 }
 
-/** Outstanding supply of a pieces part, with the stock size of its supplier SKU in mm. */
+/**
+ * Outstanding supply of a pieces part, with the size of its stock pieces in mm: the order
+ * line's piece size, or else the stock size of its supplier SKU.
+ */
 export interface IncomingPieceLine extends IncomingLine {
-  /** Null when the order line has no SKU with a stock size. */
+  /** Null when the order line has no piece size and no SKU with a stock size. */
   stockLengthMm: number | null;
   stockWidthMm: number | null;
   kerfMm: number;
@@ -110,7 +113,7 @@ export interface IncomingPieceLine extends IncomingLine {
 
 /**
  * Lines of placed and shipped orders of pieces parts that still have outstanding supply, with
- * the stock size of each line's supplier SKU.
+ * the size of each line's stock pieces.
  */
 export function listIncomingPieceLines(db: Database, partIds: number[]): IncomingPieceLine[] {
   const outstanding = `max(ol.quantity - ol.received_quantity - ol.damaged_quantity
@@ -120,7 +123,9 @@ export function listIncomingPieceLines(db: Database, partIds: number[]): Incomin
       `SELECT ol.id AS orderLineId, o.id AS orderId, o.supplier, o.reference, o.status,
          o.expected_on AS expectedOn, ol.part_id AS partId, p.name AS partName,
          p.base_unit AS baseUnit, ${outstanding} AS outstanding,
-         sp.stock_length_mm AS stockLengthMm, sp.stock_width_mm AS stockWidthMm,
+         coalesce(ol.piece_length_mm, sp.stock_length_mm) AS stockLengthMm,
+         CASE WHEN ol.piece_length_mm IS NULL THEN sp.stock_width_mm ELSE ol.piece_width_mm END
+           AS stockWidthMm,
          p.kerf_mm AS kerfMm
        FROM order_lines ol
        JOIN orders o ON o.id = ol.order_id

@@ -200,6 +200,9 @@ describe("conversion to pieces", () => {
     ]);
 
     // The open order of 700 mm sticks now makes 700 mm pieces.
+    expect(ctx.orders.getOrderDetails(ctx.orderId)!.lines).toMatchObject([
+      { partId: ctx.p1220, pieceLengthMm: 700, pieceWidthMm: null },
+    ]);
     ctx.receipts.receiveAllOutstanding({
       operationId: opId(),
       orderId: ctx.orderId,
@@ -211,6 +214,61 @@ describe("conversion to pieces", () => {
       .listPartPieces(ctx.p1220)
       .pieces.filter((p) => p.locationName === "Rack" && p.lengthMm === 700);
     expect(rack).toHaveLength(4);
+  });
+
+  it("keeps the size of each part's order lines when the parts share a SKU", () => {
+    const ctx = createTestAllocations();
+    const extrusion = (length: string) =>
+      ctx.catalog.createPart(
+        partInput({
+          name: `2020 extrusion ${length}`,
+          attributes: attrs({ profile: "2020", length }),
+          supplierParts: [sku("AE-2020")],
+        })
+      );
+    const p500 = extrusion("500 mm");
+    const p300 = extrusion("300 mm");
+    const rack = ctx.locations.createLocation({ name: "Rack", notes: null });
+    const line = (partId: number) => ({
+      partId,
+      supplierSku: "AE-2020",
+      purchaseQuantity: 2,
+      purchaseUnit: "each",
+      packQuantity: 1,
+      unitPrice: null,
+      currency: null,
+      notes: null,
+    });
+    const { id: orderId } = ctx.orders.createOrder(
+      { supplier: "Misumi", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [line(p500), line(p300)]
+    );
+    ctx.orders.markPlaced(orderId, DAY);
+
+    ctx.conversion.convertToPieces({
+      destinationId: p500,
+      sourceIds: [p300],
+      lengthKey: "length",
+      widthKey: null,
+      kerfMm: 2,
+      minOffcutMm: 0,
+      operationId: opId(),
+      occurredOn: DAY,
+    });
+    // Only one SKU row stays, with the 500 mm stock size.
+    expect(ctx.catalog.getPartDetails(p500)!.supplierParts).toMatchObject([
+      { sku: "AE-2020", stockLengthMm: 500 },
+    ]);
+    ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId,
+      receivedOn: DAY,
+      locationId: rack,
+      notes: null,
+    });
+    expect(ctx.pieces.listPartPieces(p500).pieces.map((p) => p.lengthMm)).toEqual([
+      500, 500, 300, 300,
+    ]);
   });
 
   it("converts a single sheet part with its length and width", () => {

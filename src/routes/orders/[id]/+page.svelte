@@ -28,6 +28,7 @@
 
   /** Lines that can be selected to mark delivered or to receive. */
   const selectable = (line: Line) => line.outstanding > 0;
+  const pieceUnit = (partId: number) => data.pieceParts.find((p) => p.id === partId)?.displayUnit ?? 'mm';
   const commitmentsByLine = $derived(Map.groupBy(data.commitments, (c) => c.orderLineId));
   const pieceCommitmentsByLine = $derived(
     Map.groupBy(data.pieceCommitments, (c) => c.orderLineId)
@@ -177,6 +178,12 @@
                 <div>
               <a href="/parts/{line.partId}" class="link font-medium sm:font-normal">{line.partName}</a>
               {#if line.supplierSku}<div class="text-xs text-gray-600">SKU {line.supplierSku}</div>{/if}
+              {#if line.pieceLengthMm !== null}
+                {@const unit = pieceUnit(line.partId)}
+                <div class="text-xs text-gray-600">
+                  Pieces of {formatSize({ lengthMm: line.pieceLengthMm, widthMm: line.pieceWidthMm }, unit)}
+                </div>
+              {/if}
               {#if line.cost}
                 <div class="text-xs text-gray-600">
                   {line.unitPrice} {line.currency} per {line.purchaseUnit} · actual cost {formatMoney(line.cost)}
@@ -224,7 +231,7 @@
                 <summary class="link cursor-pointer">Correct</summary>
                 <form method="POST" action="?/updateLine" use:enhance class="mt-2 w-full space-y-2 sm:w-80">
                   <input type="hidden" name="line_id" value={line.id} />
-                  <OrderLineFields parts={data.parts} {line} />
+                  <OrderLineFields parts={data.parts} pieceParts={data.pieceParts} {line} />
                   <button class="btn-secondary">Save correction</button>
                 </form>
               </details>
@@ -266,7 +273,7 @@
   <details class="card max-w-xl" open={data.lines.length === 0 || form?.action === 'addLine'}>
     <summary class="cursor-pointer font-semibold">Add line</summary>
     <form method="POST" action="?/addLine" use:enhance class="mt-2 space-y-2">
-      <OrderLineFields parts={data.parts} />
+      <OrderLineFields parts={data.parts} pieceParts={data.pieceParts} />
       {@render message('addLine')}
       <button class="btn">Add line</button>
     </form>

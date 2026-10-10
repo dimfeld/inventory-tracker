@@ -255,6 +255,28 @@ describe("incoming piece commitments", () => {
     });
   });
 
+  it("uses the order line's piece size, and a size change releases its piece commitments", () => {
+    const ctx = setup();
+    const rail = ctx.cutLine("Rail", 600);
+    const line = orderLine(ctx, { pieceLengthMm: 500 });
+    const { orderId, lineIds } = placeOrder(ctx, [line]);
+    const [orderLineId] = lineIds;
+
+    // The 500 mm piece of the line, not the 1000 mm stock size of E-1000, is too short.
+    expect(ctx.commitments.listIncomingOptions(ctx.project, rail)).toMatchObject([
+      { orderLineId, uncommitted: 0, stockSize: { lengthMm: 500, widthMm: null } },
+    ]);
+
+    ctx.orders.updateLine(orderId, orderLineId, { ...line, pieceLengthMm: 700 });
+    ctx.commitments.assign({ projectId: ctx.project, lineId: rail, orderLineId, quantity: 1 });
+    expect(ctx.db.query("SELECT * FROM incoming_piece_commitments").all()).toHaveLength(1);
+
+    // An unchanged size keeps the commitment; a new size releases it.
+    expect(ctx.orders.updateLine(orderId, orderLineId, { ...line, pieceLengthMm: 700 })).toBe(0);
+    expect(ctx.orders.updateLine(orderId, orderLineId, { ...line, pieceLengthMm: 650 })).toBe(1);
+    expect(ctx.db.query("SELECT * FROM incoming_piece_commitments").all()).toEqual([]);
+  });
+
   it("fills the lowest sticks on a partial receipt, and drops commitments of cancelled sticks", () => {
     const ctx = setup();
     const rail = ctx.cutLine("Rail", 900, "3");

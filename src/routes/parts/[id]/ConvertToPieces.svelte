@@ -58,8 +58,9 @@
   <p class="text-gray-600">
     Use this for cut stock such as extrusion, sheet, or rod. Each unit of stock becomes one piece with its own size,
     taken from the parts' dimension attributes. Parts that differ only by that size (such as three extrusion lengths)
-    are merged into this part: their stock, supplier references (which get their size as the stock size), orders,
-    and project rows move here, their names become aliases, and they are deleted.
+    are merged into this part: their stock, supplier references (which get their size as the stock size), orders
+    (each order line gets its part's size as its piece size), and project rows move here, their names become aliases,
+    and they are deleted.
   </p>
 
   <div>

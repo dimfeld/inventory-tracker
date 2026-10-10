@@ -17,6 +17,7 @@ import {
   listCategories,
   listPartAliases,
   listPartAttributes,
+  listPiecePartSettings,
   listPartTags,
   listSupplierParts,
   mergePartInto,
@@ -492,6 +493,9 @@ export function createCatalogService(db: Database) {
         tags: [],
         includeArchived: false,
       }).map(({ id, name, baseUnit, partNumber }) => ({ id, name, baseUnit, partNumber })),
+
+    /** Display unit and dimensions of each active part tracked as pieces. */
+    piecePartSettings: () => listPiecePartSettings(db),
 
     /** Archive a part. It stays in movement history and can be restored. */
     archivePart(id: number): void {

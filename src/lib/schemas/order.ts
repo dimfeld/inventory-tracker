@@ -1,6 +1,6 @@
 import type { CommitmentAssignment } from "#lib/commitments.ts";
 import { parseCurrency } from "#lib/money.ts";
-import { parseLengthMm } from "#lib/pieces.ts";
+import { parsePieceLength } from "#lib/pieces.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 import { today } from "./stock";
 
@@ -26,6 +26,12 @@ export interface OrderLineInput {
   unitPrice: string | null;
   currency: string | null;
   notes: string | null;
+  /**
+   * Size in mm of each stock piece of a part tracked as pieces. Absent or null uses the stock
+   * size of the supplier SKU.
+   */
+  pieceLengthMm?: number | null;
+  pieceWidthMm?: number | null;
 }
 
 export interface ReceiptLineFormInput {
@@ -118,6 +124,7 @@ export function parseOrderLineForm(form: FormData): ParseResult<OrderLineInput> 
   if (!WHOLE.test(packQuantity) || Number(packQuantity) === 0) {
     errors.pack_quantity = "Enter how many base units one purchase unit holds";
   }
+  const pieceSize = parsePieceSize(form, errors);
 
   const unitPrice = optionalText(form, "unit_price");
   if (unitPrice !== null && !PRICE.test(unitPrice)) errors.unit_price = "Enter a price";
@@ -138,6 +145,8 @@ export function parseOrderLineForm(form: FormData): ParseResult<OrderLineInput> 
     unitPrice,
     currency: unitPrice === null ? null : currency,
     notes: optionalText(form, "notes"),
+    pieceLengthMm: pieceSize?.lengthMm ?? null,
+    pieceWidthMm: pieceSize?.widthMm ?? null,
   }));
 }
 
@@ -186,13 +195,17 @@ export function parseReceiptLineForm(form: FormData): ParseResult<ReceiptLineFor
   }));
 }
 
-/** The optional `piece_length` and `piece_width` of received pieces, in mm or inches. */
+/**
+ * The optional `piece_length` and `piece_width` of ordered or received pieces. A bare number is
+ * in the `piece_unit` field's unit, `in` or else mm; text with a unit is read as entered.
+ */
 function parsePieceSize(form: FormData, errors: FieldErrors) {
   const length = text(form, "piece_length");
   const width = text(form, "piece_width");
   if (!length && !width) return null;
-  const lengthMm = parseLengthMm(length);
-  const widthMm = width ? parseLengthMm(width) : null;
+  const unit = text(form, "piece_unit") === "in" ? "in" : "mm";
+  const lengthMm = parsePieceLength(length, unit);
+  const widthMm = width ? parsePieceLength(width, unit) : null;
   if (lengthMm === null || (width && widthMm === null)) {
     errors.piece_size = "Enter the piece size as a length, such as 1220 or 48 in";
     return null;

@@ -21,6 +21,7 @@ import {
 } from "#lib/server/db/conversion.ts";
 import { getLocation } from "#lib/server/db/locations.ts";
 import { insertMovement, listLocationBalances } from "#lib/server/db/movements.ts";
+import { setPartOrderLinePieceSize } from "#lib/server/db/orders.ts";
 import { insertPieceReservation } from "#lib/server/db/piece-reservations.ts";
 import {
   listReservationsAt,
@@ -110,7 +111,7 @@ export type ConversionService = ReturnType<typeof createConversionService>;
 /**
  * Conversion of bulk `pcs` parts into one part tracked as pieces, such as three lengths of the
  * same extrusion. The other parts are merged into the destination; each unit of storage stock
- * becomes one piece of its part's size, and supplier SKUs get that size as their stock size.
+ * becomes one piece of its part's size, and supplier SKUs and order lines get that size.
  *
  * Storage reservations become reservations of whole pieces for the same lines, and picked
  * stock becomes pieces that are still picked for their lines. Incoming commitments block a
@@ -288,7 +289,8 @@ export function createConversionService(db: Database) {
      * 1. End the bulk reservations of the parts. Close the bulk balance of every part at each
      *    storage location, and its picked stock for each BOM line, with a 'conversion'
      *    movement to outside, while the parts are still bulk.
-     * 2. Give each part's supplier SKUs its piece size as their stock size.
+     * 2. Give each part's supplier SKUs its piece size as their stock size, and its order lines
+     *    the same piece size. The lines keep their size when sources share a SKU.
      * 3. Merge the sources into the destination (stock history, SKUs, aliases, orders, BOM
      *    lines, import lines), and keep their names as aliases.
      * 4. Make the destination a pieces part and remove its dimension attribute values.
@@ -353,6 +355,7 @@ export function createConversionService(db: Database) {
               });
             }
             setSupplierStockSizes(db, part.partId, part.size!.lengthMm, part.size!.widthMm);
+            setPartOrderLinePieceSize(db, part.partId, part.size!.lengthMm, part.size!.widthMm);
           }
 
           for (const source of sources) {
