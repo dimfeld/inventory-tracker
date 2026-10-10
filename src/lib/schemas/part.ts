@@ -42,6 +42,9 @@ export interface TrackingInput {
   kerfMm: number;
   /** The shortest offcut worth keeping, in mm. */
   minOffcutMm: number;
+  /** The size in mm that the part usually comes in, or null. Omitted: none. */
+  standardLengthMm?: number | null;
+  standardWidthMm?: number | null;
   /** The unit that piece sizes are shown and entered in. Omitted: mm. */
   displayUnit?: PieceDisplayUnit;
 }
@@ -218,6 +221,11 @@ function parseTracking(form: FormData, errors: FieldErrors): TrackingInput | und
   if (!(PIECE_DISPLAY_UNITS as readonly string[]).includes(displayUnit)) {
     errors.piece_display_unit = "Choose mm or in";
   }
+  const standardLengthMm = optionalLength(text(form, "standard_length"));
+  const standardWidthMm = optionalLength(text(form, "standard_width"));
+  if (Number.isNaN(standardLengthMm) || Number.isNaN(standardWidthMm)) {
+    errors.standard_size = "Enter the standard size as lengths, such as 2440 or 96 in";
+  }
   return {
     mode: mode as TrackingMode,
     lengthKey: optionalText(form, "piece_length_key"),
@@ -225,5 +233,7 @@ function parseTracking(form: FormData, errors: FieldErrors): TrackingInput | und
     kerfMm,
     minOffcutMm,
     displayUnit: displayUnit as PieceDisplayUnit,
+    standardLengthMm,
+    standardWidthMm,
   };
 }

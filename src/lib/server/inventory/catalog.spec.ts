@@ -90,6 +90,8 @@ describe("catalog service", () => {
         kerfMm: 0,
         minOffcutMm: 0,
         displayUnit: "mm",
+        standardLengthMm: null,
+        standardWidthMm: null,
       },
     });
     expect(catalog.copyPartInput(id + 1000)).toBeNull();

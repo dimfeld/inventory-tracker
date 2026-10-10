@@ -1,13 +1,17 @@
 import type { Database } from "bun:sqlite";
 import { money, multiply, type Money } from "#lib/money.ts";
-import { listSupplierParts } from "#lib/server/db/catalog.ts";
+import { getPart, listSupplierParts } from "#lib/server/db/catalog.ts";
 import { listLatestSkuPurchases, type PricedSkuPurchase } from "#lib/server/db/orders.ts";
 import type { StockOption } from "#lib/stock-packing.ts";
 
-/** A supplier SKU of a pieces part with a stock size, and the price of one stock piece. */
+/**
+ * A supplier SKU of a pieces part with a stock size, and the price of one stock piece. For the
+ * part's standard size, `standard` is true and the supplier and SKU are empty.
+ */
 export interface StockSku {
   supplier: string;
   sku: string;
+  standard: boolean;
   lengthMm: number;
   widthMm: number | null;
   /** Price of one stock piece from the latest priced purchase of the SKU, or null. */
@@ -16,8 +20,8 @@ export interface StockSku {
 }
 
 /**
- * The stock sizes that a pieces part can be bought in: its supplier SKUs with a stock size.
- * The price of a piece is the purchase unit price ÷ the pack size. Prices in different
+ * The stock sizes that a pieces part can be bought in: its supplier SKUs with a stock size, or
+ * else the part's standard size, without a price. The price of a piece is the purchase unit price ÷ the pack size. Prices in different
  * currencies cannot be compared, so then no option has a price to compare and stock is chosen
  * by waste.
  */
@@ -32,6 +36,7 @@ export function listStockOptions(db: Database, partId: number): StockOption<Stoc
       {
         supplier: sku.supplier,
         sku: sku.sku,
+        standard: false,
         lengthMm: sku.stockLengthMm,
         widthMm: sku.stockWidthMm,
         price: purchase
@@ -41,6 +46,18 @@ export function listStockOptions(db: Database, partId: number): StockOption<Stoc
       },
     ];
   });
+  const part = getPart(db, partId);
+  if (skus.length === 0 && part?.standardLengthMm != null) {
+    skus.push({
+      supplier: "",
+      sku: "",
+      standard: true,
+      lengthMm: part.standardLengthMm,
+      widthMm: part.standardWidthMm,
+      price: null,
+      purchase: null,
+    });
+  }
   const currencies = new Set(skus.flatMap((sku) => (sku.price ? [sku.price.currency] : [])));
   return skus.map((stock) => ({
     stock,

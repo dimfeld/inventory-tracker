@@ -190,8 +190,8 @@ export function createCommitmentService(db: Database) {
     const incoming = incomingPieceLine(orderLineId, orderLine.partId);
     if (!incoming || incoming.stockLengthMm === null) {
       throw new InventoryError(
-        `${orderLine.partName}: the order line has no piece size and its supplier SKU has no ` +
-          "stock size. Enter the piece size on the order line first."
+        `${orderLine.partName}: the order line, its supplier SKU, and the part give no piece ` +
+          "size. Enter the piece size on the order line first."
       );
     }
     const size = incomingCutSize(line, incoming);

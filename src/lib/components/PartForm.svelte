@@ -247,6 +247,21 @@
           <span class="text-sm text-gray-600">Cut and split forms show sizes in this unit. A bare number is in this unit.</span>
           {#if errors?.piece_display_unit}<span class="text-sm text-red-700">{errors.piece_display_unit}</span>{/if}
         </label>
+        <label class="block">
+          <span class="text-sm">Standard length (mm or in)</span>
+          <input name="standard_length" value={lengthText(initial?.tracking?.standardLengthMm)} class="input" />
+          <span class="text-sm text-gray-600">
+            The size it usually comes in, such as 96 in for a 4 × 8 ft sheet. Optional.
+          </span>
+        </label>
+        {#if pieceWidthKey}
+          <label class="block">
+            <span class="text-sm">Standard width (mm or in)</span>
+            <input name="standard_width" value={lengthText(initial?.tracking?.standardWidthMm)} class="input" />
+            <span class="text-sm text-gray-600">Such as 48 in for a 4 × 8 ft sheet.</span>
+          </label>
+        {/if}
+        {#if errors?.standard_size}<span class="text-sm text-red-700">{errors.standard_size}</span>{/if}
       </div>
     {/if}
   </fieldset>

@@ -186,8 +186,17 @@ export function createCatalogService(db: Database) {
       stockLengthMm: row.stockLengthMm ?? null,
       stockWidthMm: row.stockWidthMm ?? null,
     };
-    const name = `${row.supplier} SKU ${row.sku}`;
-    if (size.stockLengthMm === null && size.stockWidthMm === null) return size;
+    checkStockSize(`${row.supplier} SKU ${row.sku}`, size, tracking);
+    return size;
+  }
+
+  /** A stock size fits the part: only for pieces, with a width only for 2D pieces. */
+  function checkStockSize(
+    name: string,
+    size: { stockLengthMm: number | null; stockWidthMm: number | null },
+    tracking: PartTracking
+  ) {
+    if (size.stockLengthMm === null && size.stockWidthMm === null) return;
     if (tracking.trackingMode !== "pieces") {
       throw new InventoryError(`${name}: a stock size is only for parts tracked as pieces`);
     }
@@ -203,7 +212,6 @@ export function createCatalogService(db: Database) {
     } else if ((size.stockLengthMm === null) !== (size.stockWidthMm === null)) {
       throw new InventoryError(`${name}: enter both the length and the width of the stock size`);
     }
-    return size;
   }
 
   function saveSupplierParts(
@@ -264,6 +272,8 @@ export function createCatalogService(db: Database) {
         kerfMm,
         minOffcutMm,
         pieceDisplayUnit,
+        standardLengthMm,
+        standardWidthMm,
       } = existing;
       return {
         trackingMode,
@@ -272,6 +282,8 @@ export function createCatalogService(db: Database) {
         kerfMm,
         minOffcutMm,
         pieceDisplayUnit,
+        standardLengthMm,
+        standardWidthMm,
       };
     }
     for (const [label, value] of [
@@ -287,8 +299,30 @@ export function createCatalogService(db: Database) {
       minOffcutMm: tracking.minOffcutMm,
       pieceDisplayUnit: tracking.displayUnit ?? "mm",
     };
-    if (tracking.mode === "bulk") return { ...BULK_TRACKING, ...settings };
-    return { ...pieceTracking(input, tracking), ...settings };
+    const standard = {
+      standardLengthMm: tracking.standardLengthMm ?? null,
+      standardWidthMm: tracking.standardWidthMm ?? null,
+    };
+    if (tracking.mode === "bulk") {
+      checkStockSize(
+        "Standard size",
+        { stockLengthMm: standard.standardLengthMm, stockWidthMm: standard.standardWidthMm },
+        BULK_TRACKING
+      );
+      return { ...BULK_TRACKING, ...settings };
+    }
+    const result = {
+      ...BULK_TRACKING,
+      ...pieceTracking(input, tracking),
+      ...settings,
+      ...standard,
+    };
+    checkStockSize(
+      "Standard size",
+      { stockLengthMm: standard.standardLengthMm, stockWidthMm: standard.standardWidthMm },
+      result
+    );
+    return result;
   }
 
   function pieceTracking(input: PartInput, tracking: TrackingInput) {
@@ -566,6 +600,8 @@ export function createCatalogService(db: Database) {
           kerfMm: part.kerfMm,
           minOffcutMm: part.minOffcutMm,
           displayUnit: part.pieceDisplayUnit,
+          standardLengthMm: part.standardLengthMm,
+          standardWidthMm: part.standardWidthMm,
         },
       };
     },

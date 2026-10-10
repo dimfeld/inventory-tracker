@@ -32,6 +32,12 @@ export type PartTracking = {
   minOffcutMm: number;
   /** The unit that piece sizes are shown and entered in. */
   pieceDisplayUnit: PieceDisplayUnit;
+  /**
+   * The size in mm that the part usually comes in, such as a 4 × 8 ft sheet, or null. Width is
+   * null for 1D pieces.
+   */
+  standardLengthMm: number | null;
+  standardWidthMm: number | null;
 };
 
 export const BULK_TRACKING: PartTracking = {
@@ -41,6 +47,8 @@ export const BULK_TRACKING: PartTracking = {
   kerfMm: 0,
   minOffcutMm: 0,
   pieceDisplayUnit: "mm",
+  standardLengthMm: null,
+  standardWidthMm: null,
 };
 
 export interface Part extends PartTracking {
@@ -116,7 +124,8 @@ const PART_COLUMNS = `p.id, p.name, p.category_id AS categoryId, c.name AS categ
   p.archived_at AS archivedAt, p.tracking_mode AS trackingMode,
   p.piece_length_attribute_id AS pieceLengthAttributeId,
   p.piece_width_attribute_id AS pieceWidthAttributeId, p.kerf_mm AS kerfMm,
-  p.min_offcut_mm AS minOffcutMm, p.piece_display_unit AS pieceDisplayUnit`;
+  p.min_offcut_mm AS minOffcutMm, p.piece_display_unit AS pieceDisplayUnit,
+  p.standard_length_mm AS standardLengthMm, p.standard_width_mm AS standardWidthMm`;
 
 export function listCategories(db: Database): Category[] {
   return db
@@ -182,10 +191,10 @@ export function insertPart(db: Database, fields: PartFields): number {
     .query<{ id: number }, PartFields>(
       `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes,
          tracking_mode, piece_length_attribute_id, piece_width_attribute_id, kerf_mm,
-         min_offcut_mm, piece_display_unit)
+         min_offcut_mm, piece_display_unit, standard_length_mm, standard_width_mm)
        VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes, $trackingMode,
          $pieceLengthAttributeId, $pieceWidthAttributeId, $kerfMm, $minOffcutMm,
-         $pieceDisplayUnit)
+         $pieceDisplayUnit, $standardLengthMm, $standardWidthMm)
        RETURNING id`
     )
     .get(fields);
@@ -199,6 +208,7 @@ export function updatePart(db: Database, id: number, fields: PartFields): void {
        tracking_mode = $trackingMode, piece_length_attribute_id = $pieceLengthAttributeId,
        piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
        min_offcut_mm = $minOffcutMm, piece_display_unit = $pieceDisplayUnit,
+       standard_length_mm = $standardLengthMm, standard_width_mm = $standardWidthMm,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
@@ -211,6 +221,7 @@ export function setPartTracking(db: Database, id: number, tracking: PartTracking
        piece_length_attribute_id = $pieceLengthAttributeId,
        piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
        min_offcut_mm = $minOffcutMm, piece_display_unit = $pieceDisplayUnit,
+       standard_length_mm = $standardLengthMm, standard_width_mm = $standardWidthMm,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...tracking, id });

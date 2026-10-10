@@ -102,10 +102,11 @@ export function shiftPieceCommitments(db: Database, orderLineId: number, count: 
 
 /**
  * Outstanding supply of a pieces part, with the size of its stock pieces in mm: the order
- * line's piece size, or else the stock size of its supplier SKU.
+ * line's piece size, or else the stock size of its supplier SKU, or else the part's standard
+ * size.
  */
 export interface IncomingPieceLine extends IncomingLine {
-  /** Null when the order line has no piece size and no SKU with a stock size. */
+  /** Null when the order line, its SKU, and the part give no size. */
   stockLengthMm: number | null;
   stockWidthMm: number | null;
   kerfMm: number;
@@ -123,9 +124,12 @@ export function listIncomingPieceLines(db: Database, partIds: number[]): Incomin
       `SELECT ol.id AS orderLineId, o.id AS orderId, o.supplier, o.reference, o.status,
          o.expected_on AS expectedOn, ol.part_id AS partId, p.name AS partName,
          p.base_unit AS baseUnit, ${outstanding} AS outstanding,
-         coalesce(ol.piece_length_mm, sp.stock_length_mm) AS stockLengthMm,
-         CASE WHEN ol.piece_length_mm IS NULL THEN sp.stock_width_mm ELSE ol.piece_width_mm END
-           AS stockWidthMm,
+         coalesce(ol.piece_length_mm, sp.stock_length_mm, p.standard_length_mm) AS stockLengthMm,
+         CASE
+           WHEN ol.piece_length_mm IS NOT NULL THEN ol.piece_width_mm
+           WHEN sp.stock_length_mm IS NOT NULL THEN sp.stock_width_mm
+           ELSE p.standard_width_mm
+         END AS stockWidthMm,
          p.kerf_mm AS kerfMm
        FROM order_lines ol
        JOIN orders o ON o.id = ol.order_id

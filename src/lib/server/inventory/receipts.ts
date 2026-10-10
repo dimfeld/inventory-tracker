@@ -127,8 +127,8 @@ export interface PieceReceiptLine {
   widthLabel: string | null;
   /** The order line's piece size or the SKU's stock size, or null when the receipt must give it. */
   stockSize: PieceSizeInput | null;
-  /** Where `stockSize` comes from. */
-  sizeSource: "line" | "sku" | null;
+  /** Where `stockSize` comes from: the order line, the SKU, or the part's standard size. */
+  sizeSource: "line" | "sku" | "part" | null;
 }
 
 export interface ReceiptServiceOptions {
@@ -173,22 +173,36 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
   }
 
   /**
-   * The size of the order line's pieces: its own piece size, or else the stock size of its
-   * supplier SKU. Null when it has neither.
+   * The size of the order line's pieces and where it comes from: the line's own piece size, or
+   * else the stock size of its supplier SKU, or else the part's standard size. Null when there
+   * is none.
    */
-  function lineStockSize(order: Order, line: OrderLine): PieceSizeInput | null {
+  function lineStockSize(
+    order: Order,
+    line: OrderLine
+  ): { size: PieceSizeInput; source: "line" | "sku" | "part" } | null {
     if (line.pieceLengthMm !== null) {
-      return { lengthMm: line.pieceLengthMm, widthMm: line.pieceWidthMm };
+      return { size: { lengthMm: line.pieceLengthMm, widthMm: line.pieceWidthMm }, source: "line" };
     }
-    if (!line.supplierSku) return null;
-    const sku = getSupplierPartBySku(db, line.partId, order.supplier, line.supplierSku);
-    if (sku?.stockLengthMm == null) return null;
-    return { lengthMm: sku.stockLengthMm, widthMm: sku.stockWidthMm };
+    const sku = line.supplierSku
+      ? getSupplierPartBySku(db, line.partId, order.supplier, line.supplierSku)
+      : null;
+    if (sku?.stockLengthMm != null) {
+      return { size: { lengthMm: sku.stockLengthMm, widthMm: sku.stockWidthMm }, source: "sku" };
+    }
+    const part = getPart(db, line.partId);
+    if (part?.standardLengthMm != null) {
+      return {
+        size: { lengthMm: part.standardLengthMm, widthMm: part.standardWidthMm },
+        source: "part",
+      };
+    }
+    return null;
   }
 
   /**
    * The size of the pieces a receipt line makes: the input's size, or else the order line's
-   * piece size, or else the stock size of its supplier SKU.
+   * size from `lineStockSize`.
    */
   function receivedPieceSize(
     order: Order,
@@ -196,11 +210,11 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
     part: Part,
     input: ReceiptLineInput
   ): PieceSizeInput {
-    const size = input.pieceSize ?? lineStockSize(order, line);
+    const size = input.pieceSize ?? lineStockSize(order, line)?.size;
     if (!size) {
       throw new InventoryError(
-        `${line.partName}: the order line has no piece size and the supplier SKU has no stock ` +
-          "size. Enter the size of the pieces."
+        `${line.partName}: the order line, its supplier SKU, and the part give no piece size. ` +
+          "Enter the size of the pieces."
       );
     }
     try {
@@ -358,8 +372,8 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
         result[line.id] = {
           lengthLabel: length.label,
           widthLabel: width?.label ?? null,
-          stockSize: size,
-          sizeSource: size === null ? null : line.pieceLengthMm !== null ? "line" : "sku",
+          stockSize: size?.size ?? null,
+          sizeSource: size?.source ?? null,
         };
       }
       return result;

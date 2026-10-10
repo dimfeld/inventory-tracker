@@ -44,7 +44,9 @@
         <li>
           <span class="font-medium">{size(piece)}</span>
           <span class="text-gray-500">
-            ({piece.supplier} {piece.sku}{piece.price ? `, ${formatMoney(piece.price)}` : ''})
+            ({piece.standard ? 'standard size' : `${piece.supplier} ${piece.sku}`}{piece.price
+              ? `, ${formatMoney(piece.price)}`
+              : ''})
           </span>
           → {piece.cuts.map((cut) => `${size(cut)} ${cut.lineDescription}`).join(', ')}
           {#if piece.wasteMm !== null && piece.wasteMm > 0}

@@ -24,6 +24,8 @@ export const load: PageServerLoad = ({ params }) => {
         kerfMm: details.part.kerfMm,
         minOffcutMm: details.part.minOffcutMm,
         displayUnit: details.part.pieceDisplayUnit,
+        standardLengthMm: details.part.standardLengthMm,
+        standardWidthMm: details.part.standardWidthMm,
       },
     },
     baseUnitLocked: catalog.hasMovements(details.part.id),

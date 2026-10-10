@@ -375,6 +375,8 @@ export function createConversionService(db: Database) {
             kerfMm: input.kerfMm,
             minOffcutMm: input.minOffcutMm,
             pieceDisplayUnit: getPart(db, destination.partId)!.pieceDisplayUnit,
+            standardLengthMm: null,
+            standardWidthMm: null,
           });
           deletePartAttributes(
             db,

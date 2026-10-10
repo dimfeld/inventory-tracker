@@ -440,7 +440,7 @@ describe("receipts of pieces parts", () => {
   it("use the given size when the SKU has no stock size, and fail without one", () => {
     const ctx = setup();
     const o = order(ctx, null);
-    expect(() => receiveExtrusion(ctx, o)).toThrow(/no stock size/);
+    expect(() => receiveExtrusion(ctx, o)).toThrow(/give no piece size/);
     expect(() => receiveExtrusion(ctx, o, { lengthMm: 700, widthMm: 20 })).toThrow(/no width/);
     expect(listPartMovements(ctx.db, ctx.extrusion)).toEqual([]);
 

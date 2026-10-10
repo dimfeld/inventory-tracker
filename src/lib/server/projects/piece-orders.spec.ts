@@ -212,6 +212,112 @@ describe("shopping for whole pieces", () => {
   });
 });
 
+describe("standard stock size", () => {
+  it("is the stock size for shopping and receipts when no SKU gives one", () => {
+    const ctx = createTestAllocations();
+    const plywood = ctx.catalog.createPart(
+      partInput({
+        name: "1/2 in plywood",
+        tracking: {
+          mode: "pieces",
+          lengthKey: "length",
+          widthKey: "width",
+          kerfMm: 3,
+          minOffcutMm: 0,
+          standardLengthMm: 2438.4,
+          standardWidthMm: 1219.2,
+        },
+      })
+    );
+    expect(ctx.catalog.getPartDetails(plywood)!.part).toMatchObject({
+      standardLengthMm: 2438.4,
+      standardWidthMm: 1219.2,
+    });
+    const project = ctx.projects.createProject(projectInput());
+    ctx.projects.createBomLine(
+      project,
+      lineInput({ description: "Base", partId: plywood, amount: "1" })
+    );
+    ctx.projects.createBomLine(
+      project,
+      lineInput({
+        description: "Shelf",
+        partId: plywood,
+        amount: "2",
+        cutLengthMm: 600,
+        cutWidthMm: 300,
+      })
+    );
+
+    const [item] = ctx.shopping.getShoppingList({ projectIds: null, component: null });
+    expect(item.coverage.toBuy).toBe(3);
+    expect(item.cutPlan!.unsizedWhole).toEqual([]);
+    expect(
+      item.cutPlan!.pieces.map((p) => [p.standard, p.lengthMm, p.widthMm, p.cuts.length])
+    ).toEqual([
+      [true, 2438.4, 1219.2, 1],
+      [true, 2438.4, 1219.2, 1],
+      [true, 2438.4, 1219.2, 1],
+    ]);
+
+    // An order line without a size makes sheets of the standard size.
+    const rack = ctx.locations.createLocation({ name: "Rack", notes: null });
+    const { id } = ctx.orders.createOrder(
+      { supplier: "Home Depot", reference: null, expectedOn: null, trackingUrl: null, notes: null },
+      [
+        {
+          partId: plywood,
+          supplierSku: null,
+          purchaseQuantity: 1,
+          purchaseUnit: "each",
+          packQuantity: 1,
+          unitPrice: null,
+          currency: null,
+          notes: null,
+        },
+      ]
+    );
+    ctx.orders.markPlaced(id, DAY);
+    expect(Object.values(ctx.receipts.pieceLines(id))).toMatchObject([
+      { stockSize: { lengthMm: 2438.4, widthMm: 1219.2 }, sizeSource: "part" },
+    ]);
+    ctx.receipts.receiveAllOutstanding({
+      operationId: opId(),
+      orderId: id,
+      receivedOn: DAY,
+      locationId: rack,
+      notes: null,
+    });
+    expect(ctx.pieces.listPartPieces(plywood).pieces).toMatchObject([
+      { lengthMm: 2438.4, widthMm: 1219.2 },
+    ]);
+  });
+
+  it("needs both dimensions for 2D parts, and is only for pieces parts", () => {
+    const ctx = createTestAllocations();
+    const tracking = {
+      mode: "pieces" as const,
+      lengthKey: "length",
+      widthKey: "width",
+      kerfMm: 0,
+      minOffcutMm: 0,
+    };
+    expect(() =>
+      ctx.catalog.createPart(
+        partInput({ name: "Sheet", tracking: { ...tracking, standardLengthMm: 1000 } })
+      )
+    ).toThrow(/both the length and the width/);
+    expect(() =>
+      ctx.catalog.createPart(
+        partInput({
+          name: "Screw",
+          tracking: { ...tracking, mode: "bulk", standardLengthMm: 1000 },
+        })
+      )
+    ).toThrow(/only for parts tracked as pieces/);
+  });
+});
+
 describe("estimates of cut-size rows", () => {
   it("splits the price of a shared stick by length plus kerf", () => {
     const ctx = setup();

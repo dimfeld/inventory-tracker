@@ -33,8 +33,11 @@ export interface ShoppingCut {
 
 /** One stock piece to buy, with the cuts to make from it. */
 export interface ShoppingStockPiece {
+  /** Empty for the part's standard size. */
   supplier: string;
   sku: string;
+  /** True for the part's standard size, which has no supplier SKU. */
+  standard: boolean;
   lengthMm: number;
   widthMm: number | null;
   /** Price of the piece from the latest priced purchase of the SKU, or null. */
@@ -245,6 +248,7 @@ export function createPieceSupply(db: Database) {
           plan.pieces.push({
             supplier: piece.option.stock.supplier,
             sku: piece.option.stock.sku,
+            standard: piece.option.stock.standard,
             lengthMm: piece.option.lengthMm,
             widthMm: piece.option.widthMm,
             price: piece.option.stock.price,
@@ -291,6 +295,7 @@ export function createPieceSupply(db: Database) {
         plan.pieces.push({
           supplier: whole.stock.supplier,
           sku: whole.stock.sku,
+          standard: whole.stock.standard,
           ...size,
           price: whole.stock.price,
           cuts: [toShoppingCut(cut, size)],
