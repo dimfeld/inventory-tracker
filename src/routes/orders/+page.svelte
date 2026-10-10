@@ -1,6 +1,7 @@
 <script lang="ts">
   import MoneyTotals from '#lib/components/MoneyTotals.svelte';
   import { ORDER_DELIVERY_LABELS } from '#lib/orders.ts';
+  import { matchesSearch } from '#lib/search.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -17,15 +18,14 @@
 
   // Find a delivered item by what it is, since order numbers are rarely known.
   let partQuery = $state('');
-  const incoming = $derived.by(() => {
-    const words = partQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    return data.incoming.filter((part) => {
-      const text = [part.partName, ...part.lines.flatMap((l) => [l.supplier, l.reference ?? ''])]
-        .join(' ')
-        .toLowerCase();
-      return words.every((word) => text.includes(word));
-    });
-  });
+  const incoming = $derived(
+    data.incoming.filter((part) =>
+      matchesSearch(
+        [part.partName, ...part.lines.flatMap((l) => [l.supplier, l.reference ?? ''])].join(' '),
+        partQuery
+      )
+    )
+  );
 </script>
 
 <svelte:head>

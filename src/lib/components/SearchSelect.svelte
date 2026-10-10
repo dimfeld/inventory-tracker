@@ -1,5 +1,6 @@
 <script lang="ts" generics="T">
   import type { Snippet } from 'svelte';
+  import { matchesSearch } from '#lib/search.ts';
 
   interface Props {
     /** Accessible name of the search box. */
@@ -23,13 +24,7 @@
   let open = $state(false);
   let active = $state(0);
 
-  const shown = $derived.by(() => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    return items.filter((item) => {
-      const haystack = text(item).toLowerCase();
-      return words.every((word) => haystack.includes(word));
-    });
-  });
+  const shown = $derived(items.filter((item) => matchesSearch(text(item), query)));
 
   function choose(item: T) {
     open = false;

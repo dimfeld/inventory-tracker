@@ -1,5 +1,6 @@
 <script lang="ts">
   import './layout.css';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
 
   let { children } = $props();
@@ -29,6 +30,16 @@
     if (target.closest('input, textarea, select, [contenteditable]')) return;
     event.preventDefault();
     search?.focus();
+  }
+
+  // Clearing the search (for example with its X button) on the parts page removes the search
+  // and keeps the other filters.
+  function onSearchInput(event: Event & { currentTarget: HTMLInputElement }) {
+    if (event.currentTarget.value !== '' || page.url.pathname !== '/parts') return;
+    if (!page.url.searchParams.get('q')) return;
+    const url = new URL(page.url.href);
+    url.searchParams.delete('q');
+    goto(url, { reset: false });
   }
 </script>
 
@@ -60,6 +71,7 @@
         placeholder="Search parts"
         aria-label="Search parts"
         title="Search parts (press /)"
+        oninput={onSearchInput}
         value={page.url.pathname === '/parts' ? (page.url.searchParams.get('q') ?? '') : ''}
         class="input mt-0"
       />

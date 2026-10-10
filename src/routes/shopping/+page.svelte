@@ -80,9 +80,10 @@
 </p>
 
 <form method="GET" class="card mb-6 space-y-3 text-sm">
-  <input type="hidden" name="select" value="1" />
   {#if data.projects.length === 0}
     <p class="text-gray-600">No planned, active, or paused projects.</p>
+  {:else}
+    <p class="text-gray-600">Select projects to show only those. With none selected, all are shown.</p>
   {/if}
   <div class="flex flex-wrap gap-3">
     {#each data.projects as project (project.id)}

@@ -56,7 +56,7 @@
           <td data-label="BOM rows" class="text-right">{project.lineCount}</td>
           <td class="text-sm whitespace-nowrap sm:text-right">
             <a href="/projects/{project.id}/pick" class="link">Pick list</a>
-            <a href="/shopping?select=1&project={project.id}" class="link ml-3">Shopping list</a>
+            <a href="/shopping?project={project.id}" class="link ml-3">Shopping list</a>
           </td>
         </tr>
       {/each}

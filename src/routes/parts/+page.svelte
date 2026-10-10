@@ -43,6 +43,11 @@
   const submitForm = (event: Event & { currentTarget: HTMLElement }) =>
     event.currentTarget.closest('form')?.requestSubmit();
 
+  // Clearing the search (for example with its X button) shows the list without it.
+  const onSearchInput = (event: Event & { currentTarget: HTMLInputElement }) => {
+    if (event.currentTarget.value === '' && filters.q) submitForm(event);
+  };
+
   const active = $derived(selectedFilters(filters));
   // On phones the filters start closed, so the results show first.
   let filtersOpen = $state(false);
@@ -82,6 +87,7 @@
         type="search"
         value={filters.q}
         placeholder="Name, alias, part number, SKU"
+        oninput={onSearchInput}
         class="input"
       />
     </label>

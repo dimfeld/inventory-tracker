@@ -125,6 +125,14 @@ describe("part search", () => {
     expect(search({ text: "100%" })).toEqual([]);
   });
 
+  it("matches each word on its own, and a quoted phrase as one piece of text", () => {
+    const { search, ids } = setup();
+    expect(search({ text: "screw m3 pan" })).toEqual(ids("m3x8PanScrew"));
+    expect(search({ text: "socket 91290A117" })).toEqual(ids("m3x12SocketScrew"));
+    expect(search({ text: '"pan head" m2.5' })).toEqual(ids("m25ScrewSteel"));
+    expect(search({ text: '"head pan"' })).toEqual([]);
+  });
+
   it("keeps missing and unreadable attributes unknown", () => {
     const { catalog, search, ids, categories } = setup();
     const unknown = ids("unknownScrew")[0];

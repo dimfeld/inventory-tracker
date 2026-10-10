@@ -164,7 +164,7 @@
       Add BOM row
     </a>
     <a href="{base}/pick{data.filter === null ? '' : `?component=${data.filter}`}" class="btn-secondary">Pick list</a>
-    <a href="/shopping?select=1&project={project.id}" class="btn-secondary">Shopping list</a>
+    <a href="/shopping?project={project.id}" class="btn-secondary">Shopping list</a>
     <a href="{base}/estimate" class="btn-secondary">Cost estimate</a>
   </div>
 </div>

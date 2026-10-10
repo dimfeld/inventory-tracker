@@ -1,4 +1,5 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
+import { searchTerms } from "#lib/search.ts";
 import type { AttributeDefinition, PartSummary } from "./catalog";
 
 export interface AttributeCondition {
@@ -9,7 +10,10 @@ export interface AttributeCondition {
 }
 
 export interface PartSearchQuery {
-  /** Matched against name, aliases, manufacturer part number, and supplier SKUs. */
+  /**
+   * Matched against name, aliases, manufacturer part number, and supplier SKUs. Each word, or
+   * phrase in double quotes, must match one of them.
+   */
   text: string | null;
   /** Includes parts in all descendant categories. */
   categoryId: number | null;
@@ -67,11 +71,11 @@ export function searchParts(db: Database, query: PartSearchQuery): PartSearchRow
   const conditions = [IN_SCOPE, "(? OR p.archived_at IS NULL)"];
   params.push(query.includeArchived ? 1 : 0);
 
-  if (query.text) {
+  for (const term of searchTerms(query.text ?? "")) {
     conditions.push(`(p.name LIKE ? ESCAPE '\\' OR p.part_number LIKE ? ESCAPE '\\'
       OR EXISTS (SELECT 1 FROM part_aliases pa WHERE pa.part_id = p.id AND pa.alias LIKE ? ESCAPE '\\')
       OR EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = p.id AND sp.sku LIKE ? ESCAPE '\\'))`);
-    const pattern = likePattern(query.text);
+    const pattern = likePattern(term);
     params.push(pattern, pattern, pattern, pattern);
   }
 
