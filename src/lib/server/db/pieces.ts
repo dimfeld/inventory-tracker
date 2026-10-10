@@ -49,7 +49,7 @@ const PIECE_COLUMNS = `p.id, p.part_id AS partId, p.length_mm AS lengthMm, p.wid
  * The location of every piece in stock: the location where the balance of the piece's
  * movements is positive. Retired pieces have no row.
  */
-const PIECE_BALANCES = `piece_balances AS (
+export const PIECE_BALANCES = `piece_balances AS (
   SELECT piece_id, location_id
   FROM (
     SELECT piece_id, to_location_id AS location_id, quantity AS delta

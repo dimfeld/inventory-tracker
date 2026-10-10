@@ -1,5 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { listLineCommitments, type CommitmentDetail } from "#lib/server/db/commitments.ts";
+import {
+  listLinePieceReservations,
+  type PieceReservationDetail,
+} from "#lib/server/db/piece-reservations.ts";
 import { listChoices, type BomLine } from "#lib/server/db/projects.ts";
 import { listLineReservations, listLineStock } from "#lib/server/db/reservations.ts";
 import { assertUnit, UNITS, type Unit } from "#lib/units.ts";
@@ -14,6 +18,8 @@ export interface LineReservation {
 /**
  * Stock and incoming supply of one part allocated to one BOM line. Quantities are in
  * `baseUnit`. `ordered` is outstanding order supply committed to the line; it is not stock.
+ * For a part tracked as pieces, `reserved` counts the reserved cut pieces in
+ * `pieceReservations`, and picked and used count pieces.
  */
 export interface PartAllocation {
   partId: number;
@@ -24,6 +30,7 @@ export interface PartAllocation {
   reserved: number;
   ordered: number;
   reservations: LineReservation[];
+  pieceReservations: PieceReservationDetail[];
   commitments: CommitmentDetail[];
 }
 
@@ -65,6 +72,7 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
         reserved: 0,
         ordered: 0,
         reservations: [],
+        pieceReservations: [],
         commitments: [],
       };
       parts.set(part.partId, allocation);
@@ -87,6 +95,11 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
       locationName: reservation.locationName,
       quantity: reservation.quantity,
     });
+  }
+  for (const reservation of listLinePieceReservations(db, lineIds)) {
+    const allocation = entry(reservation.bomLineId, reservation);
+    allocation.reserved += 1;
+    allocation.pieceReservations.push(reservation);
   }
   for (const commitment of listLineCommitments(db, lineIds)) {
     const allocation = entry(commitment.bomLineId, commitment);

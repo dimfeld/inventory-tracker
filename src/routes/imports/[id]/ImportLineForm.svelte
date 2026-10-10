@@ -70,6 +70,8 @@
       unitPrice: f.unitPrice ?? '',
       currency: f.currency ?? '',
       referenceDesignators: f.referenceDesignators ?? '',
+      cutLength: f.cutLength ?? '',
+      cutWidth: f.cutWidth ?? '',
       categoryId: idText(f.categoryId),
       manufacturer: f.manufacturer ?? '',
       partNumber: f.partNumber ?? '',
@@ -206,6 +208,16 @@
       <label class="block">
         <span class="text-sm">Reference designators {@render badge('referenceDesignators')}</span>
         <input {...fields.referenceDesignators.as('text', f.referenceDesignators ?? '')} class="input" />
+      </label>
+      <label class="block">
+        <span class="text-sm" title="Size of each piece to cut from stock, such as extrusion or sheet. The quantity is then the number of cut pieces.">
+          Cut length {@render badge('cutLength')}
+        </span>
+        <input {...fields.cutLength.as('text', f.cutLength ?? '')} placeholder="415 mm" class="input" />
+      </label>
+      <label class="block">
+        <span class="text-sm">Cut width (sheet) {@render badge('cutWidth')}</span>
+        <input {...fields.cutWidth.as('text', f.cutWidth ?? '')} class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Component group</span>

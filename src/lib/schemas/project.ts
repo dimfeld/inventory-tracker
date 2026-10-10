@@ -4,6 +4,7 @@ import {
   type ConstraintComparison,
   type ProjectStatus,
 } from "#lib/projects.ts";
+import { parsePieceLength, type PieceDisplayUnit } from "#lib/pieces.ts";
 import { isUnit, type Unit } from "#lib/units.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
@@ -43,6 +44,13 @@ export interface BomLineInput {
   /** Manufacturer part number, alias, or supplier SKU. */
   partNumber: string | null;
   constraints: ConstraintInput[];
+  /**
+   * Size of each cut piece in mm, for a part tracked as pieces. With a cut size, the amount is
+   * the number of cut pieces. Null for whole pieces and for bulk parts.
+   */
+  cutLengthMm: number | null;
+  /** Width of each cut piece of 2D pieces, or null. */
+  cutWidthMm: number | null;
 }
 
 export interface ChoiceInput {
@@ -90,12 +98,27 @@ function optionalId(form: FormData, name: string): number | null {
 }
 
 /**
+ * An optional length field in mm. A bare number is in `unit`; text with a unit is read as
+ * entered. Returns NaN for an invalid value.
+ */
+function optionalLength(form: FormData, name: string, unit: PieceDisplayUnit): number | null {
+  const raw = text(form, name);
+  if (!raw) return null;
+  const mm = parsePieceLength(raw, unit);
+  return mm !== null && mm > 0 ? mm : Number.NaN;
+}
+
+/**
  * Parse the BOM line form. `mode` is `exact` (a catalog part in `part_id`) or `constraints`
  * (`category_id`, `manufacturer`, `part_number`). Constraint rows use parallel fields
  * `constraint_key`/`constraint_comparison`/`constraint_value`/`constraint_max`; rows without a
- * value are ignored. Constraints apply in both modes.
+ * value are ignored. Constraints apply in both modes. `cut_length` and `cut_width` are the cut
+ * size of a part tracked as pieces; a bare number is in `cutSizeUnit(partId)`.
  */
-export function parseBomLineForm(form: FormData): ParseResult<BomLineInput> {
+export function parseBomLineForm(
+  form: FormData,
+  cutSizeUnit: (partId: number | null) => PieceDisplayUnit = () => "mm"
+): ParseResult<BomLineInput> {
   const errors: FieldErrors = {};
 
   const description = text(form, "description");
@@ -115,6 +138,12 @@ export function parseBomLineForm(form: FormData): ParseResult<BomLineInput> {
   if (exact && (partId === null || Number.isNaN(partId))) errors.part_id = "Choose a part";
   const categoryId = exact ? null : optionalId(form, "category_id");
   if (Number.isNaN(categoryId)) errors.category_id = "Choose a valid category";
+
+  const cutUnit = cutSizeUnit(partId !== null && !Number.isNaN(partId) ? partId : null);
+  const cutLengthMm = optionalLength(form, "cut_length", cutUnit);
+  if (Number.isNaN(cutLengthMm)) errors.cut_length = "Enter the cut length, such as 415 mm";
+  const cutWidthMm = optionalLength(form, "cut_width", cutUnit);
+  if (Number.isNaN(cutWidthMm)) errors.cut_width = "Enter the cut width, such as 75 mm";
 
   const keys = allText(form, "constraint_key");
   const comparisons = allText(form, "constraint_comparison");
@@ -158,6 +187,8 @@ export function parseBomLineForm(form: FormData): ParseResult<BomLineInput> {
     manufacturer: exact ? null : optionalText(form, "manufacturer"),
     partNumber: exact ? null : optionalText(form, "part_number"),
     constraints,
+    cutLengthMm,
+    cutWidthMm,
   }));
 }
 

@@ -45,6 +45,14 @@ export function insertHoldingLocation(db: Database, projectId: number, name: str
     .get(name, projectId)!.id;
 }
 
+/** The project's holding location, made when the project first needs it. */
+export function ensureHoldingLocation(db: Database, projectId: number): Location {
+  const existing = getHoldingLocation(db, projectId);
+  if (existing) return existing;
+  insertHoldingLocation(db, projectId, `Project #${projectId} holding`);
+  return getHoldingLocation(db, projectId)!;
+}
+
 export function getLocationByName(db: Database, name: string): Location | null {
   return db.query<Location, [string]>(`SELECT ${COLUMNS} FROM locations WHERE name = ?`).get(name);
 }

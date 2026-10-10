@@ -1,4 +1,6 @@
 import { measurementEquivalents } from "./attributes";
+import { formatSize, type PieceDisplayUnit } from "./pieces";
+import { formatQuantity } from "./units";
 
 export const PROJECT_STATUSES = ["planned", "active", "paused", "complete", "cancelled"] as const;
 
@@ -54,4 +56,20 @@ export function describeConstraint(constraint: {
       ? ` and ${show(constraint.rawMaxValue ?? "", constraint.maxValueNumber)}`
       : "";
   return `${label} ${COMPARISON_LABELS[comparison]} ${value}${range}`;
+}
+
+/**
+ * The quantity of a BOM row. A row with a cut size counts cut pieces, such as `2 × 415 mm`;
+ * other rows are an amount of their unit, such as `4 pcs`.
+ */
+export function formatLineQuantity(line: {
+  quantity: number;
+  unit: string;
+  cutLengthMm: number | null;
+  cutWidthMm: number | null;
+  pieceDisplayUnit: PieceDisplayUnit;
+}): string {
+  if (line.cutLengthMm === null) return formatQuantity(line.quantity, line.unit);
+  const size = { lengthMm: line.cutLengthMm, widthMm: line.cutWidthMm };
+  return `${line.quantity} × ${formatSize(size, line.pieceDisplayUnit)}`;
 }

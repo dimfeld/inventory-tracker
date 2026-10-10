@@ -1,5 +1,5 @@
 import { absoluteQuantity, type LineCoverage } from "./coverage";
-import { allocations, commitments } from "./index";
+import { allocations, commitments, pieceAllocations } from "./index";
 
 /** Free storage stock of an approved part that a line can reserve with one click. */
 export interface ReserveOption {
@@ -70,7 +70,8 @@ export function listSupplyOptions(
       const reserve: ReserveOption[] = [];
       let freeStock = 0;
       if (lineCoverage.uncovered > 0) {
-        for (const part of allocations().getLineStock(projectId, lineId).parts) {
+        const parts = allocations().getLineStock(projectId, lineId).parts;
+        for (const part of parts) {
           if (!part.allowed || part.archived || part.pieces) continue;
           const need = wholeOf(lineCoverage.uncovered, lineCoverage, part.baseUnit);
           for (const stock of part.storage) {
@@ -86,6 +87,11 @@ export function listSupplyOptions(
               quantity,
             });
           }
+        }
+        // Free pieces count as the cuts they can give the line after other reservations.
+        if (parts.some((part) => part.allowed && !part.archived && part.pieces)) {
+          const { cuts } = pieceAllocations().suggestPieces(projectId, lineId);
+          freeStock += inCoverageUnit(cuts.length, "pcs", lineCoverage);
         }
       }
 

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { calculateCut, checkSplit, formatArea, formatLength } from "#lib/pieces.ts";
+import { calculateCut, checkSplit, formatArea, formatLength, freeLengthMm } from "#lib/pieces.ts";
 import {
   getAttributeDefinitionById,
   getPart,
@@ -7,6 +7,10 @@ import {
   type Part,
 } from "#lib/server/db/catalog.ts";
 import { getLocation, type Location } from "#lib/server/db/locations.ts";
+import {
+  listPieceReservations,
+  type PieceReservationDetail,
+} from "#lib/server/db/piece-reservations.ts";
 import {
   getMovementByOperationId,
   insertMovement,
@@ -69,13 +73,15 @@ export interface RemovePieceInput extends PieceActionBase {
 }
 
 /**
- * Where one output piece of a cut goes: kept at a storage location, scrapped, or used outside a
- * project. Scrapped and used outputs are retired at once.
+ * Where one output piece of a cut goes: kept at a storage location, scrapped, used outside a
+ * project, or picked for a BOM line to its project's holding location. Scrapped and used
+ * outputs are retired at once.
  */
 export type PieceDestination =
   | { kind: "keep"; locationId: number }
   | { kind: "scrap" }
-  | { kind: "use" };
+  | { kind: "use" }
+  | { kind: "pick"; holdingLocationId: number; bomLineId: number };
 
 export interface CutOutput {
   lengthMm: number;
@@ -91,6 +97,11 @@ export interface CutPieceInput extends PieceActionBase {
   remainder: { destination: PieceDestination; label?: string | null };
   /** Required when an output is used outside a project. */
   reason?: string | null;
+  /**
+   * Cut a reserved piece. Only a project pick sets this; it moves the piece's other
+   * reservations to the remainder in the same transaction.
+   */
+  allowReserved?: boolean;
 }
 
 export interface SplitOutput {
@@ -106,6 +117,8 @@ export interface SplitPieceInput extends PieceActionBase {
   outputs: SplitOutput[];
   /** Required when an output is used outside a project. */
   reason?: string | null;
+  /** Split a reserved piece. Only a project pick of the piece's reservation sets this. */
+  allowReserved?: boolean;
 }
 
 /** The new pieces of a cut or split, and warnings that did not stop it. */
@@ -168,7 +181,13 @@ export function insertIncomingPieces(
   sizes: PieceSizeInput[],
   movement: Pick<
     NewMovement,
-    "operationId" | "toLocationId" | "movementType" | "occurredOn" | "reason" | "receiptLineId"
+    | "operationId"
+    | "toLocationId"
+    | "movementType"
+    | "occurredOn"
+    | "reason"
+    | "receiptLineId"
+    | "bomLineId"
   >
 ): StockPiece[] {
   return sizes.map((size, index) => {
@@ -191,6 +210,44 @@ export function insertIncomingPieces(
   });
 }
 
+/** A piece in storage with its reservations. */
+export interface StoragePiece extends CurrentPiece {
+  reservations: PieceReservationDetail[];
+  /**
+   * The length of a 1D piece that is free for more cuts after its reservations and their kerf.
+   * A 2D piece has one reservation at most, so it is its length when unreserved, else zero.
+   */
+  freeLengthMm: number;
+}
+
+/** Pieces of the parts in storage, with their reservations and free length. */
+export function listStoragePieces(db: Database, partIds: number[]): StoragePiece[] {
+  const pieces = partIds
+    .flatMap((id) => listPartPieces(db, id))
+    .filter((piece) => piece.locationKind === "storage");
+  const reservations = Map.groupBy(
+    listPieceReservations(
+      db,
+      pieces.map((p) => p.id)
+    ),
+    (r) => r.pieceId
+  );
+  return pieces.map((piece) => {
+    const held = reservations.get(piece.id) ?? [];
+    const free =
+      piece.widthMm === null
+        ? freeLengthMm(
+            piece,
+            piece.kerfMm,
+            held.map((r) => r.lengthMm)
+          )
+        : held.length > 0
+          ? 0
+          : piece.lengthMm;
+    return { ...piece, reservations: held, freeLengthMm: free };
+  });
+}
+
 export type PieceService = ReturnType<typeof createPieceService>;
 
 /**
@@ -199,8 +256,9 @@ export type PieceService = ReturnType<typeof createPieceService>;
  * balance is 1. Each change runs in one SQLite transaction.
  */
 export function createPieceService(db: Database) {
+  /** Run in a new transaction, or in the caller's, such as a project pick that cuts a piece. */
   function inTransaction<T>(fn: () => T): T {
-    return db.transaction(fn).immediate();
+    return db.inTransaction ? fn() : db.transaction(fn).immediate();
   }
 
   function requireNewOperation(operationId: string) {
@@ -246,8 +304,9 @@ export function createPieceService(db: Database) {
   /**
    * Retire `piece` and make its outputs as child pieces, in one operation. Movement operation IDs
    * are the input's ID with a position: `:1` takes the parent out, and each output comes in
-   * with the next one. A kept output comes in at its location. A scrapped or used output comes in
-   * where the parent was and then goes out again, so its history shows where it went.
+   * with the next one. A kept output comes in at its location. A scrapped, used, or picked output
+   * comes in where the parent was and then goes out again (a pick to the project's holding
+   * location, for its BOM line), so its history shows where it went.
    */
   function insertCut(
     input: PieceActionBase & { reason: string | null },
@@ -290,7 +349,15 @@ export function createPieceService(db: Database) {
         movementType: "cut",
         pieceId: child.id,
       });
-      if (destination.kind !== "keep") {
+      if (destination.kind === "pick") {
+        movement({
+          fromLocationId: locationId,
+          toLocationId: destination.holdingLocationId,
+          movementType: "pick",
+          pieceId: child.id,
+          bomLineId: destination.bomLineId,
+        });
+      } else if (destination.kind !== "keep") {
         movement({
           fromLocationId: locationId,
           toLocationId: null,
@@ -300,6 +367,20 @@ export function createPieceService(db: Database) {
       }
       return child;
     });
+  }
+
+  /**
+   * A piece that is not reserved, so it can be cut or removed. A reserved piece moves with
+   * its reservations, but a project pick cuts it.
+   */
+  function requireUnreserved(piece: CurrentPiece) {
+    const holders = [...new Set(listPieceReservations(db, [piece.id]).map((r) => r.projectName))];
+    if (holders.length > 0) {
+      throw new InventoryError(
+        `This piece is reserved for ${holders.join(", ")}. Release the reservations first, ` +
+          "or pick it for the project."
+      );
+    }
   }
 
   /** The piece in stock with its part, or an error when it was retired. */
@@ -370,6 +451,7 @@ export function createPieceService(db: Database) {
         requireNewOperation(`${input.operationId}:1`);
         const { piece, part } = requireCurrentPiece(input.pieceId);
         requireStorage(piece.locationId);
+        if (!input.allowReserved) requireUnreserved(piece);
         if (piece.widthMm !== null) {
           throw new InventoryError(
             "This piece has a width. Split it into measured pieces instead."
@@ -423,6 +505,7 @@ export function createPieceService(db: Database) {
         requireNewOperation(`${input.operationId}:1`);
         const { piece, part } = requireCurrentPiece(input.pieceId);
         requireStorage(piece.locationId);
+        if (!input.allowReserved) requireUnreserved(piece);
         if (piece.widthMm === null) {
           throw new InventoryError("This piece has no width. Cut it to lengths instead.");
         }
@@ -465,6 +548,7 @@ export function createPieceService(db: Database) {
         requireNewOperation(input.operationId);
         const { piece, part } = requireCurrentPiece(input.pieceId);
         requireStorage(piece.locationId);
+        requireUnreserved(piece);
         return insertMovement(db, {
           operationId: input.operationId,
           partId: part.id,

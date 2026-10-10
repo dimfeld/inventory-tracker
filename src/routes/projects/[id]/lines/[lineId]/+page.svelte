@@ -1,8 +1,24 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import PartPicker from '#lib/components/PartPicker.svelte';
-  import { describeConstraint } from '#lib/projects.ts';
+  import {
+    formatLength,
+    formatSize,
+    isWholePiece,
+    lengthInputValue,
+    type PieceDisplayUnit,
+  } from '#lib/pieces.ts';
+  import { describeConstraint, formatLineQuantity } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
+  import {
+    acceptSuggestion,
+    pickPieces,
+    releasePieceReservation,
+    reservePiece,
+    resizePieceReservation,
+    returnPiece,
+    usePiece,
+  } from '../../pieces.remote';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
@@ -43,6 +59,9 @@
   const coverage = $derived(data.stock.coverage);
   const lineCommitments = $derived(coverage.parts.flatMap((p) => p.commitments));
   const allocationOf = (partId: number) => coverage.parts.find((p) => p.partId === partId);
+  const issuesOf = (f: { fields: { allIssues(): { message: string }[] | undefined } }) =>
+    f.fields.allIssues()?.map((issue) => issue.message).join('. ');
+  const pickedOf = (partId: number) => data.pickedPieces.filter((p) => p.partId === partId);
   const reservedHere = (partId: number, locationId: number) =>
     allocationOf(partId)?.reservations.find((r) => r.locationId === locationId)?.quantity ?? 0;
 </script>
@@ -89,6 +108,203 @@
   </form>
 {/snippet}
 
+{#snippet sizeFields(
+  form: ReturnType<typeof reservePiece.for> | ReturnType<typeof resizePieceReservation.for>,
+  unit: PieceDisplayUnit,
+  twoD: boolean,
+  size: { lengthMm: number; widthMm: number | null } | null
+)}
+  <input {...form.fields.unit.as('hidden', unit)} />
+  <input
+    {...form.fields.length.as('text')}
+    value={size ? lengthInputValue(size.lengthMm, unit) : ''}
+    placeholder="Length ({unit})"
+    aria-label="Length"
+    class="input-sm w-24"
+  />
+  {#if twoD}
+    ×
+    <input
+      {...form.fields.width.as('text')}
+      value={size?.widthMm ? lengthInputValue(size.widthMm, unit) : ''}
+      placeholder="Width ({unit})"
+      aria-label="Width"
+      class="input-sm w-24"
+    />
+    <label class="flex items-center gap-1">
+      <input {...form.fields.confirmFit.as('checkbox')} /> The cut size fits in the piece
+    </label>
+  {/if}
+{/snippet}
+
+{#snippet formResult(form: { result?: { text: string; warnings: string[] } } & Parameters<typeof issuesOf>[0])}
+  {#if issuesOf(form)}<p class="msg-error w-full">{issuesOf(form)}</p>{/if}
+  {#if form.result}
+    <p class="msg-ok w-full">{form.result.text}</p>
+    {#each form.result.warnings as warning (warning)}<p class="notice w-full">{warning}</p>{/each}
+  {/if}
+{/snippet}
+
+{#snippet resizeForm(reservation: (typeof coverage.parts)[number]['pieceReservations'][number])}
+  {@const resize = resizePieceReservation.for(reservation.id)}
+  <details class="w-full">
+    <summary class="cursor-pointer text-gray-600">Change size</summary>
+    <form {...resize} class="mt-1 flex flex-wrap items-center gap-2">
+      <input {...resize.fields.projectId.as('hidden', data.project.id)} />
+      <input {...resize.fields.reservationId.as('hidden', reservation.id)} />
+      {@render sizeFields(resize, reservation.displayUnit, reservation.pieceWidthMm !== null, reservation)}
+      <button class="btn-secondary" disabled={resize.pending > 0}>Change size</button>
+      {@render formResult(resize)}
+    </form>
+  </details>
+{/snippet}
+
+{#snippet storagePieces(part: (typeof data.stock.parts)[number])}
+  <h4 class="mb-1 font-medium">Pieces in storage</h4>
+  <p class="mb-1 text-gray-600">
+    Leave the size empty to reserve {line.cutLengthMm === null ? 'the whole piece' : 'the row\'s cut size'}.
+  </p>
+  <table class="data-table stack-table mb-2">
+    <thead>
+      <tr><th>Piece</th><th>Location</th><th class="text-right">Free</th><th>Reserved</th><th></th></tr>
+    </thead>
+    <tbody>
+      {#each part.storagePieces as piece (piece.id)}
+        {@const unit = piece.displayUnit}
+        {@const twoD = piece.widthMm !== null}
+        {@const reserve = reservePiece.for(piece.id)}
+        <tr>
+          <td class="font-medium sm:font-normal">
+            <a href="/pieces/{piece.id}" class="link">#{piece.id}</a> {formatSize(piece, unit)}
+            {#if piece.label}<span class="text-gray-600">{piece.label}</span>{/if}
+          </td>
+          <td data-label="Location">{piece.locationName}</td>
+          <td data-label="Free" class="text-right">
+            {twoD ? (piece.reservations.length === 0 ? 'whole piece' : 'none') : formatLength(piece.freeLengthMm, unit)}
+          </td>
+          <td data-label="Reserved">
+            {#each piece.reservations as r (r.id)}
+              <div>{formatSize(r, unit)} for {r.projectName}: {r.lineDescription}</div>
+            {:else}
+              —
+            {/each}
+          </td>
+          <td class="pt-2 sm:pt-1.5">
+            {#if twoD ? piece.reservations.length === 0 : piece.freeLengthMm > 0}
+              <form {...reserve} class="flex flex-wrap items-center gap-1">
+                <input {...reserve.fields.projectId.as('hidden', data.project.id)} />
+                <input {...reserve.fields.lineId.as('hidden', line.id)} />
+                <input {...reserve.fields.pieceId.as('hidden', piece.id)} />
+                {@render sizeFields(reserve, unit, twoD, null)}
+                <button class="btn-secondary" disabled={reserve.pending > 0}>Reserve</button>
+                {@render formResult(reserve)}
+              </form>
+            {/if}
+          </td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+{/snippet}
+
+{#snippet pieceStock(
+  part: (typeof data.stock.parts)[number],
+  allocation: (typeof coverage.parts)[number] | undefined
+)}
+  {@const free = part.storagePieces.filter((p) => p.reservations.length === 0).length}
+  <p class="mb-2 text-gray-600">
+    Tracked as pieces. In storage: {part.storagePieces.length} piece(s), {free} with no reservation.
+  </p>
+  {#if allocation && allocation.pieceReservations.length > 0}
+    <h4 class="mb-1 font-medium">Reserved for this row</h4>
+    <ul class="mb-2 space-y-1">
+      {#each allocation.pieceReservations as reservation (reservation.id)}
+        {@const unit = reservation.displayUnit}
+        {@const piece = { lengthMm: reservation.pieceLengthMm, widthMm: reservation.pieceWidthMm }}
+        {@const whole = isWholePiece(piece, reservation)}
+        {@const pick = pickPieces.for(`reservation-${reservation.id}`)}
+        {@const release = releasePieceReservation.for(reservation.id)}
+        <li class="flex flex-wrap items-center gap-2">
+          <span class="font-semibold">{whole ? 'Whole piece' : formatSize(reservation, unit)}</span>
+          <span class="text-gray-600">
+            of <a href="/pieces/{reservation.pieceId}" class="link">piece #{reservation.pieceId}</a>
+            ({formatSize(piece, unit)}) at {reservation.locationName}
+          </span>
+          {#if whole || reservation.widthMm === null}
+            <form {...pick}>
+              <input {...pick.fields.projectId.as('hidden', data.project.id)} />
+              <input {...pick.fields.operationId.as('hidden', data.operationId)} />
+              <input {...pick.fields.occurredOn.as('hidden', data.today)} />
+              <input {...pick.fields.reservationIds.as('hidden', String(reservation.id))} />
+              <input {...pick.fields.unit.as('hidden', unit)} />
+              <button class="btn-secondary" disabled={pick.pending > 0}>Pick</button>
+            </form>
+          {:else}
+            <a href="/projects/{data.project.id}/pick" class="link">Pick on the pick list</a>
+          {/if}
+          <form {...release}>
+            <input {...release.fields.projectId.as('hidden', data.project.id)} />
+            <input {...release.fields.reservationId.as('hidden', reservation.id)} />
+            <button class="btn-secondary" disabled={release.pending > 0}>Release</button>
+          </form>
+          {#if issuesOf(pick)}<p class="msg-error w-full">{issuesOf(pick)}</p>{/if}
+          {#if issuesOf(release)}<p class="msg-error w-full">{issuesOf(release)}</p>{/if}
+          {@render resizeForm(reservation)}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  {#if part.allowed && !part.archived && coverage.uncovered > 0 && part.storagePieces.length > 0}
+    {@render storagePieces(part)}
+  {/if}
+  {#if allocation && allocation.used > 0}
+    <p class="mb-1">Used: {formatQuantity(allocation.used, part.baseUnit)}.</p>
+  {/if}
+  {#if pickedOf(part.partId).length > 0}
+    <h4 class="mb-1 font-medium">Picked and held</h4>
+    <ul class="space-y-2">
+      {#each pickedOf(part.partId) as picked (picked.pieceId)}
+        {@const use = usePiece.for(picked.pieceId)}
+        {@const back = returnPiece.for(picked.pieceId)}
+        <li class="flex flex-wrap items-end gap-3">
+          <span>
+            <a href="/pieces/{picked.pieceId}" class="link">Piece #{picked.pieceId}</a>
+            {formatSize(picked, picked.displayUnit)}
+            {#if picked.label}<span class="text-gray-600">{picked.label}</span>{/if}
+          </span>
+          <form {...use} class="flex flex-wrap items-end gap-1">
+            <input {...use.fields.projectId.as('hidden', data.project.id)} />
+            <input {...use.fields.lineId.as('hidden', line.id)} />
+            <input {...use.fields.pieceId.as('hidden', picked.pieceId)} />
+            <input {...use.fields.operationId.as('hidden', data.operationId)} />
+            <input {...use.fields.occurredOn.as('hidden', data.today)} />
+            <input {...use.fields.reason.as('text')} placeholder="Note (optional)" class="input-sm" />
+            <button class="btn-secondary" disabled={use.pending > 0}>Record use</button>
+          </form>
+          <form {...back} class="flex flex-wrap items-end gap-1">
+            <input {...back.fields.projectId.as('hidden', data.project.id)} />
+            <input {...back.fields.lineId.as('hidden', line.id)} />
+            <input {...back.fields.pieceId.as('hidden', picked.pieceId)} />
+            <input {...back.fields.operationId.as('hidden', data.operationId)} />
+            <input {...back.fields.occurredOn.as('hidden', data.today)} />
+            <select {...back.fields.toLocationId.as('select')} required aria-label="Return to" class="input-sm">
+              {#each data.storageLocations as location (location.id)}
+                <option value={String(location.id)}>{location.name}</option>
+              {/each}
+            </select>
+            <label class="flex items-center gap-1">
+              <input {...back.fields.reserveAgain.as('checkbox')} /> Reserve again
+            </label>
+            <button class="btn-secondary" disabled={back.pending > 0}>Return</button>
+          </form>
+          {#if issuesOf(use)}<p class="msg-error w-full">{issuesOf(use)}</p>{/if}
+          {#if issuesOf(back)}<p class="msg-error w-full">{issuesOf(back)}</p>{/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+{/snippet}
+
 <nav aria-label="Rows" class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
   <a href="/projects/{data.project.id}" class="link">← {data.project.name}</a>
   <span class="ml-auto text-gray-500">Row {data.position.index + 1} of {data.position.count}</span>
@@ -112,7 +328,7 @@
 </div>
 
 <dl class="card mb-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-  <dt class="text-gray-600">Quantity</dt><dd>{formatQuantity(line.quantity, line.unit)}</dd>
+  <dt class="text-gray-600">Quantity</dt><dd>{formatLineQuantity(line)}</dd>
   <dt class="text-gray-600">Component</dt><dd>{data.component?.name ?? 'Ungrouped'}</dd>
   <dt class="text-gray-600">Reference designators</dt><dd>{line.referenceDesignators ?? '—'}</dd>
   {#if line.partId !== null}
@@ -182,6 +398,38 @@
   </dl>
   {#if stockFeedback}<p class="mb-3 {stockFeedback.ok ? 'msg-ok' : 'msg-error'}">{stockFeedback.text}</p>{/if}
 
+  {#if data.suggestion.cuts.length > 0 && coverage.uncovered > 0}
+    {@const accept = acceptSuggestion.for(line.id)}
+    <div class="card mb-3 text-sm">
+      <h3 class="mb-1 font-semibold">Suggested pieces</h3>
+      <p class="mb-1 text-gray-600">Offcuts and the shortest pieces that fit come first.</p>
+      <ul class="mb-2 list-disc pl-5">
+        {#each data.suggestion.cuts as cut, index (index)}
+          <li>
+            Cut {formatSize(cut.size, cut.piece.displayUnit)} from
+            <a href="/pieces/{cut.piece.id}" class="link">piece #{cut.piece.id}</a>
+            ({formatSize(cut.piece, cut.piece.displayUnit)}, {cut.piece.partName}) at {cut.piece.locationName}
+          </li>
+        {/each}
+      </ul>
+      {#if data.suggestion.unplaced > 0}
+        <p class="mb-2 text-amber-700">No piece in storage fits {data.suggestion.unplaced} more cut piece(s).</p>
+      {/if}
+      <form {...accept} class="flex flex-wrap items-center gap-2">
+        <input {...accept.fields.projectId.as('hidden', data.project.id)} />
+        <input {...accept.fields.lineId.as('hidden', line.id)} />
+        <input
+          {...accept.fields.cuts.as(
+            'hidden',
+            JSON.stringify(data.suggestion.cuts.map((c) => ({ pieceId: c.piece.id, ...c.size })))
+          )}
+        />
+        <button class="btn-secondary" disabled={accept.pending > 0}>Accept suggestion</button>
+        {@render formResult(accept)}
+      </form>
+    </div>
+  {/if}
+
   {#if data.stock.parts.length === 0}
     <p class="text-sm text-gray-600">Approve a part to reserve stock for this row.</p>
   {/if}
@@ -193,7 +441,7 @@
         {#if !part.allowed}<span class="rounded bg-red-100 px-1 text-xs text-red-800">no longer approved</span>{/if}
       </h3>
       {#if part.pieces}
-        <p class="mb-2 text-gray-600">This part is tracked as pieces. Pieces cannot be reserved yet.</p>
+        {@render pieceStock(part, allocation)}
       {:else if part.storage.length === 0}
         <p class="mb-2 text-gray-600">No stock in storage.</p>
       {:else}
@@ -231,13 +479,13 @@
           </tbody>
         </table>
       {/if}
-      {#if allocation && (allocation.picked > 0 || allocation.used > 0)}
+      {#if !part.pieces && allocation && (allocation.picked > 0 || allocation.used > 0)}
         <p class="mb-1">
           Picked and held: {formatQuantity(allocation.picked, part.baseUnit)}. Used:
           {formatQuantity(allocation.used, part.baseUnit)}.
         </p>
       {/if}
-      {#if allocation && allocation.picked > 0}
+      {#if !part.pieces && allocation && allocation.picked > 0}
         <div class="flex flex-wrap gap-3">
           <form method="POST" action="?/use" use:enhance class="flex flex-wrap items-end gap-1">
             {@render hiddenFields(part.partId)}

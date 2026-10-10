@@ -35,6 +35,8 @@ export const response: ProjectOutput = {
       quantity: { value: "4", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: null,
+      cutLength: null,
+      cutWidth: null,
       // Before the first heading: ungrouped. "(enclosure)" is not a heading.
       group: null,
     },
@@ -55,6 +57,8 @@ export const response: ProjectOutput = {
       quantity: { value: "2", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: { value: "C1, C2", provenance: "source" },
+      cutLength: null,
+      cutWidth: null,
       group: { value: "Power supply", provenance: "source" },
     },
     {
@@ -70,6 +74,8 @@ export const response: ProjectOutput = {
       quantity: { value: "1", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: { value: "U1", provenance: "source" },
+      cutLength: null,
+      cutWidth: null,
       group: { value: "Power supply", provenance: "source" },
     },
     {
@@ -88,6 +94,8 @@ export const response: ProjectOutput = {
       quantity: { value: "4", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: { value: "R1-R4", provenance: "source" },
+      cutLength: null,
+      cutWidth: null,
       group: { value: "Controller", provenance: "source" },
     },
   ],

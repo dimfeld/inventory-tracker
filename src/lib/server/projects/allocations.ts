@@ -6,6 +6,8 @@ import {
   listLineCommitments,
   setCommitmentQuantity,
 } from "#lib/server/db/commitments.ts";
+import { formatSize } from "#lib/pieces.ts";
+import { deleteProjectPieceReservations } from "#lib/server/db/piece-reservations.ts";
 import { listBomLines, type BomLine, type BomConstraint } from "#lib/server/db/projects.ts";
 import { countLineMovements, deleteProjectReservations } from "#lib/server/db/reservations.ts";
 import { InventoryError } from "#lib/server/inventory/errors.ts";
@@ -70,6 +72,9 @@ function describeAllocation(allocation: PartAllocation, include: { used: boolean
   const fmt = (quantity: number) => formatQuantity(quantity, allocation.baseUnit);
   const states = [
     ...allocation.reservations.map((r) => `${fmt(r.quantity)} reserved at ${r.locationName}`),
+    ...allocation.pieceReservations.map(
+      (r) => `${formatSize(r, r.displayUnit)} reserved on piece #${r.pieceId} at ${r.locationName}`
+    ),
     ...(allocation.picked > 0 ? [`${fmt(allocation.picked)} picked`] : []),
     ...(include.used && allocation.used > 0 ? [`${fmt(allocation.used)} used`] : []),
   ];
@@ -188,7 +193,8 @@ export const bomAllocationGuard: BomAllocationGuard = {
     }
     if (to === "complete" || to === "cancelled") {
       return {
-        releasedReservations: deleteProjectReservations(db, projectId),
+        releasedReservations:
+          deleteProjectReservations(db, projectId) + deleteProjectPieceReservations(db, projectId),
         releasedCommitments: deleteProjectCommitments(db, projectId),
       };
     }

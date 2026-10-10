@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { PieceDisplayUnit } from "#lib/pieces.ts";
 import type { ConstraintComparison, ProjectStatus } from "#lib/projects.ts";
 
 // Type aliases (not interfaces) so they can be passed as named SQL bindings.
@@ -43,6 +44,13 @@ export type BomLineFields = {
   partNumber: string | null;
   referenceDesignators: string | null;
   notes: string | null;
+  /**
+   * Size of each cut piece of a part tracked as pieces, in mm. With a cut size, `quantity` is
+   * the number of cut pieces. Null for whole pieces and for bulk parts.
+   */
+  cutLengthMm: number | null;
+  /** Width of each cut piece of 2D pieces, or null. */
+  cutWidthMm: number | null;
 };
 
 export type BomLine = BomLineFields & {
@@ -50,6 +58,8 @@ export type BomLine = BomLineFields & {
   projectId: number;
   partName: string | null;
   categoryName: string | null;
+  /** The unit that the cut size is shown in: the exact part's display unit, else mm. */
+  pieceDisplayUnit: PieceDisplayUnit;
 };
 
 export interface BomConstraintValue {
@@ -184,7 +194,9 @@ export function ungroupComponentLines(db: Database, componentId: number): void {
 const LINE_COLUMNS = `l.id, l.project_id AS projectId, l.component_id AS componentId, l.description,
   l.quantity, l.unit, l.part_id AS partId, p.name AS partName, l.category_id AS categoryId,
   c.name AS categoryName, l.manufacturer, l.part_number AS partNumber,
-  l.reference_designators AS referenceDesignators, l.notes`;
+  l.reference_designators AS referenceDesignators, l.notes, l.cut_length_mm AS cutLengthMm,
+  l.cut_width_mm AS cutWidthMm,
+  CASE WHEN p.tracking_mode = 'pieces' THEN p.piece_display_unit ELSE 'mm' END AS pieceDisplayUnit`;
 
 const LINE_FROM = `bom_lines l
   LEFT JOIN parts p ON p.id = l.part_id
@@ -208,9 +220,10 @@ export function insertBomLine(db: Database, projectId: number, fields: BomLineFi
   return db
     .query<{ id: number }, BomLineFields & { projectId: number }>(
       `INSERT INTO bom_lines (project_id, component_id, description, quantity, unit, part_id,
-         category_id, manufacturer, part_number, reference_designators, notes)
+         category_id, manufacturer, part_number, reference_designators, notes, cut_length_mm,
+         cut_width_mm)
        VALUES ($projectId, $componentId, $description, $quantity, $unit, $partId, $categoryId,
-         $manufacturer, $partNumber, $referenceDesignators, $notes)
+         $manufacturer, $partNumber, $referenceDesignators, $notes, $cutLengthMm, $cutWidthMm)
        RETURNING id`
     )
     .get({ ...fields, projectId })!.id;
@@ -222,6 +235,7 @@ export function updateBomLine(db: Database, id: number, fields: BomLineFields): 
        quantity = $quantity, unit = $unit, part_id = $partId, category_id = $categoryId,
        manufacturer = $manufacturer, part_number = $partNumber,
        reference_designators = $referenceDesignators, notes = $notes,
+       cut_length_mm = $cutLengthMm, cut_width_mm = $cutWidthMm,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });

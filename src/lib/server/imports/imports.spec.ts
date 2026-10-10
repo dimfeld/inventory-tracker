@@ -3,7 +3,8 @@ import { EMPTY_HEADER, emptyLineFields, type ImportLineFields } from "#lib/impor
 import { getImport } from "#lib/server/db/imports.ts";
 import { listBomLines, listComponents } from "#lib/server/db/projects.ts";
 import { categoryIdByPath } from "#lib/server/inventory/fixtures.ts";
-import { opId } from "#lib/server/inventory/test-helpers.ts";
+import { opId, partInput } from "#lib/server/inventory/test-helpers.ts";
+import * as bomCutSizes from "./fixtures/bom-cut-sizes";
 import * as bomFlat from "./fixtures/bom-flat";
 import * as bomSections from "./fixtures/bom-sections";
 import * as orderList from "./fixtures/order-list";
@@ -1274,5 +1275,96 @@ Power,1,AMS1117-3.3,SOT-223,U1`,
     await ctx.imports.parse(other, fixtureExtractor(bomSections.response));
     const foreignGroup = review(ctx, other).groups[0].id;
     expect(() => edit(ctx, ctx.id, 0, { groupId: foreignGroup })).toThrow("does not exist");
+  });
+});
+
+describe("BOM import of cut sizes", () => {
+  it("reads cut sizes from the BOM text and gives them to the created rows", async () => {
+    const ctx = await parsedBom(bomCutSizes, "text");
+    const { id } = ctx;
+    let view = review(ctx, id);
+    expect(
+      view.lines.map((l) => [
+        l.fields.quantity,
+        l.fields.unit,
+        l.fields.cutLength,
+        l.fields.cutWidth,
+      ])
+    ).toEqual([
+      ["1", "pcs", "415 mm", null],
+      ["2", "pcs", "300 mm", null],
+      ["1", "pcs", "150 mm", "150 mm"],
+    ]);
+    // The cut size is not a part attribute.
+    expect(view.lines[0].fields.attributes).toEqual([]);
+    expect(view.lines[1].proposal!.provenance).toMatchObject({
+      quantity: "normalized",
+      cutLength: "normalized",
+    });
+
+    const tracking = (widthKey: string | null) => ({
+      mode: "pieces" as const,
+      lengthKey: "length",
+      widthKey,
+      kerfMm: 3,
+      minOffcutMm: 20,
+    });
+    const extrusion = ctx.catalog.createPart(
+      partInput({ name: "2020 extrusion, 6 mm slot", tracking: tracking(null) })
+    );
+    const sheet = ctx.catalog.createPart(
+      partInput({ name: "POM-C sheet 15 mm", tracking: tracking("width") })
+    );
+
+    // A bulk part cannot give cut pieces.
+    edit(ctx, id, 0, { resolution: "existing", partId: ctx.parts.screw });
+    expect(review(ctx, id).lines[0].problems).toContain(
+      "M3 × 8 pan head screw is not tracked as pieces. Remove the cut size or choose a pieces part"
+    );
+    edit(ctx, id, 0, { resolution: "existing", partId: extrusion });
+    edit(ctx, id, 1, { resolution: "existing", partId: extrusion });
+    edit(ctx, id, 2, { resolution: "existing", partId: sheet });
+    view = review(ctx, id);
+    expect(view.lines.flatMap((l) => l.problems)).toEqual([]);
+
+    ctx.imports.updateHeader(id, { ...EMPTY_HEADER, projectName: "Printer frame" });
+    const { projectId } = ctx.imports.commit(id, opId());
+    expect(
+      listBomLines(ctx.db, projectId!).map((r) => [
+        r.partId,
+        r.quantity,
+        r.cutLengthMm,
+        r.cutWidthMm,
+      ])
+    ).toEqual([
+      [extrusion, 1, 415, null],
+      [extrusion, 2, 300, null],
+      [sheet, 1, 150, 150],
+    ]);
+  });
+
+  it("keeps the cut size out of the matching constraints of a line", async () => {
+    const ctx = await parsedBom(bomCutSizes, "text");
+    const extrusions = ctx.catalog.createCategory("Extrusion", null);
+    const extrusion = ctx.catalog.createPart(
+      partInput({
+        name: "2020 extrusion",
+        categoryId: extrusions,
+        tracking: {
+          mode: "pieces",
+          lengthKey: "length",
+          widthKey: null,
+          kerfMm: 3,
+          minOffcutMm: 20,
+        },
+      })
+    );
+    edit(ctx, ctx.id, 0, { fields: { categoryId: extrusions } });
+    const [line] = review(ctx, ctx.id).lines;
+    const candidate = line.candidates.find((c) => c.part.id === extrusion)!;
+    expect(candidate.status).toBe("match");
+    expect(candidate.evidence).toContain(
+      "Tracked as pieces; cut size 415 mm is checked against pieces"
+    );
   });
 });

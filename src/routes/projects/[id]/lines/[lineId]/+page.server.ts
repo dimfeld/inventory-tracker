@@ -6,7 +6,12 @@ import { today } from "#lib/schemas/stock.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { inventory } from "#lib/server/inventory/index.ts";
 import { allocationAction } from "#lib/server/projects/allocation-actions.ts";
-import { allocations, commitments, projects } from "#lib/server/projects/index.ts";
+import {
+  allocations,
+  commitments,
+  pieceAllocations,
+  projects,
+} from "#lib/server/projects/index.ts";
 import { SOURCE_LABELS } from "#lib/server/projects/matching.ts";
 import type { Actions, PageServerLoad } from "./$types";
 
@@ -31,6 +36,8 @@ export const load: PageServerLoad = ({ params }) => {
     candidates: candidates.map((c) => ({ ...c, sourceLabel: SOURCE_LABELS[c.source] })),
     parts: projects().bomFormOptions().parts,
     stock: allocations().getLineStock(projectId, lineId),
+    pickedPieces: pieceAllocations().listPickedPieces(projectId, lineId),
+    suggestion: pieceAllocations().suggestPieces(projectId, lineId),
     incoming: commitments().listIncomingOptions(projectId, lineId),
     storageLocations: inventory().locations.listStorageLocations(),
     today: today(),

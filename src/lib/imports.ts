@@ -60,6 +60,13 @@ export interface ImportLineFields {
   supplierSku: string | null;
   notes: string | null;
   attributes: ImportAttribute[];
+  /**
+   * BOMs: size of each piece to cut from stock pieces, as written, such as "415 mm". A bare
+   * number is mm. With a cut size, the quantity is the number of cut pieces.
+   */
+  cutLength: string | null;
+  /** BOMs: width of each cut piece of sheet stock, as written. */
+  cutWidth: string | null;
 }
 
 /** Fields that carry a provenance mark. Attributes are marked by key as `attribute:<key>`. */
@@ -114,6 +121,8 @@ export function emptyLineFields(description = ""): ImportLineFields {
     supplierSku: null,
     notes: null,
     attributes: [],
+    cutLength: null,
+    cutWidth: null,
   };
 }
 

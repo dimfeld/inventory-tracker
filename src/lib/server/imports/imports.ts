@@ -14,6 +14,7 @@ import {
 } from "#lib/imports.ts";
 import { parseCurrency } from "#lib/money.ts";
 import { describePackConversion } from "#lib/orders.ts";
+import { parseLengthMm } from "#lib/pieces.ts";
 import { normalizeAttributeKey, type PartInput } from "#lib/schemas/part.ts";
 import type { BomLineInput } from "#lib/schemas/project.ts";
 import {
@@ -200,6 +201,52 @@ export function lineProblems(
       problems.push(error.message);
     }
   }
+  problems.push(...cutSizeProblems(line, part));
+  return problems;
+}
+
+/** The cut size of a BOM line in mm, or null without one or when it cannot be read. */
+function lineCutSize(f: ImportLineFields): { lengthMm: number; widthMm: number | null } | null {
+  const lengthMm = f.cutLength === null ? null : parseLengthMm(f.cutLength);
+  if (lengthMm === null) return null;
+  return { lengthMm, widthMm: f.cutWidth === null ? null : parseLengthMm(f.cutWidth) };
+}
+
+/**
+ * A cut size counts cut pieces of a part tracked as pieces, so the row must count pcs, and an
+ * existing part must be tracked as pieces with the same dimensions. A new part is bulk.
+ */
+function cutSizeProblems(line: LineEdit, part: Part | null): string[] {
+  const f = line.fields;
+  if (f.cutLength === null) {
+    return f.cutWidth === null ? [] : ["Enter the cut length with the cut width"];
+  }
+  const problems: string[] = [];
+  const lengthMm = parseLengthMm(f.cutLength);
+  if (lengthMm === null || lengthMm <= 0)
+    problems.push(`Cut length "${f.cutLength}" is not a length`);
+  if (f.cutWidth !== null && !(parseLengthMm(f.cutWidth)! > 0)) {
+    problems.push(`Cut width "${f.cutWidth}" is not a length`);
+  }
+  if (f.unit !== "pcs") problems.push("A row with a cut size counts cut pieces. Use pcs.");
+  if (line.resolution === "new") {
+    problems.push(
+      "A new part is not tracked as pieces. Choose an existing pieces part or a requirement, or remove the cut size"
+    );
+  }
+  if (line.resolution === "existing" && part) {
+    if (part.trackingMode !== "pieces") {
+      problems.push(
+        `${part.name} is not tracked as pieces. Remove the cut size or choose a pieces part`
+      );
+    } else if ((part.pieceWidthAttributeId === null) !== (f.cutWidth === null)) {
+      problems.push(
+        part.pieceWidthAttributeId === null
+          ? `${part.name} pieces have no width. Remove the cut width`
+          : `${part.name} pieces have a width. Enter the cut width`
+      );
+    }
+  }
   return problems;
 }
 
@@ -333,6 +380,8 @@ export function createImportService(db: Database) {
         categoryName: category?.name ?? null,
         manufacturer: fields.manufacturer,
         partNumber: fields.partNumber,
+        cutLengthMm: lineCutSize(fields)?.lengthMm ?? null,
+        cutWidthMm: lineCutSize(fields)?.widthMm ?? null,
       },
       lineConstraints(fields)
     );
@@ -494,6 +543,8 @@ export function createImportService(db: Database) {
             maxValue: null,
           }))
         : [],
+      cutLengthMm: lineCutSize(f)?.lengthMm ?? null,
+      cutWidthMm: lineCutSize(f)?.widthMm ?? null,
     };
   }
 

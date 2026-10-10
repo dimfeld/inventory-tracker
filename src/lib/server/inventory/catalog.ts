@@ -67,7 +67,7 @@ import {
   type AttributeCondition,
 } from "#lib/server/db/part-search.ts";
 import { InventoryError, NotFoundError } from "./errors";
-import { pieceDimensions } from "./pieces";
+import { listStoragePieces, pieceDimensions } from "./pieces";
 
 export type CatalogService = ReturnType<typeof createCatalogService>;
 
@@ -523,6 +523,8 @@ export function createCatalogService(db: Database) {
         pieceDimensions: part.trackingMode === "pieces" ? pieceDimensions(db, part) : null,
         /** Pieces in stock and their totals per location. Empty for a bulk part. */
         pieces: listPartPieces(db, id),
+        /** Pieces in storage with their project reservations and free length. */
+        storagePieces: listStoragePieces(db, [id]),
         pieceTotals: listPieceTotals(db, id),
         /** Pieces that are no longer in stock, newest first. */
         retiredPieces: listRetiredPieces(db, id),

@@ -213,6 +213,8 @@ describe("BOM component groups", () => {
         partNumber: null,
         referenceDesignators: null,
         notes: null,
+        cutLengthMm: null,
+        cutWidthMm: null,
       })
     ).toThrow(/FOREIGN KEY/);
     expect(projects.getLine(lamp, lineId)!.componentId).toBeNull();

@@ -1,15 +1,16 @@
 import type { Database } from "bun:sqlite";
-import type {
-  CommitState,
-  CsvSettings,
-  ImportHeader,
-  ImportKind,
-  ImportLineFields,
-  LineProposal,
-  ParseState,
-  ProvenanceMarks,
-  Resolution,
-  SourceType,
+import {
+  emptyLineFields,
+  type CommitState,
+  type CsvSettings,
+  type ImportHeader,
+  type ImportKind,
+  type ImportLineFields,
+  type LineProposal,
+  type ParseState,
+  type ProvenanceMarks,
+  type Resolution,
+  type SourceType,
 } from "#lib/imports.ts";
 
 export interface ImportRecord {
@@ -121,7 +122,8 @@ function toLine(row: RawLine): ImportLine {
   return {
     ...row,
     proposal: row.proposal === null ? null : JSON.parse(row.proposal),
-    fields: JSON.parse(row.fields),
+    // Lines saved before a field existed get its empty value.
+    fields: { ...emptyLineFields(), ...JSON.parse(row.fields) },
   };
 }
 

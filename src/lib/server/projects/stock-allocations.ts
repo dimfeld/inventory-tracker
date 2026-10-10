@@ -1,12 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { OPEN_PROJECT_STATUSES } from "#lib/projects.ts";
 import { getPart, type Part } from "#lib/server/db/catalog.ts";
-import {
-  getHoldingLocation,
-  getLocation,
-  insertHoldingLocation,
-  type Location,
-} from "#lib/server/db/locations.ts";
+import { ensureHoldingLocation, getLocation, type Location } from "#lib/server/db/locations.ts";
 import {
   getBalance,
   getMovementByOperationId,
@@ -36,7 +30,7 @@ import {
   InventoryError,
   NotFoundError,
 } from "#lib/server/inventory/errors.ts";
-import { requireBulkPart } from "#lib/server/inventory/pieces.ts";
+import { listStoragePieces } from "#lib/server/inventory/pieces.ts";
 import {
   assertUnit,
   compatibleUnits,
@@ -52,7 +46,7 @@ import {
   type LineCoverage,
 } from "./coverage";
 import { fitLineCommitments } from "./commitments";
-import { unitsCompatible } from "./matching";
+import { assertReservable } from "./piece-allocations";
 import type { ComponentFilter } from "./projects";
 
 interface LinePartInput {
@@ -150,10 +144,17 @@ export function createAllocationService(db: Database) {
     return location;
   }
 
-  /** A part whose stock the action changes. Pieces parts are not supported yet. */
+  /**
+   * A part whose bulk stock the action changes. Pieces parts are reserved, picked, used, and
+   * returned piece by piece through the piece allocation service.
+   */
   function requireStockPart(id: number): Part {
     const part = requirePart(id);
-    requireBulkPart(part);
+    if (part.trackingMode === "pieces") {
+      throw new InventoryError(
+        `${part.name} is tracked as pieces. Reserve, pick, use, and return its pieces one by one.`
+      );
+    }
     return part;
   }
 
@@ -170,10 +171,7 @@ export function createAllocationService(db: Database) {
   }
 
   function holdingLocation(project: Project): Location {
-    const existing = getHoldingLocation(db, project.id);
-    if (existing) return existing;
-    insertHoldingLocation(db, project.id, `Project #${project.id} holding`);
-    return getHoldingLocation(db, project.id)!;
+    return ensureHoldingLocation(db, project.id);
   }
 
   function coverageOf(line: BomLine): LineCoverage {
@@ -196,21 +194,9 @@ export function createAllocationService(db: Database) {
     location: Location,
     quantity: number
   ) {
-    if (!OPEN_PROJECT_STATUSES.includes(project.status)) {
-      throw new InventoryError(`${project.name} is ${project.status}; it cannot reserve stock`);
-    }
-    if (!allowedPartIds(db, line).has(part.id)) {
-      throw new InventoryError(
-        `${part.name} is not the row's exact part or an approved choice. Approve it first.`
-      );
-    }
-    if (!unitsCompatible(line.unit, part.baseUnit)) {
-      throw new InventoryError(
-        `${part.name} is counted in ${part.baseUnit}, which cannot convert to ${line.unit}`
-      );
-    }
-    if (part.archivedAt) {
-      throw new InventoryError(`${part.name} is archived. Restore it before reserving it.`);
+    assertReservable(db, project, line, part);
+    if (line.cutLengthMm !== null) {
+      throw new InventoryError("This row needs cut pieces. Reserve pieces of a pieces part.");
     }
 
     const available =
@@ -399,6 +385,7 @@ export function createAllocationService(db: Database) {
       const allowed = allowedPartIds(db, line);
       const partIds = [...new Set([...allowed, ...coverage.parts.map((p) => p.partId)])];
       const storage = Map.groupBy(listStorageStock(db, partIds), (s) => s.partId);
+      const pieces = Map.groupBy(listStoragePieces(db, partIds), (p) => p.partId);
       const parts = partIds
         .map((id) => requirePart(id))
         .map((part) => ({
@@ -407,13 +394,16 @@ export function createAllocationService(db: Database) {
           baseUnit: part.baseUnit,
           allowed: allowed.has(part.id),
           archived: part.archivedAt !== null,
-          /** Tracked as pieces, which cannot be reserved yet. */
+          /** Tracked as pieces, which reserve through the piece reservation service. */
           pieces: part.trackingMode === "pieces",
           units: compatibleUnits(assertUnit(part.baseUnit)),
+          /** For a pieces part, `available` counts the pieces with no reservation. */
           storage: (storage.get(part.id) ?? []).map((s: StorageStock) => ({
             ...s,
             available: s.balance - s.reserved,
           })),
+          /** Pieces in storage with their reservations and free length. Empty for bulk parts. */
+          storagePieces: pieces.get(part.id) ?? [],
         }));
       return { coverage, parts };
     },

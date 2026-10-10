@@ -17,10 +17,16 @@ import {
 import {
   countBomLinesOfParts,
   listCommitmentHolders,
-  listReservationHolders,
+  listPickedLineStock,
 } from "#lib/server/db/conversion.ts";
 import { getLocation } from "#lib/server/db/locations.ts";
 import { insertMovement, listLocationBalances } from "#lib/server/db/movements.ts";
+import { insertPieceReservation } from "#lib/server/db/piece-reservations.ts";
+import {
+  listReservationsAt,
+  setReservationQuantity,
+  type ReservationDetail,
+} from "#lib/server/db/reservations.ts";
 import { pieceDimensionDefinition } from "./catalog";
 import { InventoryError, NotFoundError } from "./errors";
 import { insertIncomingPieces, type PieceSizeInput } from "./pieces";
@@ -53,8 +59,13 @@ export interface ConversionPart {
   role: "destination" | "source";
   /** Size from the part's dimension attributes, or null when a value is missing. */
   size: { lengthMm: number; widthMm: number | null } | null;
-  /** Storage stock by location; each unit becomes one piece. */
-  stock: { locationId: number; locationName: string; count: number }[];
+  /**
+   * Storage stock by location; each unit becomes one piece. Each reserved unit becomes a
+   * reservation of one whole piece for the same line.
+   */
+  stock: { locationId: number; locationName: string; count: number; reserved: number }[];
+  /** Stock picked for BOM lines; each unit becomes one piece, still picked for its line. */
+  picked: { bomLineId: number; locationId: number; locationName: string; count: number }[];
 }
 
 /** An attribute that is not equal on all the parts. */
@@ -101,8 +112,9 @@ export type ConversionService = ReturnType<typeof createConversionService>;
  * same extrusion. The other parts are merged into the destination; each unit of storage stock
  * becomes one piece of its part's size, and supplier SKUs get that size as their stock size.
  *
- * Reservations, incoming commitments, and picked stock block a conversion, because they count
- * bulk quantities and piece reservations come in a later version.
+ * Storage reservations become reservations of whole pieces for the same lines, and picked
+ * stock becomes pieces that are still picked for their lines. Incoming commitments block a
+ * conversion, because they count bulk quantities and piece commitments come in a later version.
  */
 export function createConversionService(db: Database) {
   function requirePart(id: number): Part {
@@ -161,17 +173,18 @@ export function createConversionService(db: Database) {
 
       const stock: ConversionPart["stock"] = [];
       for (const balance of listLocationBalances(db, part.id)) {
-        if (balance.quantity <= 0) continue;
-        if (getLocation(db, balance.locationId)?.kind === "project") {
-          blockers.push(
-            `${part.name} has picked stock at ${balance.locationName}. Use or return it before conversion.`
-          );
+        // Project holding stock is converted by line, as picked stock.
+        if (balance.quantity <= 0 || getLocation(db, balance.locationId)?.kind === "project") {
           continue;
         }
         stock.push({
           locationId: balance.locationId,
           locationName: balance.locationName,
           count: balance.quantity,
+          reserved: listReservationsAt(db, part.id, balance.locationId).reduce(
+            (sum, r) => sum + r.quantity,
+            0
+          ),
         });
       }
       return {
@@ -180,16 +193,18 @@ export function createConversionService(db: Database) {
         role: index === 0 ? "destination" : "source",
         size: sizeKnown && lengthMm !== null ? { lengthMm, widthMm } : null,
         stock,
+        picked: listPickedLineStock(db, [part.id]).map(
+          ({ bomLineId, locationId, locationName, count }) => ({
+            bomLineId,
+            locationId,
+            locationName,
+            count,
+          })
+        ),
       };
     });
 
     const names = new Map(parts.map((p) => [p.id, p.name]));
-    for (const holder of listReservationHolders(db, [...names.keys()])) {
-      blockers.push(
-        `${names.get(holder.partId)} has reservations for ${holder.projectNames.join(", ")}. ` +
-          "Release them before conversion; piece reservations come in a later version."
-      );
-    }
     for (const holder of listCommitmentHolders(db, [...names.keys()])) {
       blockers.push(
         `${names.get(holder.partId)} has incoming supply committed to ` +
@@ -269,13 +284,16 @@ export function createConversionService(db: Database) {
 
     /**
      * Convert the parts in one transaction:
-     * 1. Close the bulk balance of every part at each storage location with a 'conversion'
+     * 1. End the bulk reservations of the parts. Close the bulk balance of every part at each
+     *    storage location, and its picked stock for each BOM line, with a 'conversion'
      *    movement to outside, while the parts are still bulk.
      * 2. Give each part's supplier SKUs its piece size as their stock size.
      * 3. Merge the sources into the destination (stock history, SKUs, aliases, orders, BOM
      *    lines, import lines), and keep their names as aliases.
      * 4. Make the destination a pieces part and remove its dimension attribute values.
      * 5. Add one piece per former unit of stock, of its part's size, at the same location.
+     *    Each reserved unit becomes a reservation of one whole piece for the same line, and
+     *    picked pieces come in for the same line, so they stay picked.
      *
      * The merge moves the old bulk movements to the destination with UPDATE. They have no
      * piece and sum to zero at every location after step 1, so the destination's balances are
@@ -297,7 +315,30 @@ export function createConversionService(db: Database) {
           const [destination, ...sources] = preview.parts;
           const op = input.operationId;
 
+          // Bulk reservations end here; they come back as piece reservations below.
+          const reservations = new Map<string, ReservationDetail[]>();
           for (const part of preview.parts) {
+            for (const stock of part.stock) {
+              const held = listReservationsAt(db, part.partId, stock.locationId);
+              reservations.set(`${part.partId}:${stock.locationId}`, held);
+              for (const reservation of held) setReservationQuantity(db, reservation.id, 0);
+            }
+          }
+
+          for (const part of preview.parts) {
+            for (const picked of part.picked) {
+              insertMovement(db, {
+                operationId: `${op}:close:${part.partId}:line:${picked.bomLineId}`,
+                partId: part.partId,
+                quantity: picked.count,
+                fromLocationId: picked.locationId,
+                toLocationId: null,
+                movementType: "conversion",
+                occurredOn: input.occurredOn,
+                reason: REASON,
+                bomLineId: picked.bomLineId,
+              });
+            }
             for (const stock of part.stock) {
               insertMovement(db, {
                 operationId: `${op}:close:${part.partId}:${stock.locationId}`,
@@ -340,21 +381,41 @@ export function createConversionService(db: Database) {
           const piecesPart = getPart(db, destination.partId)!;
           let pieceCount = 0;
           for (const part of preview.parts) {
+            const size: PieceSizeInput = { ...part.size!, label: null };
+            const sizes = (count: number) => Array.from({ length: count }, () => size);
             for (const stock of part.stock) {
-              const size: PieceSizeInput = { ...part.size!, label: null };
-              insertIncomingPieces(
-                db,
-                piecesPart,
-                Array.from({ length: stock.count }, () => size),
-                {
-                  operationId: `${op}:pieces:${part.partId}:${stock.locationId}`,
-                  toLocationId: stock.locationId,
-                  movementType: "conversion",
-                  occurredOn: input.occurredOn,
-                  reason: REASON,
-                }
-              );
+              const pieces = insertIncomingPieces(db, piecesPart, sizes(stock.count), {
+                operationId: `${op}:pieces:${part.partId}:${stock.locationId}`,
+                toLocationId: stock.locationId,
+                movementType: "conversion",
+                occurredOn: input.occurredOn,
+                reason: REASON,
+              });
               pieceCount += stock.count;
+              // Each reserved unit becomes a reservation of one whole piece.
+              const free = pieces.values();
+              for (const reservation of reservations.get(`${part.partId}:${stock.locationId}`)!) {
+                for (let i = 0; i < reservation.quantity; i += 1) {
+                  const piece = free.next().value!;
+                  insertPieceReservation(db, {
+                    bomLineId: reservation.bomLineId,
+                    pieceId: piece.id,
+                    lengthMm: piece.lengthMm,
+                    widthMm: piece.widthMm,
+                  });
+                }
+              }
+            }
+            for (const picked of part.picked) {
+              insertIncomingPieces(db, piecesPart, sizes(picked.count), {
+                operationId: `${op}:pieces:${part.partId}:line:${picked.bomLineId}`,
+                toLocationId: picked.locationId,
+                movementType: "conversion",
+                occurredOn: input.occurredOn,
+                reason: REASON,
+                bomLineId: picked.bomLineId,
+              });
+              pieceCount += picked.count;
             }
           }
           return { destinationId: destination.partId, pieceCount };

@@ -26,6 +26,8 @@
     manufacturer: null,
     partNumber: null,
     constraints: [],
+    cutLength: '',
+    cutWidth: '',
   }}
   message={form && 'message' in form ? form.message : undefined}
   errors={form && 'errors' in form ? form.errors : undefined}

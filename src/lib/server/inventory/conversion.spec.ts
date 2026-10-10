@@ -245,13 +245,26 @@ describe("conversion to pieces", () => {
     expect(ctx.catalog.getPartDetails(sheet)!.attributes.map((a) => a.key)).toEqual(["thickness"]);
   });
 
-  it("is blocked by reservations and changes nothing", () => {
+  it("turns reservations into whole-piece reservations and keeps picked stock picked", () => {
     const ctx = setup2020();
     ctx.taxonomy.setPartsValue([ctx.p400], "slot_width", "6 mm");
-    ctx.allocations.reserve({
+    const reserve = (lineId: number, partId: number, amount: string) =>
+      ctx.allocations.reserve({
+        projectId: ctx.project,
+        lineId,
+        partId,
+        locationId: ctx.rack,
+        amount,
+        unit: "pcs",
+      });
+    reserve(ctx.line700, ctx.p700, "1");
+    reserve(ctx.line1220, ctx.p1220, "2");
+    ctx.allocations.pick({
+      operationId: opId(),
+      occurredOn: DAY,
       projectId: ctx.project,
-      lineId: ctx.line700,
-      partId: ctx.p700,
+      lineId: ctx.line1220,
+      partId: ctx.p1220,
       locationId: ctx.rack,
       amount: "1",
       unit: "pcs",
@@ -263,22 +276,56 @@ describe("conversion to pieces", () => {
       widthKey: null,
     };
 
-    expect(ctx.conversion.previewConversion(input).blockers).toEqual([
-      "2020 extrusion 700 mm has reservations for Printer frame. Release them before " +
-        "conversion; piece reservations come in a later version.",
+    const preview = ctx.conversion.previewConversion(input);
+    expect(preview.blockers).toEqual([]);
+    expect(preview.parts.map((p) => [p.name, p.stock, p.picked.map((s) => s.count)])).toEqual([
+      [
+        "2020 extrusion 1220 mm",
+        [
+          { locationId: ctx.rack, locationName: "Rack", count: 2, reserved: 1 },
+          { locationId: ctx.shelf, locationName: "Shelf", count: 1, reserved: 0 },
+        ],
+        [1],
+      ],
+      [
+        "2020 extrusion 700 mm",
+        [{ locationId: ctx.rack, locationName: "Rack", count: 2, reserved: 1 }],
+        [],
+      ],
+      [
+        "2020 extrusion 400 mm",
+        [{ locationId: ctx.shelf, locationName: "Shelf", count: 1, reserved: 0 }],
+        [],
+      ],
     ]);
-    expect(() =>
-      ctx.conversion.convertToPieces({
-        ...input,
-        kerfMm: 0,
-        minOffcutMm: 0,
-        operationId: opId(),
-        occurredOn: DAY,
-      })
-    ).toThrow(/has reservations for Printer frame/);
-    expect(ctx.catalog.getPartDetails(ctx.p1220)!.part.trackingMode).toBe("bulk");
-    expect(ctx.catalog.getPartDetails(ctx.p700)).not.toBeNull();
-    expect(getBalance(ctx.db, ctx.p700, ctx.rack)).toBe(2);
+
+    const result = ctx.conversion.convertToPieces({
+      ...input,
+      kerfMm: 2,
+      minOffcutMm: 50,
+      operationId: opId(),
+      occurredOn: DAY,
+    });
+    expect(result.pieceCount).toBe(7);
+    expect(ctx.db.query("SELECT count(*) AS count FROM reservations").get()).toEqual({
+      count: 0,
+    });
+
+    const coverage = ctx.allocations.getProjectCoverage(ctx.project);
+    const pieceReservations = (lineId: number) =>
+      coverage[lineId].parts.flatMap((a) =>
+        a.pieceReservations.map((r) => [r.partId, r.locationName, r.lengthMm, r.pieceLengthMm])
+      );
+    expect(pieceReservations(ctx.line700)).toEqual([[ctx.p1220, "Rack", 700, 700]]);
+    expect(pieceReservations(ctx.line1220)).toEqual([[ctx.p1220, "Rack", 1220, 1220]]);
+    expect(coverage[ctx.line1220]).toMatchObject({ reserved: 1, picked: 1, uncovered: 0 });
+    expect(coverage[ctx.line700]).toMatchObject({ reserved: 1, uncovered: 0 });
+
+    // The picked stick is a piece at the project's holding location.
+    const holding = ctx.pieces
+      .listPartPieces(ctx.p1220)
+      .pieces.filter((p) => p.locationKind === "project");
+    expect(holding.map((p) => p.lengthMm)).toEqual([1220]);
   });
 
   it("reports parts that cannot be converted", () => {

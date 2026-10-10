@@ -61,6 +61,8 @@
   type PieceActionChoice = 'move' | 'remove' | PieceActionKind;
   let pieceAction = $state<{ kind: PieceActionChoice; pieceId: number } | null>(null);
   const actionPiece = $derived(data.pieces.find((p) => p.id === pieceAction?.pieceId));
+  /** Project reservations and free length of each piece in storage, by piece ID. */
+  const storagePieces = $derived(new Map(data.storagePieces.map((p) => [p.id, p])));
   let pieceActionForm = $state<HTMLElement>();
   async function startPieceAction(kind: PieceActionChoice, pieceId: number) {
     pieceAction = { kind, pieceId };
@@ -417,14 +419,34 @@
 
       <table class="data-table stack-table max-w-3xl">
         <thead>
-          <tr><th>Size</th><th>Location</th><th>Label</th><th></th></tr>
+          <tr><th>Size</th><th>Location</th><th>Label</th><th>Reserved</th><th class="text-right">Free</th><th></th></tr>
         </thead>
         <tbody>
           {#each data.pieces as piece (piece.id)}
+            {@const stored = storagePieces.get(piece.id)}
             <tr class={pieceAction?.pieceId === piece.id ? 'bg-blue-50' : ''}>
               <td class="font-medium whitespace-nowrap sm:font-normal"><a href="/pieces/{piece.id}" class="link">{@render pieceSize(piece)}</a></td>
               <td data-label="Location">{piece.locationName}</td>
               <td data-label="Label" class="text-gray-600 {piece.label ? '' : 'max-sm:hidden'}">{piece.label ?? ''}</td>
+              <td data-label="Reserved">
+                {#each stored?.reservations ?? [] as r (r.id)}
+                  <div>
+                    {formatSize(r, unit)} for
+                    <a href="/projects/{r.projectId}/lines/{r.bomLineId}" class="link">{r.projectName}: {r.lineDescription}</a>
+                  </div>
+                {:else}
+                  {piece.locationKind === 'project' ? 'Picked' : '—'}
+                {/each}
+              </td>
+              <td data-label="Free" class="text-right whitespace-nowrap">
+                {#if stored}
+                  {piece.widthMm === null
+                    ? formatLength(stored.freeLengthMm, unit)
+                    : stored.reservations.length === 0
+                      ? 'whole piece'
+                      : 'none'}
+                {/if}
+              </td>
               <td class="whitespace-nowrap sm:text-right">
                 {#if !part.archivedAt && piece.locationKind === 'storage'}
                   <div class="mt-1 flex flex-wrap gap-1 sm:mt-0 sm:justify-end">

@@ -1,4 +1,5 @@
 import { error, fail, redirect } from "@sveltejs/kit";
+import { lengthInputValue } from "#lib/pieces.ts";
 import { parseBomLineForm } from "#lib/schemas/project.ts";
 import { runAction } from "#lib/server/forms.ts";
 import { projects } from "#lib/server/projects/index.ts";
@@ -19,6 +20,7 @@ export const load: PageServerLoad = ({ params }) => {
       partNumber: null,
     });
   }
+  const cutUnit = projects().cutSizeUnit(line.partId);
   return {
     project: details.project,
     line,
@@ -40,6 +42,8 @@ export const load: PageServerLoad = ({ params }) => {
         value: c.rawValue,
         maxValue: c.rawMaxValue,
       })),
+      cutLength: line.cutLengthMm === null ? "" : lengthInputValue(line.cutLengthMm, cutUnit),
+      cutWidth: line.cutWidthMm === null ? "" : lengthInputValue(line.cutWidthMm, cutUnit),
     },
   };
 };
@@ -48,7 +52,7 @@ export const actions: Actions = {
   default: async ({ request, params }) => {
     const projectId = Number(params.id);
     const lineId = Number(params.lineId);
-    const parsed = parseBomLineForm(await request.formData());
+    const parsed = parseBomLineForm(await request.formData(), (id) => projects().cutSizeUnit(id));
     if (!parsed.success) return fail(400, { errors: parsed.errors });
     const failure = runAction("update", () =>
       projects().updateBomLine(projectId, lineId, parsed.data)

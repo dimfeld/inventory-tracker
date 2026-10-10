@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import type { PieceDisplayUnit } from '#lib/pieces.ts';
   import type { ConstraintComparison } from '#lib/projects.ts';
 
   export interface ConstraintRow {
@@ -20,6 +21,9 @@
     manufacturer: string | null;
     partNumber: string | null;
     constraints: ConstraintRow[];
+    /** Cut size of a part tracked as pieces, as input text. A bare number is in the part's unit. */
+    cutLength: string;
+    cutWidth: string;
   }
 
   export interface BomFormOptions {
@@ -36,6 +40,8 @@
     /** Attribute keys a generic requirement in each category must specify. */
     required: Record<number, string[]>;
     parts: { id: number; name: string; baseUnit: string; partNumber: string | null }[];
+    /** Parts tracked as pieces, by ID: the unit of their sizes and whether they have a width. */
+    pieceParts: Record<number, { displayUnit: PieceDisplayUnit; twoD: boolean }>;
     components: { id: number; name: string }[];
   }
 </script>
@@ -44,6 +50,7 @@
   import { enhance } from '$app/forms';
   import PartPicker from '#lib/components/PartPicker.svelte';
   import { attributeUnitsHint, previewMeasurement } from '#lib/attributes.ts';
+  import { findLengthInText, formatLength, formatSize, parsePieceLength } from '#lib/pieces.ts';
   import { COMPARISON_LABELS, CONSTRAINT_COMPARISONS } from '#lib/projects.ts';
   import { UNIT_CODES, UNITS } from '#lib/units.ts';
 
@@ -63,11 +70,42 @@
   // svelte-ignore state_referenced_locally
   let mode = $state(initial?.partId ? 'exact' : 'constraints');
   // svelte-ignore state_referenced_locally
+  let partValue = $state(initial?.partId ? String(initial.partId) : '');
+  // svelte-ignore state_referenced_locally
+  let description = $state(initial?.description ?? '');
+  // svelte-ignore state_referenced_locally
+  let amount = $state(initial?.amount ?? '');
+  // svelte-ignore state_referenced_locally
+  let cutLength = $state(initial?.cutLength ?? '');
+  // svelte-ignore state_referenced_locally
+  let cutWidth = $state(initial?.cutWidth ?? '');
+  // svelte-ignore state_referenced_locally
   let categoryId = $state<number | null>(initial?.categoryId ?? null);
   // svelte-ignore state_referenced_locally
   let rows = $state(initial?.constraints.length ? initial.constraints.map((c) => ({ ...c })) : [emptyRow()]);
 
   const definitions = $derived(new Map(options.definitions.map((d) => [d.key, d])));
+
+  // A cut size applies to an exact part tracked as pieces, or to a requirement by category.
+  const piecePart = $derived(
+    mode === 'exact' && partValue ? (options.pieceParts[Number(partValue)] ?? null) : null
+  );
+  const showCutSize = $derived(mode === 'constraints' || piecePart !== null);
+  const showWidth = $derived(mode === 'constraints' || piecePart?.twoD === true);
+  const cutUnit = $derived(piecePart?.displayUnit ?? 'mm');
+  const cutPreview = $derived.by(() => {
+    if (!cutLength.trim()) return null;
+    const lengthMm = parsePieceLength(cutLength, cutUnit);
+    const widthMm = showWidth && cutWidth.trim() ? parsePieceLength(cutWidth, cutUnit) : null;
+    if (lengthMm === null || (showWidth && cutWidth.trim() && widthMm === null)) return null;
+    return `${amount || '?'} × ${formatSize({ lengthMm, widthMm }, cutUnit)}`;
+  });
+  /** A length in the description, as a hint for a row without a cut size, such as a converted row. */
+  const descriptionLength = $derived.by(() => {
+    if (piecePart === null || cutLength.trim()) return null;
+    const mm = findLengthInText(description);
+    return mm === null ? null : formatLength(mm, cutUnit);
+  });
   const required = $derived(
     mode === 'constraints' && categoryId !== null ? (options.required[categoryId] ?? []) : []
   );
@@ -93,14 +131,14 @@
   <div class="grid gap-4 sm:grid-cols-2">
     <label class="block sm:col-span-2">
       <span class="text-sm">Description (as written in the BOM)</span>
-      <input name="description" required value={initial?.description ?? ''} class="input" />
+      <input name="description" required bind:value={description} class="input" />
       {#if errors?.description}<span class="text-sm text-red-700">{errors.description}</span>{/if}
     </label>
 
     <div class="flex gap-2">
       <label class="block flex-1">
-        <span class="text-sm">Quantity</span>
-        <input name="amount" required inputmode="decimal" value={initial?.amount ?? ''} class="input" />
+        <span class="text-sm">{cutLength.trim() && showCutSize ? 'Quantity (cut pieces)' : 'Quantity'}</span>
+        <input name="amount" required inputmode="decimal" bind:value={amount} class="input" />
       </label>
       <label class="block">
         <span class="text-sm">Unit</span>
@@ -141,7 +179,7 @@
     {#if mode === 'exact'}
       <div>
         <span class="text-sm">Part</span>
-        <PartPicker parts={options.parts} value={initial?.partId ? String(initial.partId) : ''} />
+        <PartPicker parts={options.parts} bind:value={partValue} />
         <span class="text-sm text-gray-600">The quantity is stored in the part's base unit.</span>
         {#if errors?.part_id}<span class="text-sm text-red-700">{errors.part_id}</span>{/if}
       </div>
@@ -171,6 +209,35 @@
       </div>
     {/if}
   </fieldset>
+
+  {#if showCutSize}
+    <fieldset class="card">
+      <legend class="px-1 text-sm font-semibold">Cut size</legend>
+      <p class="mb-2 text-sm text-gray-600">
+        For material cut from stock pieces, such as extrusion or sheet: the size of each piece to cut.
+        With a cut size, the quantity is the number of cut pieces, such as 2 × 415 mm. Leave it empty
+        for whole pieces. A bare number is in {cutUnit}.
+      </p>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="block">
+          <span class="text-sm">Cut length</span>
+          <input name="cut_length" bind:value={cutLength} placeholder="415" class="input" />
+          {#if errors?.cut_length}<span class="text-sm text-red-700">{errors.cut_length}</span>{/if}
+        </label>
+        {#if showWidth}
+          <label class="block">
+            <span class="text-sm">Cut width {mode === 'constraints' ? '(sheet only)' : ''}</span>
+            <input name="cut_width" bind:value={cutWidth} class="input" />
+            {#if errors?.cut_width}<span class="text-sm text-red-700">{errors.cut_width}</span>{/if}
+          </label>
+        {/if}
+      </div>
+      {#if cutPreview}<p class="mt-2 text-sm">{cutPreview}</p>{/if}
+      {#if descriptionLength}
+        <p class="mt-2 text-sm text-gray-600">The description mentions {descriptionLength}.</p>
+      {/if}
+    </fieldset>
+  {/if}
 
   <fieldset class="card">
     <legend class="px-1 text-sm font-semibold">Constraints</legend>

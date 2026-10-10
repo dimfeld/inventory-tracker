@@ -118,6 +118,8 @@ export function outputFromColumns(
         ? stated(record.cell("unit"))
         : { value: "pcs", provenance: "inferred" as const },
       referenceDesignators: stated(record.cell("reference_designators")),
+      cutLength: null,
+      cutWidth: null,
       group: stated(record.cell("group")),
     })),
   };

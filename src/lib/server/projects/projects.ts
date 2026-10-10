@@ -15,6 +15,8 @@ import {
   listAttributeApplicability,
   listAttributeDefinitions,
   listCategories,
+  listPiecePartSettings,
+  type Part,
 } from "#lib/server/db/catalog.ts";
 import { listRequiredApplicability } from "#lib/server/db/candidates.ts";
 import { searchParts } from "#lib/server/db/part-search.ts";
@@ -52,6 +54,7 @@ import {
 import { parseId } from "#lib/schemas/result.ts";
 import { typedAttributeValue } from "#lib/server/inventory/catalog.ts";
 import { InventoryError, NotFoundError } from "#lib/server/inventory/errors.ts";
+import type { PieceDisplayUnit } from "#lib/pieces.ts";
 import { assertUnit, toBaseQuantity } from "#lib/units.ts";
 import {
   noBomAllocations,
@@ -179,6 +182,37 @@ export function createProjectService(db: Database, options: ProjectServiceOption
     });
   }
 
+  /**
+   * A cut size counts pieces of a part tracked as pieces: the row must count pcs, and an exact
+   * part must be tracked as pieces with the same dimensions. A row for a category is not
+   * checked against parts here; its cut size is checked against the pieces it reserves.
+   */
+  function checkCutSize(input: BomLineInput, unit: string, part: Part | null) {
+    const { cutLengthMm: length, cutWidthMm: width } = input;
+    if (length === null) {
+      if (width !== null) throw new InventoryError("Enter the cut length with the cut width");
+      return;
+    }
+    for (const value of [length, width]) {
+      if (value !== null && !(Number.isFinite(value) && value > 0)) {
+        throw new InventoryError("A cut size must be greater than zero");
+      }
+    }
+    if (unit !== "pcs") {
+      throw new InventoryError("A row with a cut size counts cut pieces. Use pcs.");
+    }
+    if (part === null) return;
+    if (part.trackingMode !== "pieces") {
+      throw new InventoryError(`${part.name} is not tracked as pieces, so it has no cut size`);
+    }
+    if (part.pieceWidthAttributeId === null && width !== null) {
+      throw new InventoryError(`${part.name} pieces have no width. Enter only the cut length.`);
+    }
+    if (part.pieceWidthAttributeId !== null && width === null) {
+      throw new InventoryError(`${part.name} pieces have a width. Enter the cut width too.`);
+    }
+  }
+
   /** Validate a line form and convert its amount to an exact integer quantity. */
   function lineFields(
     projectId: number,
@@ -192,8 +226,9 @@ export function createProjectService(db: Database, options: ProjectServiceOption
 
     let unit: string = input.unit;
     let quantity: number;
+    let part: Part | null = null;
     if (input.partId !== null) {
-      const part = getPart(db, input.partId);
+      part = getPart(db, input.partId);
       if (!part) throw new NotFoundError(`Part ${input.partId} does not exist`);
       if (part.archivedAt && part.id !== current?.partId) {
         throw new InventoryError(`${part.name} is archived. Restore it before adding it to a BOM.`);
@@ -205,6 +240,7 @@ export function createProjectService(db: Database, options: ProjectServiceOption
       quantity = toBaseQuantity(input.amount, input.unit, input.unit);
     }
     if (quantity <= 0) throw new InventoryError("Quantity must be greater than zero");
+    checkCutSize(input, unit, part);
 
     return {
       componentId: input.componentId,
@@ -217,6 +253,8 @@ export function createProjectService(db: Database, options: ProjectServiceOption
       partNumber: input.partNumber,
       referenceDesignators: input.referenceDesignators,
       notes: input.notes,
+      cutLengthMm: input.cutLengthMm,
+      cutWidthMm: input.cutLengthMm === null ? null : input.cutWidthMm,
     };
   }
 
@@ -421,6 +459,15 @@ export function createProjectService(db: Database, options: ProjectServiceOption
     },
 
     /** Options for the BOM line form. */
+    /**
+     * The unit of a bare number in a row's cut size: the display unit of an exact part tracked
+     * as pieces, else mm.
+     */
+    cutSizeUnit(partId: number | null): PieceDisplayUnit {
+      const part = partId === null ? null : getPart(db, partId);
+      return part?.trackingMode === "pieces" ? part.pieceDisplayUnit : "mm";
+    },
+
     bomFormOptions() {
       const categories = listCategories(db);
       return {
@@ -436,6 +483,10 @@ export function createProjectService(db: Database, options: ProjectServiceOption
         ),
         applicable: applicableAttributeKeys(categories, listAttributeApplicability(db)),
         required: applicableAttributeKeys(categories, listRequiredApplicability(db)),
+        /** Parts tracked as pieces, whose rows can have a cut size. */
+        pieceParts: Object.fromEntries(
+          listPiecePartSettings(db).map(({ id, ...settings }) => [id, settings])
+        ),
         parts: searchParts(db, {
           text: null,
           categoryId: null,

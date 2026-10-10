@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { TrackingMode } from "#lib/pieces.ts";
 
 export interface CandidatePart {
   id: number;
@@ -9,6 +10,10 @@ export interface CandidatePart {
   manufacturer: string | null;
   partNumber: string | null;
   archivedAt: string | null;
+  trackingMode: TrackingMode;
+  /** Per-piece dimension attributes of a part tracked as pieces. */
+  pieceLengthAttributeId: number | null;
+  pieceWidthAttributeId: number | null;
 }
 
 export interface CandidateAttribute {
@@ -27,7 +32,9 @@ export interface RequiredAttribute {
 }
 
 const PART_COLUMNS = `p.id, p.name, p.category_id AS categoryId, c.name AS categoryName,
-  p.base_unit AS baseUnit, p.manufacturer, p.part_number AS partNumber, p.archived_at AS archivedAt`;
+  p.base_unit AS baseUnit, p.manufacturer, p.part_number AS partNumber, p.archived_at AS archivedAt,
+  p.tracking_mode AS trackingMode, p.piece_length_attribute_id AS pieceLengthAttributeId,
+  p.piece_width_attribute_id AS pieceWidthAttributeId`;
 
 const PART_FROM = "parts p LEFT JOIN categories c ON c.id = p.category_id";
 

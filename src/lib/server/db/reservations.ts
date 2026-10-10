@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { PIECE_BALANCES } from "./pieces";
 
 /** An active reservation with the names needed to show it. Quantities are in `baseUnit`. */
 export interface ReservationDetail {
@@ -26,7 +27,11 @@ export interface LineStock {
   used: number;
 }
 
-/** Physical and reserved quantities of a part at a storage location, in its base unit. */
+/**
+ * Physical and reserved quantities of a part at a storage location, in its base unit. For a
+ * part tracked as pieces, `balance` counts its pieces and `reserved` counts the pieces with
+ * any piece reservation, so `balance - reserved` is the pieces that are free as a whole.
+ */
 export interface StorageStock {
   partId: number;
   locationId: number;
@@ -171,6 +176,15 @@ export function listStorageStock(db: Database, partIds: number[]): StorageStock[
   return db
     .query<StorageStock, [string]>(
       `WITH ids AS (SELECT value AS part_id FROM json_each(?1)),
+       ${PIECE_BALANCES},
+       reserved_pieces AS (
+         SELECT sp.part_id, b.location_id, count(DISTINCT r.piece_id) AS reserved
+         FROM piece_reservations r
+         JOIN stock_pieces sp ON sp.id = r.piece_id
+         JOIN piece_balances b ON b.piece_id = r.piece_id
+         WHERE sp.part_id IN ids
+         GROUP BY sp.part_id, b.location_id
+       ),
        deltas AS (
          SELECT part_id, to_location_id AS location_id, quantity AS delta
          FROM stock_movements WHERE part_id IN ids AND to_location_id IS NOT NULL
@@ -183,7 +197,9 @@ export function listStorageStock(db: Database, partIds: number[]): StorageStock[
        SELECT d.part_id AS partId, loc.id AS locationId, loc.name AS locationName,
          sum(d.delta) AS balance,
          (SELECT coalesce(sum(r.quantity), 0) FROM reservations r
-          WHERE r.part_id = d.part_id AND r.location_id = loc.id) AS reserved
+          WHERE r.part_id = d.part_id AND r.location_id = loc.id)
+         + (SELECT coalesce(sum(rp.reserved), 0) FROM reserved_pieces rp
+          WHERE rp.part_id = d.part_id AND rp.location_id = loc.id) AS reserved
        FROM deltas d
        JOIN locations loc ON loc.id = d.location_id AND loc.kind = 'storage'
        GROUP BY d.part_id, loc.id

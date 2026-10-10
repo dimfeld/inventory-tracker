@@ -7,7 +7,7 @@ import * as z from "zod";
 import { PROVENANCES } from "#lib/imports.ts";
 
 /** Increase when a schema changes shape. Saved with each parsed import. */
-export const SCHEMA_VERSION = "3";
+export const SCHEMA_VERSION = "4";
 
 const provenance = z
   .enum(PROVENANCES)
@@ -77,6 +77,10 @@ export const projectLineSchema = z.object({
   quantity: marked("Required amount as a decimal number"),
   unit: marked("Unit of the quantity: pcs, mm, m, g, mL, ..."),
   referenceDesignators: marked("Reference designators, such as R1, R2"),
+  cutLength: marked(
+    "Length of each piece to cut from stock material (extrusion, rod, tube, sheet), with its unit, such as 415 mm; null for other items"
+  ),
+  cutWidth: marked("Width of each piece to cut from sheet stock, with its unit; null otherwise"),
   group: marked(
     "Name of the explicit source heading or component column value this row belongs to; null for ungrouped rows"
   ),

@@ -19,7 +19,7 @@ export const load: PageServerLoad = ({ params, url }) => {
 export const actions: Actions = {
   default: async ({ request, params }) => {
     const projectId = Number(params.id);
-    const parsed = parseBomLineForm(await request.formData());
+    const parsed = parseBomLineForm(await request.formData(), (id) => projects().cutSizeUnit(id));
     if (!parsed.success) return fail(400, { errors: parsed.errors });
     const result = runAction("create", () => projects().createBomLine(projectId, parsed.data));
     if (typeof result !== "number") return result;

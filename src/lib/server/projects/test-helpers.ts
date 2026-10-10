@@ -7,6 +7,7 @@ import { createTestInventory } from "#lib/server/inventory/test-helpers.ts";
 import { bomAllocationGuard } from "./allocations";
 import { createCommitmentService } from "./commitments";
 import { createEstimateService } from "./estimates";
+import { createPieceAllocationService } from "./piece-allocations";
 import { createProjectService, type ProjectServiceOptions } from "./projects";
 import { createShoppingService } from "./shopping";
 import { createAllocationService } from "./stock-allocations";
@@ -33,6 +34,8 @@ export function lineInput(overrides: Partial<BomLineInput> = {}): BomLineInput {
     manufacturer: null,
     partNumber: null,
     constraints: [],
+    cutLengthMm: null,
+    cutWidthMm: null,
     ...overrides,
   };
 }
@@ -49,6 +52,7 @@ export function createTestAllocations() {
     receipts: createReceiptService(inventory.db, { hooks: commitmentReceipts }),
     projects: createProjectService(inventory.db, { allocations: bomAllocationGuard }),
     allocations: createAllocationService(inventory.db),
+    pieceAllocations: createPieceAllocationService(inventory.db),
     commitments: createCommitmentService(inventory.db),
     shopping: createShoppingService(inventory.db),
     estimates: createEstimateService(inventory.db),
@@ -63,6 +67,7 @@ export function stockAndCommitments(db: Database) {
   return {
     movements: db.query("SELECT * FROM stock_movements ORDER BY id").all(),
     reservations: db.query("SELECT * FROM reservations ORDER BY id").all(),
+    pieceReservations: db.query("SELECT * FROM piece_reservations ORDER BY id").all(),
     commitments: db.query("SELECT * FROM incoming_commitments ORDER BY id").all(),
     orderLines: db
       .query(

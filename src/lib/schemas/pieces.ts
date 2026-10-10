@@ -5,7 +5,7 @@ import { formId, formText, optionalFormText } from "./form";
 /** The most equal pieces one row of the add form can make. */
 const MAX_COUNT = 100;
 
-const operation = {
+export const operation = {
   /** Unique ID for this submission. A repeated ID is rejected without writing. */
   operationId: z.string().min(1),
   occurredOn: formText.pipe(z.iso.date({ message: "Enter a date" })),

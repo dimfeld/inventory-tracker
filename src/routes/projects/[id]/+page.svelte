@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { describeConstraint, PROJECT_STATUSES } from '#lib/projects.ts';
+  import { describeConstraint, formatLineQuantity, PROJECT_STATUSES } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
   import { approvePart, commitIncoming, reserveStock } from './lines.remote';
@@ -327,7 +327,7 @@
                 {/if}
                 {#if line.notes}<div class="text-gray-500">{line.notes}</div>{/if}
               </td>
-              <td data-label="Quantity" class="whitespace-nowrap">{formatQuantity(line.quantity, line.unit)}</td>
+              <td data-label="Quantity" class="whitespace-nowrap">{formatLineQuantity(line)}</td>
               <td data-label="Stock" class="sm:whitespace-nowrap">
                 <div>{@render stockCell(data.coverage[line.id], data.supply[line.id].uncommitted)}</div>
                 {@render supplyActions(line)}

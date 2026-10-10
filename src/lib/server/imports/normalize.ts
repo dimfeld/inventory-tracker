@@ -18,6 +18,7 @@ import {
   type Provenance,
   type ProvenanceMarks,
 } from "#lib/imports.ts";
+import { formatMm, parseCutSize, parseLengthMm } from "#lib/pieces.ts";
 import { isUnit, toBaseQuantity, UnitError, UNITS, type Unit } from "#lib/units.ts";
 import type { CatalogContext } from "./context";
 import type {
@@ -191,6 +192,49 @@ class LineBuilder {
     }
   }
 
+  /**
+   * Read the cut size of a BOM row. A length such as "150 × 75 mm" becomes a length and a
+   * width. A length or width attribute equal to the cut size is removed, because the cut size
+   * is not a part attribute. A size that cannot be read is unresolved.
+   */
+  cutSize(length: MarkedValue, width: MarkedValue) {
+    const lengthText = this.text("cutLength", length);
+    const widthText = this.text("cutWidth", width);
+    if (lengthText === null) {
+      if (widthText !== null) this.note("Cut width is given without a cut length");
+      return;
+    }
+    const size = parseCutSize(lengthText);
+    if (size === null) {
+      this.note(`Cut length "${lengthText}" is not a length`);
+      return;
+    }
+    if (size.widthMm !== null && widthText === null) {
+      this.set("cutLength", formatMm(size.lengthMm));
+      this.set("cutWidth", formatMm(size.widthMm));
+    }
+    if (widthText !== null && size.widthMm === null && parseLengthMm(widthText) === null) {
+      this.note(`Cut width "${widthText}" is not a length`);
+    }
+    this.dropCutSizeAttributes();
+  }
+
+  /** Remove length and width attributes that repeat the cut size. */
+  dropCutSizeAttributes() {
+    const { cutLength, cutWidth } = this.fields;
+    const sizes = { length: cutLength, width: cutWidth };
+    for (const [key, text] of Object.entries(sizes)) {
+      const mm = text === null ? null : parseLengthMm(text);
+      if (mm === null) continue;
+      const index = this.fields.attributes.findIndex(
+        (a) => a.key === key && parseLengthMm(a.value) === mm
+      );
+      if (index === -1) continue;
+      this.fields.attributes.splice(index, 1);
+      delete this.provenance[`attribute:${key}`];
+    }
+  }
+
   private findCategory(path: string) {
     const wanted = path.toLowerCase().replace(/\s*[/>]\s*/g, " / ");
     const { categories } = this.context;
@@ -269,13 +313,33 @@ function packFields(
   if (baseUnit === null && b.fields.unit === null) b.note(MISSING_PURCHASE_NOTES.unit);
 }
 
+/** A quantity with a cut size, such as "2 × 415 mm". */
+const COUNTED_CUT = /^(\d+)\s*[x×]\s*(.+)$/i;
+
 function projectLine(context: CatalogContext, line: ProjectLineOutput): LineProposal {
   const b = new LineBuilder(context);
   b.part(line);
-  const quantity = b.text("quantity", line.quantity);
+  let quantity = b.text("quantity", line.quantity);
+  // "2 × 415 mm" is a count of cut pieces with their size.
+  const counted = quantity === null ? null : COUNTED_CUT.exec(quantity);
+  if (counted && !line.cutLength?.value.trim() && parseCutSize(counted[2]) !== null) {
+    quantity = counted[1];
+    b.set("quantity", quantity);
+    b.set("cutLength", counted[2].trim());
+  }
+  b.cutSize(
+    b.fields.cutLength === null
+      ? line.cutLength
+      : { value: b.fields.cutLength, provenance: "normalized" },
+    line.cutWidth
+  );
   if (quantity === null) b.note("Quantity is missing");
   else if (!DECIMAL.test(quantity)) b.note(`Quantity "${quantity}" is not a number`);
-  if (b.unit(line.unit) === null && b.fields.unit === null) b.note("Unit is missing");
+  if (b.unit(line.unit) === null && b.fields.unit === null) {
+    // Cut pieces are counted.
+    if (b.fields.cutLength !== null) b.set("unit", "pcs");
+    else b.note("Unit is missing");
+  }
   b.text("referenceDesignators", line.referenceDesignators);
   return b.proposal(line.group?.value.trim() || null);
 }
@@ -308,6 +372,7 @@ export function cleanupLine(
   for (const note of output.unresolved) b.note(note);
   b.category(output.category);
   b.attributes(output.attributes);
+  b.dropCutSizeAttributes();
   b.checkRequired();
 
   if (output.purchaseUnit?.value.trim()) b.text("purchaseUnit", output.purchaseUnit);

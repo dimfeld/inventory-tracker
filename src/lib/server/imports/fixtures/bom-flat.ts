@@ -29,6 +29,8 @@ export const response: ProjectOutput = {
       quantity: { value: "2", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: { value: "R5,R6", provenance: "source" },
+      cutLength: null,
+      cutWidth: null,
       group: null,
     },
     {
@@ -47,6 +49,8 @@ export const response: ProjectOutput = {
       quantity: { value: "1", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: { value: "C3", provenance: "source" },
+      cutLength: null,
+      cutWidth: null,
       group: null,
     },
     {
@@ -65,6 +69,8 @@ export const response: ProjectOutput = {
       quantity: { value: "3", provenance: "source" },
       unit: { value: "pcs", provenance: "inferred" },
       referenceDesignators: null,
+      cutLength: null,
+      cutWidth: null,
       group: null,
     },
   ],

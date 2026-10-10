@@ -10,6 +10,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { formatAttributeValue } from "#lib/attributes.ts";
+import { formatPieceSize } from "#lib/pieces.ts";
 import { isUnit, UNITS } from "#lib/units.ts";
 import {
   categoryScope,
@@ -66,6 +67,11 @@ export interface Requirement {
   manufacturer: string | null;
   partNumber: string | null;
   constraints: RequirementConstraint[];
+  /**
+   * Size of each cut piece, for a part tracked as pieces. It is not a part constraint: it is
+   * checked against the pieces the line reserves.
+   */
+  cutSize: { lengthMm: number; widthMm: number | null } | null;
   /**
    * Required attributes of the category that a generic requirement does not specify. Empty
    * when the requirement names an exact part or part number, which identifies the part.
@@ -236,8 +242,30 @@ export function evaluateCandidate(requirement: Requirement, facts: PartFacts): E
     }
   }
 
+  // A pieces part keeps its per-piece dimensions on its pieces, not as part attributes, so
+  // they are checked against the pieces the line reserves.
+  const pieceDimensions = new Set(
+    part.trackingMode === "pieces" ? [part.pieceLengthAttributeId, part.pieceWidthAttributeId] : []
+  );
+  if (requirement.cutSize !== null) {
+    const size = formatPieceSize(requirement.cutSize);
+    if (part.trackingMode !== "pieces") {
+      conflicts.push(`Not tracked as pieces; requirement needs cut pieces of ${size}`);
+    } else if (requirement.cutSize.widthMm !== null && part.pieceWidthAttributeId === null) {
+      conflicts.push(`Pieces have no width; requirement needs cut pieces of ${size}`);
+    } else if (requirement.cutSize.widthMm === null && part.pieceWidthAttributeId !== null) {
+      unresolved.push(`Pieces have a width; requirement gives only a cut length of ${size}`);
+    } else {
+      evidence.push(`Tracked as pieces; cut size ${size} is checked against pieces`);
+    }
+  }
+
   const values = new Map(facts.attributes.map((a) => [a.attributeId, a]));
   for (const constraint of requirement.constraints) {
+    if (pieceDimensions.has(constraint.attributeId)) {
+      evidence.push(`${constraint.label} is a piece dimension, checked against pieces`);
+      continue;
+    }
     const result = checkConstraint(constraint, values.get(constraint.attributeId));
     if ("evidence" in result) evidence.push(result.evidence);
     if ("unresolved" in result) unresolved.push(result.unresolved);
@@ -245,6 +273,7 @@ export function evaluateCandidate(requirement: Requirement, facts: PartFacts): E
   }
 
   for (const missing of requirement.missingRequired) {
+    if (pieceDimensions.has(missing.attributeId)) continue;
     unresolved.push(`Requirement does not specify ${missing.label}`);
   }
 
@@ -261,6 +290,8 @@ export interface RequirementSource {
   categoryName: string | null;
   manufacturer: string | null;
   partNumber: string | null;
+  cutLengthMm: number | null;
+  cutWidthMm: number | null;
 }
 
 /** The requirement as the matcher sees it, with the category's required-attribute rules. */
@@ -279,6 +310,10 @@ export function requirementOf(
     manufacturer: source.manufacturer,
     partNumber: source.partNumber,
     constraints,
+    cutSize:
+      source.cutLengthMm === null
+        ? null
+        : { lengthMm: source.cutLengthMm, widthMm: source.cutWidthMm },
     missingRequired:
       source.categoryId === null || !generic
         ? []

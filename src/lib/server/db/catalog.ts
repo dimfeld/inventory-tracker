@@ -152,6 +152,20 @@ export function getPart(db: Database, id: number): Part | null {
 }
 
 /** An active part with this name, ignoring case and surrounding spaces. */
+/** Display unit and dimensions of each active part tracked as pieces, by part ID. */
+export function listPiecePartSettings(
+  db: Database
+): { id: number; displayUnit: PieceDisplayUnit; twoD: boolean }[] {
+  return db
+    .query<{ id: number; displayUnit: PieceDisplayUnit; twoD: number }, []>(
+      `SELECT id, piece_display_unit AS displayUnit,
+         piece_width_attribute_id IS NOT NULL AS twoD
+       FROM parts WHERE tracking_mode = 'pieces' AND archived_at IS NULL`
+    )
+    .all()
+    .map((row) => ({ ...row, twoD: row.twoD === 1 }));
+}
+
 export function findActivePartByName(db: Database, name: string): Part | null {
   return db
     .query<Part, [string]>(
