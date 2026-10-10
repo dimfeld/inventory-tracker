@@ -19,6 +19,13 @@
     return null;
   }
 
+  /** Each different text once, with its count when it repeats, such as `3 × 711 mm ordered from Amazon`. */
+  function countSame(texts: string[]): string[] {
+    const counts = new Map<string, number>();
+    for (const text of texts) counts.set(text, (counts.get(text) ?? 0) + 1);
+    return [...counts].map(([text, count]) => (count > 1 ? `${count} × ${text}` : text));
+  }
+
   const filters = $derived([
     { value: null, label: 'All' },
     ...data.components.map((c) => ({ value: String(c.id), label: c.name })),
@@ -137,11 +144,11 @@
   {#each coverage.parts as part (part.partId)}
     {#if part.reservations.length + part.commitments.length + part.pieceCommitments.length > 0}
       <div class="text-xs text-gray-600">
-        {part.partName}: {[
+        {part.partName}: {countSame([
           ...part.reservations.map((r) => `${formatQuantity(r.quantity, part.baseUnit)} at ${r.locationName}`),
           ...part.commitments.map((c) => `${formatQuantity(c.quantity, part.baseUnit)} ordered from ${c.supplier}`),
           ...part.pieceCommitments.map((c) => `${formatSize(c, c.displayUnit)} ordered from ${c.supplier}`),
-        ].join(', ')}
+        ]).join(', ')}
       </div>
     {/if}
   {/each}
