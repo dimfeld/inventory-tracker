@@ -28,6 +28,7 @@
       identifierConflicts: string[];
       missingRequired: string[];
       conversion: string | null;
+      pieceSizeNote?: string | null;
       readings: Record<string, string>;
       problems: string[];
     };
@@ -319,6 +320,7 @@
   </fieldset>
 
   {#if line.conversion}<p class="mt-2 text-sm">Supplies {line.conversion}</p>{/if}
+  {#if line.pieceSizeNote}<p class="mt-2 text-sm">{line.pieceSizeNote}</p>{/if}
 
   {#if line.candidates.length > 0}
     {@const counts = Object.entries(Object.groupBy(line.candidates, (c) => c.status)).map(

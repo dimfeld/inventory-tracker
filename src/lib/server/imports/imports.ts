@@ -14,7 +14,7 @@ import {
 } from "#lib/imports.ts";
 import { parseCurrency } from "#lib/money.ts";
 import { describePackConversion } from "#lib/orders.ts";
-import { parseLengthMm } from "#lib/pieces.ts";
+import { formatPieceSize, parseLengthMm } from "#lib/pieces.ts";
 import { normalizeAttributeKey, type PartInput } from "#lib/schemas/part.ts";
 import type { BomLineInput } from "#lib/schemas/project.ts";
 import {
@@ -60,6 +60,7 @@ import { getProject, listComponents, listProjects } from "#lib/server/db/project
 import { createCatalogService, typedAttributeValue } from "#lib/server/inventory/catalog.ts";
 import { InventoryError, isUserError, NotFoundError } from "#lib/server/inventory/errors.ts";
 import { createOrderService } from "#lib/server/inventory/orders.ts";
+import { pieceDimensions } from "#lib/server/inventory/pieces.ts";
 import {
   matchRequirement,
   requirementOf,
@@ -368,6 +369,46 @@ export function createImportService(db: Database) {
     });
   }
 
+  /**
+   * The piece size of an order line of an existing part tracked as pieces, from the line's
+   * attributes of the part's piece dimensions, such as `length`. The order line then makes
+   * pieces of this size; without one it uses the SKU stock size. `note` tells the owner which
+   * size the line uses. A 2D part needs both dimensions or neither.
+   */
+  function orderLinePieces(kind: ImportKind, line: LineEdit, part: Part | null) {
+    const none = { size: null, note: null, problem: null };
+    if (kind !== "order" || line.resolution !== "existing" || part?.trackingMode !== "pieces") {
+      return none;
+    }
+    const { length, width } = pieceDimensions(db, part);
+    const values = new Map(lineConstraints(line.fields).map((c) => [c.key, c.valueNumber]));
+    const lengthMm = values.get(length.key) ?? null;
+    const widthMm = width ? (values.get(width.key) ?? null) : null;
+    if (lengthMm === null && widthMm === null) {
+      return { ...none, note: "Pieces use the stock size of the supplier SKU" };
+    }
+    if (lengthMm === null || (width && widthMm === null)) {
+      const missing = lengthMm === null ? length.label : width!.label;
+      return {
+        ...none,
+        problem: `${part.name} pieces need the ${missing.toLowerCase()} attribute too, or neither dimension`,
+      };
+    }
+    const size = { lengthMm, widthMm };
+    const keys = [length.key, width?.key].filter(Boolean).join(" and ");
+    return {
+      size,
+      note: `Each piece is ${formatPieceSize(size)}, from the ${keys} attribute`,
+      problem: null,
+    };
+  }
+
+  /** Line problems, with the piece size problem of an order line. */
+  function allLineProblems(kind: ImportKind, line: LineEdit, part: Part | null): string[] {
+    const { problem } = orderLinePieces(kind, line, part);
+    return [...lineProblems(kind, line, part, sameNameOf(line)), ...(problem ? [problem] : [])];
+  }
+
   /** Deterministic catalog candidates for a line's current fields. */
   function lineCandidates(fields: ImportLineFields) {
     const category = fields.categoryId === null ? null : getCategory(db, fields.categoryId);
@@ -572,6 +613,8 @@ export function createImportService(db: Database) {
         const f = line.fields;
         const createdPartId =
           line.resolution === "new" ? catalog.createPart(newPartInput(record, f)) : null;
+        const part = line.resolution === "existing" ? getPart(db, line.partId!) : null;
+        const { size } = orderLinePieces(record.kind, line, part);
         const orderLineId = orders.addLine(orderId, {
           partId: createdPartId ?? line.partId!,
           supplierSku: f.supplierSku,
@@ -581,6 +624,8 @@ export function createImportService(db: Database) {
           unitPrice: f.unitPrice,
           currency: f.unitPrice === null ? null : parseCurrency(f.currency),
           notes: f.notes,
+          pieceLengthMm: size?.lengthMm ?? null,
+          pieceWidthMm: size?.widthMm ?? null,
         });
         recordLineCommit(db, line.id, { createdPartId, orderLineId, bomLineId: null });
       })
@@ -1190,7 +1235,9 @@ export function createImportService(db: Database) {
               formatAttributeValue(c.normalization, c) ?? c.rawValue,
             ])
           ),
-          problems: lineProblems(record.kind, line, part, sameNameOf(line)),
+          /** For an order line of a pieces part: the piece size it makes, and where it comes from. */
+          pieceSizeNote: orderLinePieces(record.kind, line, part).note,
+          problems: allLineProblems(record.kind, line, part),
         };
       });
       return {
@@ -1258,11 +1305,10 @@ export function createImportService(db: Database) {
         const problems = [
           ...headerProblems(record),
           ...lines.flatMap((line, index) =>
-            lineProblems(
+            allLineProblems(
               record.kind,
               line,
-              line.partId === null ? null : getPart(db, line.partId),
-              sameNameOf(line)
+              line.partId === null ? null : getPart(db, line.partId)
             ).map((problem) => `Line ${index + 1}: ${problem}`)
           ),
         ];

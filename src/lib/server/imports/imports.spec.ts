@@ -1368,3 +1368,67 @@ describe("BOM import of cut sizes", () => {
     );
   });
 });
+
+describe("order import of pieces parts", () => {
+  it("gives each order line the piece size of its dimension attributes", () => {
+    const ctx = createTestImports();
+    const tracking = (widthKey: string | null) => ({
+      mode: "pieces" as const,
+      lengthKey: "length",
+      widthKey,
+      kerfMm: 3,
+      minOffcutMm: 20,
+    });
+    const extrusion = ctx.catalog.createPart(
+      partInput({ name: "2020 extrusion", tracking: tracking(null) })
+    );
+    const sheet = ctx.catalog.createPart(
+      partInput({ name: "POM-C sheet 15 mm", tracking: tracking("width") })
+    );
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "2020 extrusion",
+    });
+    const line = (partId: number, attributes: Record<string, string>) => ({
+      resolution: "existing" as const,
+      partId,
+      fields: {
+        description: "2020 extrusion",
+        quantity: "2",
+        purchaseUnit: "each",
+        packQuantity: "1",
+        attributes: Object.entries(attributes).map(([key, value]) => ({ key, value })),
+      },
+    });
+    for (let i = 0; i < 4; i += 1) ctx.imports.addLine(id);
+    edit(ctx, id, 0, line(extrusion, { length: "500 mm" }));
+    // The width of a 1D part is not a piece dimension.
+    edit(ctx, id, 1, line(extrusion, { length: "12 in", width: "20 mm" }));
+    edit(ctx, id, 2, line(extrusion, {}));
+    edit(ctx, id, 3, line(sheet, { length: "300 mm" }));
+
+    const view = review(ctx, id);
+    expect(view.lines.map((l) => l.pieceSizeNote)).toEqual([
+      "Each piece is 500 mm, from the length attribute",
+      "Each piece is 304.8 mm, from the length attribute",
+      "Pieces use the stock size of the supplier SKU",
+      null,
+    ]);
+    expect(view.lines[3].problems).toEqual([
+      "POM-C sheet 15 mm pieces need the width attribute too, or neither dimension",
+    ]);
+
+    edit(ctx, id, 3, line(sheet, { length: "300 mm", width: "200 mm" }));
+    ctx.imports.updateHeader(id, { ...EMPTY_HEADER, supplier: "AliExpress" });
+    const { orderId } = ctx.imports.commit(id, opId());
+    expect(
+      ctx.orders.getOrderDetails(orderId!)!.lines.map((l) => [l.pieceLengthMm, l.pieceWidthMm])
+    ).toEqual([
+      [500, null],
+      [304.8, null],
+      [null, null],
+      [300, 200],
+    ]);
+  });
+});
