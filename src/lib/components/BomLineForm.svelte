@@ -221,7 +221,7 @@
       <div class="grid gap-4 sm:grid-cols-2">
         <label class="block">
           <span class="text-sm">Cut length</span>
-          <input name="cut_length" bind:value={cutLength} placeholder="415" class="input" />
+          <input name="cut_length" bind:value={cutLength} class="input" />
           {#if errors?.cut_length}<span class="text-sm text-red-700">{errors.cut_length}</span>{/if}
         </label>
         {#if showWidth}
