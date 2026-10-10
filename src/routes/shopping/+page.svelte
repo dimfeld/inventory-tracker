@@ -53,12 +53,6 @@
         </li>
       {/each}
     </ol>
-    {#if plan.unplaced.length > 0}
-      <p class="text-amber-700">
-        No known stock size fits {plan.unplaced.map((cut) => `${size(cut)} ${cut.lineDescription}`).join(', ')}.
-        Add a supplier SKU with a stock size to the part.
-      </p>
-    {/if}
   </div>
 {/snippet}
 
@@ -140,7 +134,7 @@
           <tr>
             <td>
               <a href="/parts/{item.partId}" class="link font-medium sm:font-normal">{item.label}</a>
-              {#if item.cutPlan && item.cutPlan.pieces.length + item.cutPlan.unplaced.length > 0}{@render cutPlan(item.cutPlan)}{/if}
+              {#if item.cutPlan && item.cutPlan.pieces.length > 0}{@render cutPlan(item.cutPlan)}{/if}
             </td>
             <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
               {formatQuantity(item.coverage.toBuy, item.unit)}
