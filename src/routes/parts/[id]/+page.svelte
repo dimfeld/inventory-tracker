@@ -2,31 +2,22 @@
   import { tick } from 'svelte';
   import { enhance } from '$app/forms';
   import { formatAttributeValue } from '#lib/attributes.ts';
-  import { formatArea, formatMm, formatPieceSize, formatPieceSizeInches } from '#lib/pieces.ts';
+  import { MOVEMENT_LABELS } from '#lib/movements.ts';
+  import { formatArea, formatLength, formatSize } from '#lib/pieces.ts';
   import { formatQuantity } from '#lib/units.ts';
   import SearchSelect from '#lib/components/SearchSelect.svelte';
   import { mergePart } from './merge.remote';
   import { addPieces, movePiece, removePiece } from './pieces.remote';
   import ConvertToPieces from './ConvertToPieces.svelte';
+  import PieceActionResult from '../../pieces/PieceActionResult.svelte';
+  import PieceActions, { type PieceActionKind } from '../../pieces/PieceActions.svelte';
   import type { PageProps } from './$types';
 
   let { data, form }: PageProps = $props();
 
-  const MOVEMENT_LABELS: Record<string, string> = {
-    opening: 'Opening stock',
-    transfer: 'Transfer',
-    loss: 'Loss',
-    supplier_return: 'Supplier return',
-    count_correction: 'Count correction',
-    pick: 'Picked for project',
-    project_use: 'Used by project',
-    project_return: 'Returned from project',
-    receipt: 'Order receipt',
-    conversion: 'Converted to pieces',
-  };
-
   const part = $derived(data.part);
   const isPieces = $derived(part.trackingMode === 'pieces');
+  const unit = $derived(part.pieceDisplayUnit);
   const dimensions = $derived(data.pieceDimensions);
   const total = $derived(data.balances.reduce((sum, b) => sum + b.quantity, 0));
   const reservedAt = (locationId: number) =>
@@ -66,11 +57,12 @@
   // Number of size rows in the add pieces form. A row makes `count` equal pieces.
   let pieceRowCount = $state(1);
 
-  // The piece that the move or remove form changes.
-  let pieceAction = $state<{ kind: 'move' | 'remove'; pieceId: number } | null>(null);
+  // The piece that the move, remove, cut, scrap, or use form changes.
+  type PieceActionChoice = 'move' | 'remove' | PieceActionKind;
+  let pieceAction = $state<{ kind: PieceActionChoice; pieceId: number } | null>(null);
   const actionPiece = $derived(data.pieces.find((p) => p.id === pieceAction?.pieceId));
   let pieceActionForm = $state<HTMLElement>();
-  async function startPieceAction(kind: 'move' | 'remove', pieceId: number) {
+  async function startPieceAction(kind: PieceActionChoice, pieceId: number) {
     pieceAction = { kind, pieceId };
     await tick();
     pieceActionForm?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -129,7 +121,7 @@
       <dt class="text-gray-600">Tracked as</dt>
       <dd>
         pieces by {dimensions.length.label.toLowerCase()}{dimensions.width ? ` × ${dimensions.width.label.toLowerCase()}` : ''};
-        kerf {formatMm(part.kerfMm)}, minimum offcut {formatMm(part.minOffcutMm)}
+        kerf {formatLength(part.kerfMm, unit)}, minimum offcut {formatLength(part.minOffcutMm, unit)}
       </dd>
     {/if}
     <dt class="text-gray-600">Manufacturer</dt><dd>{part.manufacturer ?? '—'}</dd>
@@ -159,7 +151,7 @@
             {#if sp.url}<a href={sp.url} class="link" rel="noreferrer" target="_blank">{sp.sku}</a>{:else}{sp.sku}{/if}
             {#if sp.stockLengthMm !== null}
               <span class="text-gray-600">
-                — stock size {formatPieceSize({ lengthMm: sp.stockLengthMm, widthMm: sp.stockWidthMm })}
+                — stock size {formatSize({ lengthMm: sp.stockLengthMm, widthMm: sp.stockWidthMm }, unit)}
               </span>
             {/if}
             {#if sp.purchaseUnit || sp.packQuantity}
@@ -393,7 +385,7 @@
 {/if}
 
 {#snippet pieceSize(piece: { lengthMm: number; widthMm: number | null })}
-  <span title={formatPieceSizeInches(piece)}>{formatPieceSize(piece)}</span>
+  <span title={formatSize(piece, unit === 'mm' ? 'in' : 'mm')}>{formatSize(piece, unit)}</span>
 {/snippet}
 
 {#snippet piecesSection()}
@@ -416,7 +408,7 @@
               <td class="font-medium sm:font-normal"><a href="/locations/{total.locationId}" class="link">{total.locationName}</a></td>
               <td data-label="Pieces" class="text-right">{total.pieceCount}</td>
               <td data-label="Total" class="text-right whitespace-nowrap">
-                {total.totalAreaMm2 === null ? formatMm(total.totalLengthMm) : formatArea(total.totalAreaMm2)}
+                {total.totalAreaMm2 === null ? formatLength(total.totalLengthMm, unit) : formatArea(total.totalAreaMm2, unit)}
               </td>
             </tr>
           {/each}
@@ -430,12 +422,17 @@
         <tbody>
           {#each data.pieces as piece (piece.id)}
             <tr class={pieceAction?.pieceId === piece.id ? 'bg-blue-50' : ''}>
-              <td class="font-medium whitespace-nowrap sm:font-normal">{@render pieceSize(piece)}</td>
+              <td class="font-medium whitespace-nowrap sm:font-normal"><a href="/pieces/{piece.id}" class="link">{@render pieceSize(piece)}</a></td>
               <td data-label="Location">{piece.locationName}</td>
               <td data-label="Label" class="text-gray-600 {piece.label ? '' : 'max-sm:hidden'}">{piece.label ?? ''}</td>
               <td class="whitespace-nowrap sm:text-right">
                 {#if !part.archivedAt && piece.locationKind === 'storage'}
-                  <div class="mt-1 flex gap-1 sm:mt-0 sm:justify-end">
+                  <div class="mt-1 flex flex-wrap gap-1 sm:mt-0 sm:justify-end">
+                    <button type="button" class="btn-secondary" onclick={() => startPieceAction('cut', piece.id)}>
+                      {piece.widthMm === null ? 'Cut' : 'Split'}
+                    </button>
+                    <button type="button" class="btn-secondary" onclick={() => startPieceAction('use', piece.id)}>Use</button>
+                    <button type="button" class="btn-secondary" onclick={() => startPieceAction('scrap', piece.id)}>Scrap</button>
                     {#if data.locations.length > 1}
                       <button type="button" class="btn-secondary" onclick={() => startPieceAction('move', piece.id)}>Move</button>
                     {/if}
@@ -451,11 +448,23 @@
 
     {#if movePiece.result}<p class="msg-ok mt-3">{movePiece.result.text}</p>{/if}
     {#if removePiece.result}<p class="msg-ok mt-3">{removePiece.result.text}</p>{/if}
-    {#if pieceAction && actionPiece}
+    <PieceActionResult />
+    {#if pieceAction && actionPiece && pieceAction.kind !== 'move' && pieceAction.kind !== 'remove'}
+      <div bind:this={pieceActionForm}>
+        <PieceActions
+          kind={pieceAction.kind}
+          piece={actionPiece}
+          locations={data.locations}
+          operationId={data.operationId}
+          today={data.today}
+          oncancel={() => (pieceAction = null)}
+        />
+      </div>
+    {:else if pieceAction && actionPiece}
       <div bind:this={pieceActionForm} class="card mt-3 max-w-xl text-sm">
         {#if pieceAction.kind === 'move'}
           <form {...movePiece} class="space-y-3">
-            <h3 class="font-semibold">Move {formatPieceSize(actionPiece)} from {actionPiece.locationName}</h3>
+            <h3 class="font-semibold">Move {formatSize(actionPiece, unit)} from {actionPiece.locationName}</h3>
             <input {...movePiece.fields.operationId.as('hidden', data.operationId)} />
             <input {...movePiece.fields.occurredOn.as('hidden', data.today)} />
             <input {...movePiece.fields.pieceId.as('hidden', actionPiece.id)} />
@@ -481,13 +490,13 @@
           </form>
         {:else}
           <form {...removePiece} class="space-y-3">
-            <h3 class="font-semibold">Remove {formatPieceSize(actionPiece)} from {actionPiece.locationName}</h3>
+            <h3 class="font-semibold">Remove {formatSize(actionPiece, unit)} from {actionPiece.locationName}</h3>
             <input {...removePiece.fields.operationId.as('hidden', data.operationId)} />
             <input {...removePiece.fields.occurredOn.as('hidden', data.today)} />
             <input {...removePiece.fields.pieceId.as('hidden', actionPiece.id)} />
             <label class="block">
               Reason
-              <input {...removePiece.fields.reason.as('text')} required placeholder="Lost, bent, scrap…" class="input" />
+              <input {...removePiece.fields.reason.as('text')} required placeholder="Lost, bent…" class="input" />
             </label>
             {#if issuesOf(removePiece)}<p class="msg-error">{issuesOf(removePiece)}</p>{/if}
             <div class="flex gap-2">
@@ -497,6 +506,26 @@
           </form>
         {/if}
       </div>
+    {/if}
+
+    {#if data.retiredPieces.length > 0}
+      <details class="mt-4 max-w-3xl text-sm">
+        <summary class="cursor-pointer text-gray-600">Retired pieces ({data.retiredPieces.length})</summary>
+        <table class="data-table stack-table mt-2">
+          <thead>
+            <tr><th>Size</th><th>Label</th><th>Retired by</th></tr>
+          </thead>
+          <tbody>
+            {#each data.retiredPieces as piece (piece.id)}
+              <tr>
+                <td class="whitespace-nowrap"><a href="/pieces/{piece.id}" class="link">{@render pieceSize(piece)}</a></td>
+                <td data-label="Label" class="text-gray-600 {piece.label ? '' : 'max-sm:hidden'}">{piece.label ?? ''}</td>
+                <td data-label="Retired by">{piece.retiredBy ? (MOVEMENT_LABELS[piece.retiredBy] ?? piece.retiredBy) : ''}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </details>
     {/if}
   </section>
 {/snippet}

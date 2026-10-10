@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { TrackingMode } from "#lib/pieces.ts";
+import type { PieceDisplayUnit, TrackingMode } from "#lib/pieces.ts";
 
 export interface Category {
   id: number;
@@ -30,6 +30,8 @@ export type PartTracking = {
   kerfMm: number;
   /** The shortest offcut worth keeping, in mm. */
   minOffcutMm: number;
+  /** The unit that piece sizes are shown and entered in. */
+  pieceDisplayUnit: PieceDisplayUnit;
 };
 
 export const BULK_TRACKING: PartTracking = {
@@ -38,6 +40,7 @@ export const BULK_TRACKING: PartTracking = {
   pieceWidthAttributeId: null,
   kerfMm: 0,
   minOffcutMm: 0,
+  pieceDisplayUnit: "mm",
 };
 
 export interface Part extends PartTracking {
@@ -113,7 +116,7 @@ const PART_COLUMNS = `p.id, p.name, p.category_id AS categoryId, c.name AS categ
   p.archived_at AS archivedAt, p.tracking_mode AS trackingMode,
   p.piece_length_attribute_id AS pieceLengthAttributeId,
   p.piece_width_attribute_id AS pieceWidthAttributeId, p.kerf_mm AS kerfMm,
-  p.min_offcut_mm AS minOffcutMm`;
+  p.min_offcut_mm AS minOffcutMm, p.piece_display_unit AS pieceDisplayUnit`;
 
 export function listCategories(db: Database): Category[] {
   return db
@@ -165,9 +168,10 @@ export function insertPart(db: Database, fields: PartFields): number {
     .query<{ id: number }, PartFields>(
       `INSERT INTO parts (name, category_id, base_unit, manufacturer, part_number, notes,
          tracking_mode, piece_length_attribute_id, piece_width_attribute_id, kerf_mm,
-         min_offcut_mm)
+         min_offcut_mm, piece_display_unit)
        VALUES ($name, $categoryId, $baseUnit, $manufacturer, $partNumber, $notes, $trackingMode,
-         $pieceLengthAttributeId, $pieceWidthAttributeId, $kerfMm, $minOffcutMm)
+         $pieceLengthAttributeId, $pieceWidthAttributeId, $kerfMm, $minOffcutMm,
+         $pieceDisplayUnit)
        RETURNING id`
     )
     .get(fields);
@@ -180,7 +184,7 @@ export function updatePart(db: Database, id: number, fields: PartFields): void {
        manufacturer = $manufacturer, part_number = $partNumber, notes = $notes,
        tracking_mode = $trackingMode, piece_length_attribute_id = $pieceLengthAttributeId,
        piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
-       min_offcut_mm = $minOffcutMm,
+       min_offcut_mm = $minOffcutMm, piece_display_unit = $pieceDisplayUnit,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
@@ -192,7 +196,8 @@ export function setPartTracking(db: Database, id: number, tracking: PartTracking
     `UPDATE parts SET tracking_mode = $trackingMode,
        piece_length_attribute_id = $pieceLengthAttributeId,
        piece_width_attribute_id = $pieceWidthAttributeId, kerf_mm = $kerfMm,
-       min_offcut_mm = $minOffcutMm, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+       min_offcut_mm = $minOffcutMm, piece_display_unit = $pieceDisplayUnit,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...tracking, id });
 }

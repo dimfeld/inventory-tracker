@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { calculateCut, checkSplit, formatArea, formatLength } from "#lib/pieces.ts";
 import {
   getAttributeDefinitionById,
   getPart,
@@ -15,10 +16,14 @@ import {
 import {
   getCurrentPiece,
   getPiece,
+  getPieceStatus,
   insertPiece,
+  listChildPieces,
   listLocationPieces,
   listPartPieces,
+  listPieceMovements,
   listPieceTotals,
+  listRetiredPieces,
   type CurrentPiece,
   type StockPiece,
 } from "#lib/server/db/pieces.ts";
@@ -56,6 +61,57 @@ export interface MovePieceInput extends PieceActionBase {
 export interface RemovePieceInput extends PieceActionBase {
   pieceId: number;
   reason: string;
+  /**
+   * `loss` for a lost or damaged piece (the default), `scrap` for a piece that is thrown away,
+   * and `use` for a piece used outside a project, such as for a repair.
+   */
+  kind?: "loss" | "scrap" | "use";
+}
+
+/**
+ * Where one output piece of a cut goes: kept at a storage location, scrapped, or used outside a
+ * project. Scrapped and used outputs are retired at once.
+ */
+export type PieceDestination =
+  | { kind: "keep"; locationId: number }
+  | { kind: "scrap" }
+  | { kind: "use" };
+
+export interface CutOutput {
+  lengthMm: number;
+  label?: string | null;
+  destination: PieceDestination;
+}
+
+export interface CutPieceInput extends PieceActionBase {
+  pieceId: number;
+  /** The pieces cut from the parent. Each cut loses the part's kerf. */
+  cuts: CutOutput[];
+  /** Where the remainder goes. There is no remainder piece when the cuts use the whole length. */
+  remainder: { destination: PieceDestination; label?: string | null };
+  /** Required when an output is used outside a project. */
+  reason?: string | null;
+}
+
+export interface SplitOutput {
+  lengthMm: number;
+  widthMm: number;
+  label?: string | null;
+  destination: PieceDestination;
+}
+
+export interface SplitPieceInput extends PieceActionBase {
+  pieceId: number;
+  /** The used piece and the leftover pieces, as the user measured them. */
+  outputs: SplitOutput[];
+  /** Required when an output is used outside a project. */
+  reason?: string | null;
+}
+
+/** The new pieces of a cut or split, and warnings that did not stop it. */
+export interface CutPieceResult {
+  pieces: StockPiece[];
+  warnings: string[];
 }
 
 /** The attribute definitions that name a pieces part's dimensions. */
@@ -177,6 +233,75 @@ export function createPieceService(db: Database) {
     return location;
   }
 
+  /** Check the destinations of a cut's outputs before anything is written. */
+  function checkDestinations(destinations: PieceDestination[], reason: string | null) {
+    for (const destination of destinations) {
+      if (destination.kind === "keep") requireStorage(destination.locationId);
+    }
+    if (destinations.some((d) => d.kind === "use") && !reason) {
+      throw new InventoryError("Enter a reason for a piece that is used outside a project");
+    }
+  }
+
+  /**
+   * Retire `piece` and make its outputs as child pieces, in one operation. Movement operation IDs
+   * are the input's ID with a position: `:1` takes the parent out, and each output comes in
+   * with the next one. A kept output comes in at its location. A scrapped or used output comes in
+   * where the parent was and then goes out again, so its history shows where it went.
+   */
+  function insertCut(
+    input: PieceActionBase & { reason: string | null },
+    piece: CurrentPiece,
+    outputs: { size: PieceSizeInput; destination: PieceDestination }[]
+  ): StockPiece[] {
+    let position = 0;
+    const movement = (
+      fields: Omit<NewMovement, "operationId" | "partId" | "quantity" | "occurredOn" | "reason">
+    ) => {
+      position += 1;
+      insertMovement(db, {
+        ...fields,
+        operationId: `${input.operationId}:${position}`,
+        partId: piece.partId,
+        quantity: 1,
+        occurredOn: input.occurredOn,
+        reason: input.reason,
+      });
+    };
+
+    movement({
+      fromLocationId: piece.locationId,
+      toLocationId: null,
+      movementType: "cut",
+      pieceId: piece.id,
+    });
+    return outputs.map(({ size, destination }) => {
+      const child = insertPiece(db, {
+        partId: piece.partId,
+        lengthMm: size.lengthMm,
+        widthMm: size.widthMm,
+        parentPieceId: piece.id,
+        label: size.label?.trim() || null,
+      });
+      const locationId = destination.kind === "keep" ? destination.locationId : piece.locationId;
+      movement({
+        fromLocationId: null,
+        toLocationId: locationId,
+        movementType: "cut",
+        pieceId: child.id,
+      });
+      if (destination.kind !== "keep") {
+        movement({
+          fromLocationId: locationId,
+          toLocationId: null,
+          movementType: destination.kind,
+          pieceId: child.id,
+        });
+      }
+      return child;
+    });
+  }
+
   /** The piece in stock with its part, or an error when it was retired. */
   function requireCurrentPiece(pieceId: number): { piece: CurrentPiece; part: Part } {
     const piece = getCurrentPiece(db, pieceId);
@@ -235,7 +360,106 @@ export function createPieceService(db: Database) {
       });
     },
 
-    /** Remove a lost, damaged, or discarded piece from inventory. The piece is retired. */
+    /**
+     * Cut a 1D piece into pieces of the given lengths. The remainder is the piece length minus
+     * the cut lengths and the kerf of each cut; the cut is refused when it is negative. Each
+     * output, and the remainder when it is not zero, goes to its own destination.
+     */
+    cutPiece(input: CutPieceInput): CutPieceResult {
+      return inTransaction(() => {
+        requireNewOperation(`${input.operationId}:1`);
+        const { piece, part } = requireCurrentPiece(input.pieceId);
+        requireStorage(piece.locationId);
+        if (piece.widthMm !== null) {
+          throw new InventoryError(
+            "This piece has a width. Split it into measured pieces instead."
+          );
+        }
+        if (input.cuts.length === 0) throw new InventoryError("Enter at least one cut length");
+        const dimensions = pieceDimensions(db, part);
+        const sizes = input.cuts.map((cut) => ({
+          lengthMm: cut.lengthMm,
+          widthMm: null,
+          label: cut.label,
+        }));
+        for (const size of sizes) checkPieceSize(dimensions, size);
+        const result = calculateCut(
+          piece,
+          part,
+          sizes.map((s) => s.lengthMm)
+        );
+        if (!result.fits) {
+          throw new InventoryError(
+            `The cuts do not fit in this piece. They need ${formatLength(-result.remainderMm, part.pieceDisplayUnit)} more, with a kerf of ${formatLength(part.kerfMm, part.pieceDisplayUnit)} per cut.`
+          );
+        }
+
+        const outputs = input.cuts.map((cut, index) => ({
+          size: sizes[index],
+          destination: cut.destination,
+        }));
+        if (result.remainderMm > 0) {
+          outputs.push({
+            size: { lengthMm: result.remainderMm, widthMm: null, label: input.remainder.label },
+            destination: input.remainder.destination,
+          });
+        }
+        const reason = input.reason?.trim() || null;
+        checkDestinations(
+          outputs.map((o) => o.destination),
+          reason
+        );
+        return { pieces: insertCut({ ...input, reason }, piece, outputs), warnings: [] };
+      });
+    },
+
+    /**
+     * Split a 2D piece into pieces that the user measured: the used piece and the leftovers. The
+     * app does not calculate layouts. The split is refused when the outputs have more area than
+     * the parent; an output larger than the parent in one dimension is only a warning.
+     */
+    splitPiece(input: SplitPieceInput): CutPieceResult {
+      return inTransaction(() => {
+        requireNewOperation(`${input.operationId}:1`);
+        const { piece, part } = requireCurrentPiece(input.pieceId);
+        requireStorage(piece.locationId);
+        if (piece.widthMm === null) {
+          throw new InventoryError("This piece has no width. Cut it to lengths instead.");
+        }
+        if (input.outputs.length === 0) throw new InventoryError("Enter at least one piece");
+        const dimensions = pieceDimensions(db, part);
+        for (const output of input.outputs) checkPieceSize(dimensions, output);
+        const check = checkSplit(
+          { lengthMm: piece.lengthMm, widthMm: piece.widthMm },
+          input.outputs
+        );
+        if (!check.areaFits) {
+          throw new InventoryError(
+            `The pieces have a total area of ${formatArea(check.outputAreaMm2, part.pieceDisplayUnit)}, more than the ${formatArea(check.parentAreaMm2, part.pieceDisplayUnit)} of this piece`
+          );
+        }
+
+        const reason = input.reason?.trim() || null;
+        checkDestinations(
+          input.outputs.map((o) => o.destination),
+          reason
+        );
+        const pieces = insertCut(
+          { ...input, reason },
+          piece,
+          input.outputs.map(({ destination, ...size }) => ({ size, destination }))
+        );
+        const warnings = check.oversized.map(
+          (index) => `Piece ${index + 1} is larger than this piece in one dimension`
+        );
+        return { pieces, warnings };
+      });
+    },
+
+    /**
+     * Take a piece out of inventory: lost or damaged, scrapped, or used outside a project. The
+     * piece is retired.
+     */
     removePiece(input: RemovePieceInput): Movement {
       return inTransaction(() => {
         requireNewOperation(input.operationId);
@@ -247,7 +471,7 @@ export function createPieceService(db: Database) {
           quantity: 1,
           fromLocationId: piece.locationId,
           toLocationId: null,
-          movementType: "loss",
+          movementType: input.kind ?? "loss",
           occurredOn: input.occurredOn,
           reason: input.reason,
           pieceId: piece.id,
@@ -268,5 +492,29 @@ export function createPieceService(db: Database) {
 
     /** Pieces of every part at one location. */
     listLocationPieces: (locationId: number) => listLocationPieces(db, locationId),
+
+    /** A part's pieces that are no longer in stock. */
+    listRetiredPieces: (partId: number) => listRetiredPieces(db, partId),
+
+    /**
+     * One piece with its lineage and movements: the piece it was cut from, the pieces cut from
+     * it, and its siblings (other pieces from the same cut). Null when it does not exist.
+     */
+    getPieceHistory(pieceId: number) {
+      const piece = getPieceStatus(db, pieceId);
+      if (!piece) return null;
+      const part = getPart(db, piece.partId)!;
+      const parent = piece.parentPieceId === null ? null : getPieceStatus(db, piece.parentPieceId);
+      return {
+        piece,
+        part,
+        /** The piece with its part's cut settings when it is in stock, for the cut form. */
+        current: getCurrentPiece(db, pieceId),
+        parent,
+        children: listChildPieces(db, pieceId),
+        siblings: parent ? listChildPieces(db, parent.id).filter((p) => p.id !== pieceId) : [],
+        movements: listPieceMovements(db, pieceId),
+      };
+    },
   };
 }

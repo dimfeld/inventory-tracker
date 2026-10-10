@@ -473,3 +473,233 @@ describe("receipts of pieces parts", () => {
     ]);
   });
 });
+
+describe("cuts of 1D pieces", () => {
+  const keep = (locationId: number) => ({ kind: "keep" as const, locationId });
+
+  it("cuts lengths with kerf, keeps the remainder, and retires the parent", () => {
+    const ctx = setup();
+    const [stick] = addPieces(ctx, ctx.extrusion, ctx.rack, [{ lengthMm: 1220, widthMm: null }]);
+    const result = ctx.pieces.cutPiece({
+      operationId: "cut-1",
+      occurredOn: DAY,
+      pieceId: stick.id,
+      cuts: [
+        { lengthMm: 415, destination: keep(ctx.shelf), label: "frame" },
+        { lengthMm: 300, destination: keep(ctx.rack) },
+      ],
+      remainder: { destination: keep(ctx.rack) },
+    });
+
+    // 1220 − 415 − 300 − 2 × 2 mm kerf
+    expect(result.pieces.map((p) => [p.lengthMm, p.parentPieceId, p.label])).toEqual([
+      [415, stick.id, "frame"],
+      [300, stick.id, null],
+      [501, stick.id, null],
+    ]);
+    const { pieces, totals } = ctx.pieces.listPartPieces(ctx.extrusion);
+    expect(pieces.map((p) => [p.locationName, p.lengthMm])).toEqual([
+      ["Rack", 501],
+      ["Rack", 300],
+      ["Shelf", 415],
+    ]);
+    expect(totals.map((t) => [t.locationName, t.pieceCount, t.totalLengthMm])).toEqual([
+      ["Rack", 2, 801],
+      ["Shelf", 1, 415],
+    ]);
+    expect(
+      listPartMovements(ctx.db, ctx.extrusion)
+        .filter((m) => m.movementType === "cut")
+        .map((m) => m.operationId)
+        .sort()
+    ).toEqual(["cut-1:1", "cut-1:2", "cut-1:3", "cut-1:4"]);
+
+    const history = ctx.pieces.getPieceHistory(result.pieces[0].id)!;
+    expect(history.parent?.id).toBe(stick.id);
+    expect(history.parent?.retiredBy).toBe("cut");
+    expect(history.siblings.map((p) => p.lengthMm).sort()).toEqual([300, 501]);
+    expect(ctx.pieces.getPieceHistory(stick.id)!.children).toHaveLength(3);
+    expect(ctx.pieces.listRetiredPieces(ctx.extrusion).map((p) => p.id)).toEqual([stick.id]);
+  });
+
+  it("scraps or keeps a remainder under the minimum offcut", () => {
+    const ctx = setup();
+    const [a, b] = addPieces(ctx, ctx.extrusion, ctx.rack, [
+      { lengthMm: 400, widthMm: null },
+      { lengthMm: 400, widthMm: null },
+    ]);
+    const cut = (
+      pieceId: number,
+      destination: { kind: "scrap" } | { kind: "keep"; locationId: number }
+    ) =>
+      ctx.pieces.cutPiece({
+        operationId: opId(),
+        occurredOn: DAY,
+        pieceId,
+        cuts: [{ lengthMm: 368, destination: keep(ctx.rack) }],
+        remainder: { destination },
+      });
+
+    // 400 − 368 − 2 = 30 mm, under the 50 mm minimum.
+    const scrapped = cut(a.id, { kind: "scrap" });
+    expect(scrapped.pieces.map((p) => p.lengthMm)).toEqual([368, 30]);
+    expect(ctx.pieces.getPieceHistory(scrapped.pieces[1].id)!.piece).toMatchObject({
+      locationId: null,
+      retiredBy: "scrap",
+    });
+    expect(
+      ctx.pieces.getPieceHistory(scrapped.pieces[1].id)!.movements.map((m) => m.movementType)
+    ).toEqual(["scrap", "cut"]);
+
+    cut(b.id, keep(ctx.shelf));
+    const { pieces } = ctx.pieces.listPartPieces(ctx.extrusion);
+    expect(pieces.map((p) => [p.locationName, p.lengthMm])).toEqual([
+      ["Rack", 368],
+      ["Rack", 368],
+      ["Shelf", 30],
+    ]);
+  });
+
+  it("makes no remainder for an exact fit, and refuses cuts that do not fit", () => {
+    const ctx = setup();
+    const [stick] = addPieces(ctx, ctx.extrusion, ctx.rack, [{ lengthMm: 1220, widthMm: null }]);
+    const input = (lengthMm: number) => ({
+      operationId: opId(),
+      occurredOn: DAY,
+      pieceId: stick.id,
+      cuts: [{ lengthMm, destination: keep(ctx.rack) }],
+      remainder: { destination: keep(ctx.rack) },
+    });
+    expect(() => ctx.pieces.cutPiece(input(1219))).toThrow(/do not fit/);
+    expect(listPartMovements(ctx.db, ctx.extrusion)).toHaveLength(1);
+
+    const result = ctx.pieces.cutPiece(input(1218));
+    expect(result.pieces.map((p) => p.lengthMm)).toEqual([1218]);
+  });
+
+  it("rejects a repeated operation ID without writing", () => {
+    const ctx = setup();
+    const [a, b] = addPieces(ctx, ctx.extrusion, ctx.rack, [
+      { lengthMm: 1220, widthMm: null },
+      { lengthMm: 700, widthMm: null },
+    ]);
+    const input = {
+      operationId: "repeat",
+      occurredOn: DAY,
+      pieceId: a.id,
+      cuts: [{ lengthMm: 500, destination: keep(ctx.rack) }],
+      remainder: { destination: keep(ctx.rack) },
+    };
+    ctx.pieces.cutPiece(input);
+    const before = listPartMovements(ctx.db, ctx.extrusion).length;
+    expect(() => ctx.pieces.cutPiece({ ...input, pieceId: b.id })).toThrow(DuplicateOperationError);
+    expect(listPartMovements(ctx.db, ctx.extrusion)).toHaveLength(before);
+    expect(ctx.pieces.listPartPieces(ctx.extrusion).pieces).toHaveLength(3);
+  });
+
+  it("uses part of a piece outside a project, which needs a reason", () => {
+    const ctx = setup();
+    const [stick] = addPieces(ctx, ctx.extrusion, ctx.rack, [{ lengthMm: 700, widthMm: null }]);
+    const input = {
+      operationId: opId(),
+      occurredOn: DAY,
+      pieceId: stick.id,
+      cuts: [{ lengthMm: 200, destination: { kind: "use" as const } }],
+      remainder: { destination: keep(ctx.rack) },
+    };
+    expect(() => ctx.pieces.cutPiece(input)).toThrow(/reason/);
+
+    const result = ctx.pieces.cutPiece({ ...input, reason: "Shelf repair" });
+    expect(ctx.pieces.getPieceHistory(result.pieces[0].id)!.piece.retiredBy).toBe("use");
+    expect(ctx.pieces.listPartPieces(ctx.extrusion).pieces.map((p) => p.lengthMm)).toEqual([498]);
+  });
+
+  it("refuses a 2D piece", () => {
+    const ctx = setup();
+    const [sheet] = addPieces(ctx, ctx.sheet, ctx.rack, [{ lengthMm: 150, widthMm: 150 }]);
+    expect(() =>
+      ctx.pieces.cutPiece({
+        operationId: opId(),
+        occurredOn: DAY,
+        pieceId: sheet.id,
+        cuts: [{ lengthMm: 50, destination: keep(ctx.rack) }],
+        remainder: { destination: keep(ctx.rack) },
+      })
+    ).toThrow(/has a width/);
+  });
+});
+
+describe("splits of 2D pieces", () => {
+  it("makes the measured pieces and warns about a dimension larger than the parent", () => {
+    const ctx = setup();
+    const [sheet] = addPieces(ctx, ctx.sheet, ctx.rack, [{ lengthMm: 150, widthMm: 100 }]);
+    const result = ctx.pieces.splitPiece({
+      operationId: opId(),
+      occurredOn: DAY,
+      pieceId: sheet.id,
+      outputs: [
+        // Rotated, it fits.
+        { lengthMm: 60, widthMm: 140, destination: { kind: "use" } },
+        { lengthMm: 160, widthMm: 20, destination: { kind: "keep", locationId: ctx.shelf } },
+      ],
+      reason: "Bracket",
+    });
+    expect(result.pieces.map((p) => [p.lengthMm, p.widthMm, p.parentPieceId])).toEqual([
+      [60, 140, sheet.id],
+      [160, 20, sheet.id],
+    ]);
+    expect(result.warnings).toEqual(["Piece 2 is larger than this piece in one dimension"]);
+    expect(ctx.pieces.listPartPieces(ctx.sheet).totals).toEqual([
+      {
+        locationId: ctx.shelf,
+        locationName: "Shelf",
+        pieceCount: 1,
+        totalLengthMm: 160,
+        totalAreaMm2: 3200,
+      },
+    ]);
+  });
+
+  it("refuses outputs with more area than the parent without writing", () => {
+    const ctx = setup();
+    const [sheet] = addPieces(ctx, ctx.sheet, ctx.rack, [{ lengthMm: 150, widthMm: 100 }]);
+    expect(() =>
+      ctx.pieces.splitPiece({
+        operationId: opId(),
+        occurredOn: DAY,
+        pieceId: sheet.id,
+        outputs: [
+          { lengthMm: 100, widthMm: 100, destination: { kind: "scrap" } },
+          { lengthMm: 60, widthMm: 100, destination: { kind: "scrap" } },
+        ],
+      })
+    ).toThrow(/total area/);
+    expect(ctx.pieces.listPartPieces(ctx.sheet).pieces.map((p) => p.id)).toEqual([sheet.id]);
+  });
+});
+
+describe("whole pieces out of inventory", () => {
+  it("scraps or uses a piece with a reason, which retires it", () => {
+    const ctx = setup();
+    const [a, b, c] = addPieces(ctx, ctx.extrusion, ctx.rack, [
+      { lengthMm: 300, widthMm: null },
+      { lengthMm: 200, widthMm: null },
+      { lengthMm: 100, widthMm: null },
+    ]);
+    const remove = (pieceId: number, kind: "scrap" | "use") =>
+      ctx.pieces.removePiece({ operationId: opId(), occurredOn: DAY, pieceId, reason: "x", kind });
+    remove(a.id, "scrap");
+    remove(b.id, "use");
+
+    expect(ctx.pieces.listPartPieces(ctx.extrusion).totals).toMatchObject([
+      { pieceCount: 1, totalLengthMm: 100 },
+    ]);
+    expect(
+      ctx.pieces.listRetiredPieces(ctx.extrusion).map((p) => [p.lengthMm, p.retiredBy])
+    ).toEqual([
+      [200, "use"],
+      [300, "scrap"],
+    ]);
+    expect(ctx.pieces.getPieceHistory(c.id)!.piece.locationName).toBe("Rack");
+  });
+});

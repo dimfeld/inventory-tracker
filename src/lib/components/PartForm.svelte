@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { PIECE_DISPLAY_UNITS } from '#lib/pieces.ts';
   import type { TrackingInput } from '#lib/schemas/part.ts';
 
   export interface PartFormValues {
@@ -235,6 +236,16 @@
           <input name="min_offcut" value={lengthText(initial?.tracking?.minOffcutMm)} placeholder="0" class="input" />
           <span class="text-sm text-gray-600">Shorter offcuts are not worth keeping.</span>
           {#if errors?.min_offcut}<span class="text-sm text-red-700">{errors.min_offcut}</span>{/if}
+        </label>
+        <label class="block">
+          <span class="text-sm">Show sizes in</span>
+          <select name="piece_display_unit" class="input">
+            {#each PIECE_DISPLAY_UNITS as unit (unit)}
+              <option value={unit} selected={unit === (initial?.tracking?.displayUnit ?? 'mm')}>{unit}</option>
+            {/each}
+          </select>
+          <span class="text-sm text-gray-600">Cut and split forms show sizes in this unit. A bare number is in this unit.</span>
+          {#if errors?.piece_display_unit}<span class="text-sm text-red-700">{errors.piece_display_unit}</span>{/if}
         </label>
       </div>
     {/if}

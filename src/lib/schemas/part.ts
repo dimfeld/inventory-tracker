@@ -1,4 +1,10 @@
-import { parseLengthMm, TRACKING_MODES, type TrackingMode } from "#lib/pieces.ts";
+import {
+  parseLengthMm,
+  PIECE_DISPLAY_UNITS,
+  TRACKING_MODES,
+  type PieceDisplayUnit,
+  type TrackingMode,
+} from "#lib/pieces.ts";
 import { isUnit, type Unit } from "#lib/units.ts";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
@@ -36,6 +42,8 @@ export interface TrackingInput {
   kerfMm: number;
   /** The shortest offcut worth keeping, in mm. */
   minOffcutMm: number;
+  /** The unit that piece sizes are shown and entered in. Omitted: mm. */
+  displayUnit?: PieceDisplayUnit;
 }
 
 export interface PartInput {
@@ -206,11 +214,16 @@ function parseTracking(form: FormData, errors: FieldErrors): TrackingInput | und
   if (Number.isNaN(minOffcutMm)) {
     errors.min_offcut = "Enter the minimum offcut as a length, such as 50 or 2 in";
   }
+  const displayUnit = text(form, "piece_display_unit") || "mm";
+  if (!(PIECE_DISPLAY_UNITS as readonly string[]).includes(displayUnit)) {
+    errors.piece_display_unit = "Choose mm or in";
+  }
   return {
     mode: mode as TrackingMode,
     lengthKey: optionalText(form, "piece_length_key"),
     widthKey: optionalText(form, "piece_width_key"),
     kerfMm,
     minOffcutMm,
+    displayUnit: displayUnit as PieceDisplayUnit,
   };
 }

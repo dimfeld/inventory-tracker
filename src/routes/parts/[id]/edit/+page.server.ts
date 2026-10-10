@@ -23,6 +23,7 @@ export const load: PageServerLoad = ({ params }) => {
         widthKey: details.pieceDimensions?.width?.key ?? null,
         kerfMm: details.part.kerfMm,
         minOffcutMm: details.part.minOffcutMm,
+        displayUnit: details.part.pieceDisplayUnit,
       },
     },
     baseUnitLocked: catalog.hasMovements(details.part.id),

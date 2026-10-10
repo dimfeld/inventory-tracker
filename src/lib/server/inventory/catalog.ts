@@ -37,7 +37,12 @@ import {
   listPartMovements,
 } from "#lib/server/db/movements.ts";
 import { countPartOrderLines } from "#lib/server/db/orders.ts";
-import { countPartPieces, listPartPieces, listPieceTotals } from "#lib/server/db/pieces.ts";
+import {
+  countPartPieces,
+  listPartPieces,
+  listPieceTotals,
+  listRetiredPieces,
+} from "#lib/server/db/pieces.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
 import {
   expandAttributes,
@@ -251,9 +256,22 @@ export function createCatalogService(db: Database) {
     const tracking = input.tracking;
     if (!tracking) {
       if (!existing) return BULK_TRACKING;
-      const { trackingMode, pieceLengthAttributeId, pieceWidthAttributeId, kerfMm, minOffcutMm } =
-        existing;
-      return { trackingMode, pieceLengthAttributeId, pieceWidthAttributeId, kerfMm, minOffcutMm };
+      const {
+        trackingMode,
+        pieceLengthAttributeId,
+        pieceWidthAttributeId,
+        kerfMm,
+        minOffcutMm,
+        pieceDisplayUnit,
+      } = existing;
+      return {
+        trackingMode,
+        pieceLengthAttributeId,
+        pieceWidthAttributeId,
+        kerfMm,
+        minOffcutMm,
+        pieceDisplayUnit,
+      };
     }
     for (const [label, value] of [
       ["Kerf", tracking.kerfMm],
@@ -263,7 +281,11 @@ export function createCatalogService(db: Database) {
         throw new InventoryError(`${label} must be zero or more mm`);
       }
     }
-    const settings = { kerfMm: tracking.kerfMm, minOffcutMm: tracking.minOffcutMm };
+    const settings = {
+      kerfMm: tracking.kerfMm,
+      minOffcutMm: tracking.minOffcutMm,
+      pieceDisplayUnit: tracking.displayUnit ?? "mm",
+    };
     if (tracking.mode === "bulk") return { ...BULK_TRACKING, ...settings };
     return { ...pieceTracking(input, tracking), ...settings };
   }
@@ -502,6 +524,8 @@ export function createCatalogService(db: Database) {
         /** Pieces in stock and their totals per location. Empty for a bulk part. */
         pieces: listPartPieces(db, id),
         pieceTotals: listPieceTotals(db, id),
+        /** Pieces that are no longer in stock, newest first. */
+        retiredPieces: listRetiredPieces(db, id),
       };
     },
 
@@ -535,6 +559,7 @@ export function createCatalogService(db: Database) {
           widthKey: attributeKey(part.pieceWidthAttributeId),
           kerfMm: part.kerfMm,
           minOffcutMm: part.minOffcutMm,
+          displayUnit: part.pieceDisplayUnit,
         },
       };
     },

@@ -18,7 +18,13 @@ export type MovementType =
    * Conversion of a bulk part to pieces: its bulk balance leaves each location, and the same
    * stock comes back as pieces.
    */
-  | "conversion";
+  | "conversion"
+  /** A cut of a piece: the parent piece goes out, and its child pieces come in. */
+  | "cut"
+  /** A piece that is thrown away. */
+  | "scrap"
+  /** A piece used outside a project, such as for a repair. */
+  | "use";
 
 // A type alias (not an interface) so it can be passed as named SQL bindings.
 export type NewMovement = {
@@ -61,7 +67,7 @@ export interface LocationBalance {
   quantity: number;
 }
 
-const MOVEMENT_COLUMNS = `m.id, m.operation_id AS operationId, m.part_id AS partId, m.quantity,
+export const MOVEMENT_COLUMNS = `m.id, m.operation_id AS operationId, m.part_id AS partId, m.quantity,
   m.from_location_id AS fromLocationId, m.to_location_id AS toLocationId,
   m.movement_type AS movementType, m.occurred_on AS occurredOn, m.reason, m.bom_line_id AS bomLineId,
   m.receipt_line_id AS receiptLineId, m.piece_id AS pieceId, m.created_at AS createdAt`;

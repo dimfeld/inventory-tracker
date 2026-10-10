@@ -329,6 +329,7 @@ export function createConversionService(db: Database) {
             pieceWidthAttributeId: width?.id ?? null,
             kerfMm: input.kerfMm,
             minOffcutMm: input.minOffcutMm,
+            pieceDisplayUnit: getPart(db, destination.partId)!.pieceDisplayUnit,
           });
           deletePartAttributes(
             db,

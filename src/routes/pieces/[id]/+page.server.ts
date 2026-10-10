@@ -5,11 +5,10 @@ import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = ({ params }) => {
   const { locations, pieces } = inventory();
-  const location = locations.getLocation(Number(params.id));
-  if (!location) error(404, "Location not found");
+  const history = pieces.getPieceHistory(Number(params.id));
+  if (!history) error(404, "Piece not found");
   return {
-    location,
-    pieces: pieces.listLocationPieces(location.id),
+    ...history,
     locations: locations.listStorageLocations(),
     today: today(),
     // One ID per page load; a repeated submission of the same form is rejected.

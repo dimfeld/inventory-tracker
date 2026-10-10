@@ -1,5 +1,5 @@
 import * as z from "zod";
-import { parseLengthMm } from "#lib/pieces.ts";
+import { parseLengthMm, parsePieceLength, PIECE_DISPLAY_UNITS } from "#lib/pieces.ts";
 import { formId, formText, optionalFormText } from "./form";
 
 /** The most equal pieces one row of the add form can make. */
@@ -71,3 +71,91 @@ export const removePieceSchema = z.object({
   pieceId: z.number().int(),
   reason: formText.pipe(z.string().min(1, "Enter a reason")),
 });
+
+/** A whole piece out of inventory: scrapped, or used outside a project. */
+export const retirePieceSchema = z.object({
+  ...operation,
+  pieceId: z.number().int(),
+  kind: z.enum(["scrap", "use"]),
+  reason: formText.pipe(z.string().min(1, "Enter a reason")),
+});
+
+/**
+ * Where an output of a cut goes: `scrap`, `use` (outside a project), or the ID of a storage
+ * location to keep it in.
+ */
+const destination = formText.transform((value, ctx) => {
+  if (value === "scrap") return { kind: "scrap" as const };
+  if (value === "use") return { kind: "use" as const };
+  if (/^\d+$/.test(value)) return { kind: "keep" as const, locationId: Number(value) };
+  ctx.addIssue({ code: "custom", message: "Choose where each piece goes" });
+  return z.NEVER;
+});
+
+const cutBase = {
+  ...operation,
+  pieceId: z.number().int(),
+  /** The part's display unit. A bare number in a size is in this unit. */
+  unit: z.enum(PIECE_DISPLAY_UNITS),
+  reason: optionalFormText,
+};
+
+/** A length in mm from a form field in the display unit, or an issue. */
+function lengthField(
+  raw: string,
+  unit: (typeof PIECE_DISPLAY_UNITS)[number],
+  ctx: z.RefinementCtx
+) {
+  const mm = parsePieceLength(raw, unit);
+  if (mm === null || mm <= 0) {
+    ctx.addIssue({
+      code: "custom",
+      message: `Enter each size as a length, such as 300 or 12 ${unit === "mm" ? "in" : "mm"}`,
+    });
+    return null;
+  }
+  return mm;
+}
+
+/** A 1D cut: the cut lengths, each with a destination, and the remainder's destination. */
+export const cutPieceSchema = z
+  .object({
+    ...cutBase,
+    cuts: z.array(z.object({ length: formText, label: optionalFormText, destination })).optional(),
+    remainderDestination: destination,
+    remainderLabel: optionalFormText,
+  })
+  .transform((input, ctx) => {
+    const cuts = [];
+    for (const row of input.cuts ?? []) {
+      if (!row.length) continue;
+      const lengthMm = lengthField(row.length, input.unit, ctx);
+      if (lengthMm === null) return z.NEVER;
+      cuts.push({ lengthMm, label: row.label, destination: row.destination });
+    }
+    return {
+      ...input,
+      cuts,
+      remainder: { destination: input.remainderDestination, label: input.remainderLabel },
+    };
+  });
+
+/** A 2D split: the used piece and the leftover pieces, each with a destination. */
+export const splitPieceSchema = z
+  .object({
+    ...cutBase,
+    outputs: z
+      .array(z.object({ length: formText, width: formText, label: optionalFormText, destination }))
+      .optional(),
+  })
+  .transform((input, ctx) => {
+    const outputs = [];
+    for (const row of input.outputs ?? []) {
+      if (!row.length && !row.width) continue;
+      const lengthMm = lengthField(row.length, input.unit, ctx);
+      const widthMm = lengthField(row.width, input.unit, ctx);
+      if (lengthMm === null || widthMm === null) return z.NEVER;
+      outputs.push({ lengthMm, widthMm, label: row.label, destination: row.destination });
+    }
+    return { ...input, outputs };
+  });
