@@ -88,7 +88,10 @@ const MISSING_PURCHASE_NOTES = {
 } as const;
 
 /** Optional text fields of a line. */
-type TextField = Exclude<keyof LineProposal["fields"], "attributes" | "categoryId" | "description">;
+type TextField = Exclude<
+  keyof LineProposal["fields"],
+  "attributes" | "categoryId" | "description" | "pieceTracking"
+>;
 
 /** Collects field values, provenance marks, and unresolved notes of one line. */
 class LineBuilder {

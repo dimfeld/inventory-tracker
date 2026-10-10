@@ -12,6 +12,7 @@ import {
   type SourceType,
 } from "#lib/imports.ts";
 import * as z from "zod";
+import { parseLengthMm } from "#lib/pieces.ts";
 import { formId, formText, optionalFormText } from "./form";
 import { allText, optionalText, parseId, text, type FieldErrors, type ParseResult } from "./result";
 
@@ -115,6 +116,11 @@ export const lineFormSchema = z
     referenceDesignators: optionalFormText,
     cutLength: optionalFormText,
     cutWidth: optionalFormText,
+    pieceTracking: optionalFormText.pipe(
+      z.enum(["1d", "2d"], { error: "Choose how the new part is tracked" }).nullable()
+    ),
+    kerf: optionalFormText,
+    minOffcut: optionalFormText,
     categoryId: formId("Choose a valid category"),
     manufacturer: optionalFormText,
     partNumber: optionalFormText,
@@ -139,6 +145,15 @@ export const lineFormSchema = z
       }
       attributes.push({ key, value });
     }
+    // An empty kerf or minimum offcut is zero.
+    const length = (value: string | null, path: string, label: string) => {
+      const mm = value === null ? 0 : parseLengthMm(value);
+      if (mm !== null && mm >= 0) return mm;
+      ctx.addIssue({ code: "custom", path: [path], message: `Enter the ${label} as a length` });
+      return 0;
+    };
+    const kerfMm = length(input.kerf, "kerf", "kerf");
+    const minOffcutMm = length(input.minOffcut, "minOffcut", "minimum offcut");
     const edit: LineEditInput = {
       fields: {
         description: input.description,
@@ -157,6 +172,10 @@ export const lineFormSchema = z
         attributes,
         cutLength: input.cutLength,
         cutWidth: input.cutWidth,
+        pieceTracking:
+          input.pieceTracking === null
+            ? null
+            : { twoD: input.pieceTracking === "2d", kerfMm, minOffcutMm },
       },
       groupId: input.groupId,
       resolution: input.resolution || null,

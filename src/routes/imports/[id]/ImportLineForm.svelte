@@ -29,6 +29,7 @@
       missingRequired: string[];
       conversion: string | null;
       pieceSizeNote?: string | null;
+      sharedPartLines?: number[];
       readings: Record<string, string>;
       problems: string[];
     };
@@ -73,6 +74,9 @@
       referenceDesignators: f.referenceDesignators ?? '',
       cutLength: f.cutLength ?? '',
       cutWidth: f.cutWidth ?? '',
+      pieceTracking: f.pieceTracking ? (f.pieceTracking.twoD ? '2d' : '1d') : '',
+      kerf: f.pieceTracking ? String(f.pieceTracking.kerfMm) : '',
+      minOffcut: f.pieceTracking ? String(f.pieceTracking.minOffcutMm) : '',
       categoryId: idText(f.categoryId),
       manufacturer: f.manufacturer ?? '',
       partNumber: f.partNumber ?? '',
@@ -300,6 +304,36 @@
         <p class="text-sm text-gray-600">
           The commit creates a part from the description, category, unit, identifiers, and attributes.
         </p>
+        {@const pieceTracking = fields.pieceTracking.value() ?? ''}
+        <div class="mt-1 flex flex-wrap items-end gap-3 text-sm">
+          <label class="block">
+            Track stock
+            <select {...fields.pieceTracking.as('select')} class="input">
+              <option value="">As a count (bulk)</option>
+              <option value="1d">As pieces with a length (extrusion, rod)</option>
+              <option value="2d">As pieces with a length and width (sheet)</option>
+            </select>
+          </label>
+          {#if pieceTracking}
+            <label class="block">
+              Kerf (mm or in)
+              <input {...fields.kerf.as('text')} placeholder="0" class="input w-28" />
+            </label>
+            <label class="block">
+              Minimum offcut (mm or in)
+              <input {...fields.minOffcut.as('text')} placeholder="0" class="input w-28" />
+            </label>
+          {/if}
+        </div>
+        {#if pieceTracking}
+          <p class="text-sm text-gray-600">
+            Each piece gets its size from the length{pieceTracking === '2d' ? ' and width' : ''} attribute{pieceTracking === '2d' ? 's' : ''}.
+            These are not attributes of the new part. Lines with the same name make one part.
+          </p>
+        {/if}
+        {#if line.sharedPartLines && line.sharedPartLines.length > 1}
+          <p class="text-sm">Lines {line.sharedPartLines.join(', ')} make one new part.</p>
+        {/if}
         {#if !readonly}
           <SearchSelect
             label="Search the catalog for a part to copy into line {number}"

@@ -1432,3 +1432,78 @@ describe("order import of pieces parts", () => {
     ]);
   });
 });
+
+describe("new parts tracked as pieces", () => {
+  const pieces = (twoD = false) => ({ twoD, kerfMm: 3, minOffcutMm: 20 });
+
+  it("makes one pieces part for order lines with the same name, each with its own size", () => {
+    const ctx = createTestImports();
+    const id = ctx.imports.createImport({
+      kind: "order",
+      sourceType: "text",
+      sourceText: "2020 extrusion 500 mm, 300 mm",
+    });
+    const line = (description: string, length: string | null) => ({
+      resolution: "new" as const,
+      fields: {
+        description,
+        quantity: "2",
+        unit: "pcs",
+        purchaseUnit: "each",
+        packQuantity: "1",
+        supplierSku: "AE-2020",
+        attributes: [
+          { key: "material", value: "aluminium" },
+          ...(length ? [{ key: "length", value: length }] : []),
+        ],
+        pieceTracking: pieces(),
+      },
+    });
+    for (let i = 0; i < 3; i += 1) ctx.imports.addLine(id);
+    edit(ctx, id, 0, line("2020 extrusion", "500 mm"));
+    edit(ctx, id, 1, line("2020 Extrusion ", "300 mm"));
+    edit(ctx, id, 2, line("2040 extrusion", null));
+
+    const view = review(ctx, id);
+    expect(view.lines.map((l) => [l.pieceSizeNote, l.sharedPartLines, l.problems])).toEqual([
+      ["Each piece is 500 mm, from the length attribute", [1, 2], []],
+      ["Each piece is 300 mm, from the length attribute", [1, 2], []],
+      [
+        "No piece size. Add the length attribute, or enter the size when you receive the pieces",
+        [],
+        [],
+      ],
+    ]);
+
+    ctx.imports.updateHeader(id, { ...EMPTY_HEADER, supplier: "AliExpress" });
+    const { orderId } = ctx.imports.commit(id, opId());
+    const lines = ctx.orders.getOrderDetails(orderId!)!.lines;
+    expect(lines.map((l) => [l.partName, l.pieceLengthMm])).toEqual([
+      ["2020 extrusion", 500],
+      ["2020 extrusion", 300],
+      ["2040 extrusion", null],
+    ]);
+    const details = ctx.catalog.getPartDetails(lines[0].partId)!;
+    expect(details.part).toMatchObject({ trackingMode: "pieces", kerfMm: 3, minOffcutMm: 20 });
+    expect(details.attributes.map((a) => a.key)).toEqual(["material"]);
+    expect(details.supplierParts).toMatchObject([{ sku: "AE-2020", stockLengthMm: 500 }]);
+  });
+
+  it("needs pcs, and lets a BOM row with a cut size create a pieces part", async () => {
+    const ctx = await parsedBom(bomCutSizes, "text");
+    const { id } = ctx;
+    // Line 3 is a 150 × 150 mm sheet cut.
+    edit(ctx, id, 2, { resolution: "new", fields: { pieceTracking: null } });
+    expect(review(ctx, id).lines[2].problems).toContain(
+      "The new part is not tracked as pieces. Track it as pieces, choose an existing pieces part or a requirement, or remove the cut size"
+    );
+    edit(ctx, id, 2, { fields: { pieceTracking: pieces() } });
+    expect(review(ctx, id).lines[2].problems).toContain(
+      "The new part's pieces have no width. Remove the cut width"
+    );
+    edit(ctx, id, 2, { fields: { pieceTracking: pieces(true), unit: "m" } });
+    expect(review(ctx, id).lines[2].problems).toContain(
+      "A part tracked as pieces counts pcs. Choose pcs as the unit"
+    );
+  });
+});

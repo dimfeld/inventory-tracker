@@ -57,10 +57,14 @@ import {
 import { listOrdersWithReference } from "#lib/server/db/orders.ts";
 import { listAttributesOfParts, searchParts } from "#lib/server/db/part-search.ts";
 import { getProject, listComponents, listProjects } from "#lib/server/db/projects.ts";
-import { createCatalogService, typedAttributeValue } from "#lib/server/inventory/catalog.ts";
+import {
+  createCatalogService,
+  pieceDimensionDefinition,
+  typedAttributeValue,
+} from "#lib/server/inventory/catalog.ts";
 import { InventoryError, isUserError, NotFoundError } from "#lib/server/inventory/errors.ts";
 import { createOrderService } from "#lib/server/inventory/orders.ts";
-import { pieceDimensions } from "#lib/server/inventory/pieces.ts";
+import { pieceDimensions, type PieceDimensions } from "#lib/server/inventory/pieces.ts";
 import {
   matchRequirement,
   requirementOf,
@@ -214,8 +218,8 @@ function lineCutSize(f: ImportLineFields): { lengthMm: number; widthMm: number |
 }
 
 /**
- * A cut size counts cut pieces of a part tracked as pieces, so the row must count pcs, and an
- * existing part must be tracked as pieces with the same dimensions. A new part is bulk.
+ * A cut size counts cut pieces of a part tracked as pieces, so the row must count pcs, and the
+ * existing or new part must be tracked as pieces with the same dimensions.
  */
 function cutSizeProblems(line: LineEdit, part: Part | null): string[] {
   const f = line.fields;
@@ -231,9 +235,18 @@ function cutSizeProblems(line: LineEdit, part: Part | null): string[] {
   }
   if (f.unit !== "pcs") problems.push("A row with a cut size counts cut pieces. Use pcs.");
   if (line.resolution === "new") {
-    problems.push(
-      "A new part is not tracked as pieces. Choose an existing pieces part or a requirement, or remove the cut size"
-    );
+    const tracking = f.pieceTracking;
+    if (!tracking) {
+      problems.push(
+        "The new part is not tracked as pieces. Track it as pieces, choose an existing pieces part or a requirement, or remove the cut size"
+      );
+    } else if (tracking.twoD !== (f.cutWidth !== null)) {
+      problems.push(
+        tracking.twoD
+          ? "The new part's pieces have a width. Enter the cut width"
+          : "The new part's pieces have no width. Remove the cut width"
+      );
+    }
   }
   if (line.resolution === "existing" && part) {
     if (part.trackingMode !== "pieces") {
@@ -370,28 +383,72 @@ export function createImportService(db: Database) {
   }
 
   /**
-   * The piece size of an order line of an existing part tracked as pieces, from the line's
-   * attributes of the part's piece dimensions, such as `length`. The order line then makes
-   * pieces of this size; without one it uses the SKU stock size. `note` tells the owner which
-   * size the line uses. A 2D part needs both dimensions or neither.
+   * The piece dimensions of the part that a line commits to: of its existing part, or of the
+   * new part it creates. Null for a bulk part, or when the new part's dimensions are not valid
+   * piece dimensions (see `pieceTrackingProblem`).
+   */
+  function lineDimensions(line: LineEdit, part: Part | null): PieceDimensions | null {
+    if (line.resolution === "existing") {
+      return part?.trackingMode === "pieces" ? pieceDimensions(db, part) : null;
+    }
+    const tracking = line.resolution === "new" ? line.fields.pieceTracking : null;
+    if (!tracking) return null;
+    try {
+      return {
+        length: pieceDimensionDefinition(db, "length"),
+        width: tracking.twoD ? pieceDimensionDefinition(db, "width") : null,
+      };
+    } catch (error) {
+      if (isUserError(error)) return null;
+      throw error;
+    }
+  }
+
+  /** Why a new part cannot be tracked as pieces, or null. */
+  function pieceTrackingProblem(line: LineEdit): string | null {
+    const tracking = line.resolution === "new" ? line.fields.pieceTracking : null;
+    if (!tracking) return null;
+    if (line.fields.unit !== "pcs")
+      return "A part tracked as pieces counts pcs. Choose pcs as the unit";
+    try {
+      pieceDimensionDefinition(db, "length");
+      if (tracking.twoD) pieceDimensionDefinition(db, "width");
+    } catch (error) {
+      if (isUserError(error)) return error.message;
+      throw error;
+    }
+    return null;
+  }
+
+  /**
+   * The piece size of an order line of a part tracked as pieces, from the line's attributes of
+   * the part's piece dimensions, such as `length`. The order line then makes pieces of this
+   * size; without one it uses the SKU stock size. `note` tells the owner which size the line
+   * uses. A 2D part needs both dimensions or neither.
    */
   function orderLinePieces(kind: ImportKind, line: LineEdit, part: Part | null) {
     const none = { size: null, note: null, problem: null };
-    if (kind !== "order" || line.resolution !== "existing" || part?.trackingMode !== "pieces") {
-      return none;
-    }
-    const { length, width } = pieceDimensions(db, part);
+    const dimensions = kind === "order" ? lineDimensions(line, part) : null;
+    if (!dimensions) return none;
+    const { length, width } = dimensions;
     const values = new Map(lineConstraints(line.fields).map((c) => [c.key, c.valueNumber]));
     const lengthMm = values.get(length.key) ?? null;
     const widthMm = width ? (values.get(width.key) ?? null) : null;
     if (lengthMm === null && widthMm === null) {
-      return { ...none, note: "Pieces use the stock size of the supplier SKU" };
+      return {
+        ...none,
+        note:
+          line.resolution === "new"
+            ? `No piece size. Add the ${length.key} attribute, or enter the size when you receive the pieces`
+            : "Pieces use the stock size of the supplier SKU",
+      };
     }
     if (lengthMm === null || (width && widthMm === null)) {
       const missing = lengthMm === null ? length.label : width!.label;
+      const name = part?.name ?? "The new part's";
       return {
         ...none,
-        problem: `${part.name} pieces need the ${missing.toLowerCase()} attribute too, or neither dimension`,
+        problem: `${name} pieces need the ${missing.toLowerCase()} attribute too, or neither dimension`,
       };
     }
     const size = { lengthMm, widthMm };
@@ -403,10 +460,40 @@ export function createImportService(db: Database) {
     };
   }
 
-  /** Line problems, with the piece size problem of an order line. */
+  /** Line problems, with the piece tracking and piece size problems. */
   function allLineProblems(kind: ImportKind, line: LineEdit, part: Part | null): string[] {
+    const tracking = pieceTrackingProblem(line);
     const { problem } = orderLinePieces(kind, line, part);
-    return [...lineProblems(kind, line, part, sameNameOf(line)), ...(problem ? [problem] : [])];
+    return [
+      ...lineProblems(kind, line, part, sameNameOf(line)),
+      ...(tracking ? [tracking] : []),
+      ...(problem ? [problem] : []),
+    ];
+  }
+
+  /** The name that new pieces lines share one part by, or null for a line that does not. */
+  function sharedPartKey(line: LineEdit): string | null {
+    return line.resolution === "new" && line.fields.pieceTracking
+      ? line.fields.description.trim().toLowerCase()
+      : null;
+  }
+
+  /**
+   * Creates the new part of each line that needs one. New pieces lines with the same name
+   * share one part, such as several lengths of one extrusion; each line keeps its own piece
+   * size. The first of them gives the part's tracking, attributes, and SKU.
+   */
+  function newPartCreator(record: ImportRecord) {
+    const shared = new Map<string, number>();
+    return (line: LineEdit, size: { lengthMm: number; widthMm: number | null } | null) => {
+      if (line.resolution !== "new") return null;
+      const key = sharedPartKey(line);
+      const existing = key === null ? undefined : shared.get(key);
+      if (existing !== undefined) return existing;
+      const id = catalog.createPart(newPartInput(record, line.fields, size));
+      if (key !== null) shared.set(key, id);
+      return id;
+    };
   }
 
   /** Deterministic catalog candidates for a line's current fields. */
@@ -525,8 +612,18 @@ export function createImportService(db: Database) {
     return { ...edit, partId: edit.resolution === "existing" ? edit.partId : null };
   }
 
-  function newPartInput(record: ImportRecord, fields: ImportLineFields): PartInput {
+  /**
+   * The new part of a line. A part tracked as pieces keeps its piece dimensions on its pieces,
+   * so they are not part attributes, and its SKU gets the line's piece size as its stock size.
+   */
+  function newPartInput(
+    record: ImportRecord,
+    fields: ImportLineFields,
+    pieceSize: { lengthMm: number; widthMm: number | null } | null = null
+  ): PartInput {
     const supplier = record.header.supplier;
+    const tracking = fields.pieceTracking;
+    const dimensionKeys = new Set(tracking ? ["length", ...(tracking.twoD ? ["width"] : [])] : []);
     return {
       name: fields.description,
       categoryId: fields.categoryId,
@@ -535,13 +632,20 @@ export function createImportService(db: Database) {
       partNumber: fields.partNumber,
       // BOM line notes describe the project use, so they stay on the BOM row only.
       notes: record.kind === "order" ? fields.notes : null,
-      attributes: fields.attributes.map((a) => ({
-        key: normalizeAttributeKey(a.key),
-        label: a.key,
-        value: a.value,
-      })),
+      attributes: fields.attributes
+        .map((a) => ({ key: normalizeAttributeKey(a.key), label: a.key, value: a.value }))
+        .filter((a) => !dimensionKeys.has(a.key)),
       aliases: [],
       tags: [],
+      ...(tracking && {
+        tracking: {
+          mode: "pieces" as const,
+          lengthKey: "length",
+          widthKey: tracking.twoD ? "width" : null,
+          kerfMm: tracking.kerfMm,
+          minOffcutMm: tracking.minOffcutMm,
+        },
+      }),
       supplierParts:
         record.kind === "order" && supplier && fields.supplierSku
           ? [
@@ -552,6 +656,8 @@ export function createImportService(db: Database) {
                 url: null,
                 purchaseUnit: fields.purchaseUnit,
                 packQuantity: Number(fields.packQuantity),
+                stockLengthMm: pieceSize?.lengthMm ?? null,
+                stockWidthMm: pieceSize?.widthMm ?? null,
               },
             ]
           : [],
@@ -608,13 +714,13 @@ export function createImportService(db: Database) {
       trackingUrl: null,
       notes: header.notes,
     });
+    const createPart = newPartCreator(record);
     lines.forEach((line, index) =>
       atLine(index, () => {
         const f = line.fields;
-        const createdPartId =
-          line.resolution === "new" ? catalog.createPart(newPartInput(record, f)) : null;
         const part = line.resolution === "existing" ? getPart(db, line.partId!) : null;
         const { size } = orderLinePieces(record.kind, line, part);
+        const createdPartId = createPart(line, size);
         const orderLineId = orders.addLine(orderId, {
           partId: createdPartId ?? line.partId!,
           supplierSku: f.supplierSku,
@@ -660,10 +766,10 @@ export function createImportService(db: Database) {
         same?.id ?? projects.createComponent(projectId, { name: group.name, notes: null })
       );
     }
+    const createPart = newPartCreator(record);
     lines.forEach((line, index) =>
       atLine(index, () => {
-        const createdPartId =
-          line.resolution === "new" ? catalog.createPart(newPartInput(record, line.fields)) : null;
+        const createdPartId = createPart(line, null);
         const partId = line.resolution === "requirement" ? null : (createdPartId ?? line.partId);
         const componentId = line.groupId === null ? null : componentIds.get(line.groupId)!;
         const bomLineId = projects.createBomLine(
@@ -1108,6 +1214,15 @@ export function createImportService(db: Database) {
             categoryId: copy.categoryId,
             unit: f.unit ?? copy.baseUnit,
             manufacturer: f.manufacturer ?? copy.manufacturer,
+            // A copy of a pieces part is tracked as pieces too.
+            pieceTracking:
+              copy.tracking?.mode === "pieces"
+                ? {
+                    twoD: copy.tracking.widthKey !== null,
+                    kerfMm: copy.tracking.kerfMm,
+                    minOffcutMm: copy.tracking.minOffcutMm,
+                  }
+                : f.pieceTracking,
             attributes: [
               ...copy.attributes
                 .filter((a) => !own.has(a.key))
@@ -1193,7 +1308,14 @@ export function createImportService(db: Database) {
       const record = getImport(db, id);
       if (!record) return null;
       const groups = listGroups(db, id);
-      const lines = listLines(db, id).map((line) => {
+      const stored = listLines(db, id);
+      // Line numbers of the new pieces lines that share one part, by name.
+      const sharing = new Map<string, number[]>();
+      stored.forEach((line, index) => {
+        const key = sharedPartKey(line);
+        if (key !== null) sharing.set(key, [...(sharing.get(key) ?? []), index + 1]);
+      });
+      const lines = stored.map((line) => {
         const part = line.partId === null ? null : getPart(db, line.partId);
         const { requirement, candidates } = lineCandidates(line.fields);
         const identifierConflicts = candidates
@@ -1237,6 +1359,11 @@ export function createImportService(db: Database) {
           ),
           /** For an order line of a pieces part: the piece size it makes, and where it comes from. */
           pieceSizeNote: orderLinePieces(record.kind, line, part).note,
+          /** The line numbers that create one shared pieces part with this line, if several. */
+          sharedPartLines: ((key) => {
+            const numbers = key === null ? [] : sharing.get(key)!;
+            return numbers.length > 1 ? numbers : [];
+          })(sharedPartKey(line)),
           problems: allLineProblems(record.kind, line, part),
         };
       });

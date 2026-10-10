@@ -67,10 +67,22 @@ export interface ImportLineFields {
   cutLength: string | null;
   /** BOMs: width of each cut piece of sheet stock, as written. */
   cutWidth: string | null;
+  /**
+   * A new part tracked as pieces, or null for a bulk part. Its piece dimensions are the
+   * `length` attribute, and the `width` attribute when `twoD`.
+   */
+  pieceTracking: NewPieceTracking | null;
+}
+
+/** The piece tracking of a new part that an import line creates. */
+export interface NewPieceTracking {
+  twoD: boolean;
+  kerfMm: number;
+  minOffcutMm: number;
 }
 
 /** Fields that carry a provenance mark. Attributes are marked by key as `attribute:<key>`. */
-export type MarkedField = Exclude<keyof ImportLineFields, "attributes">;
+export type MarkedField = Exclude<keyof ImportLineFields, "attributes" | "pieceTracking">;
 
 export type ProvenanceMarks = Record<string, Provenance>;
 
@@ -123,6 +135,7 @@ export function emptyLineFields(description = ""): ImportLineFields {
     attributes: [],
     cutLength: null,
     cutWidth: null,
+    pieceTracking: null,
   };
 }
 
