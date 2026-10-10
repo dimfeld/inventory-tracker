@@ -150,6 +150,7 @@ category created earlier in the same plan can be used by its path in later opera
   },
   { "op": "deleteCategory", "category": "Electronics / Passives / Capacitors" },
   { "op": "setPartCategory", "partIds": [80, 91], "category": "Hardware / Fasteners / Nuts" },
+  { "op": "renamePart", "partId": 5, "name": "M5 × 8 mm button head screw" },
   {
     "op": "createAttribute",
     "key": "shank_diameter",
@@ -181,6 +182,8 @@ category created earlier in the same plan can be used by its path in later opera
 - `setPartValues` with a `null` value removes that part's value.
 - `updateAttribute` changes only the given fields. A new type, rule, or unit types all stored
   values again. It is refused if BOM rows constrain the attribute.
+- `renamePart` changes only the part name. Rename a part only when the user approves the new
+  name, for example when the name is unclear or does not agree with its attributes.
 - `replaceValue` matches the exact raw text, so it changes one spelling at a time.
 - `mergeParts` merges each source part into the destination part and deletes the source
   parts. It cannot be undone except from the backup. Put it after the `setPartValues`

@@ -30,6 +30,7 @@ type Operation =
   | { op: "updateCategory"; category: CategoryRef; name?: string; parent?: CategoryRef | null }
   | { op: "deleteCategory"; category: CategoryRef }
   | { op: "setPartCategory"; partIds: number[]; category: CategoryRef | null }
+  | { op: "renamePart"; partId: number; name: string }
   | ({ op: "createAttribute"; key: string } & AttributeFields)
   | ({ op: "updateAttribute"; key: string } & Partial<AttributeFields>)
   | { op: "deleteAttribute"; key: string }
@@ -161,6 +162,11 @@ function run(operation: Operation): string {
       const id = operation.category === null ? null : categoryId(operation.category);
       for (const partId of operation.partIds) taxonomy.setPartCategory(partId, id);
       return `moved ${operation.partIds.length} part(s) to ${operation.category}`;
+    }
+    case "renamePart": {
+      const current = catalog.getPartDetails(operation.partId)?.part.name;
+      taxonomy.renamePart(operation.partId, operation.name);
+      return `renamed "${current}" to "${operation.name.trim()}"`;
     }
     case "createAttribute": {
       const { op: _op, key, ...fields } = operation;

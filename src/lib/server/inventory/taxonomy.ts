@@ -23,6 +23,7 @@ import {
   listStoredValues,
   setAttributeAssignment,
   setPartCategory,
+  setPartName,
   updateAttributeDefinition,
   updateCategory,
   upsertPartAttribute,
@@ -252,6 +253,16 @@ export function createTaxonomyService(db: Database) {
         if (!getPart(db, partId)) throw new NotFoundError(`Part ${partId} does not exist`);
         if (categoryId !== null) requireCategory(categoryId);
         setPartCategory(db, partId, categoryId);
+      });
+    },
+
+    /** Change a part's name. */
+    renamePart(partId: number, name: string): void {
+      inTransaction(() => {
+        if (!getPart(db, partId)) throw new NotFoundError(`Part ${partId} does not exist`);
+        const trimmed = name.trim();
+        if (!trimmed) throw new InventoryError("Enter a name");
+        setPartName(db, partId, trimmed);
       });
     },
 

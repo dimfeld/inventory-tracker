@@ -134,6 +134,14 @@ describe("taxonomy service", () => {
     expect(() => ctx.taxonomy.setPartCategory(ctx.screw, 9999)).toThrow("does not exist");
   });
 
+  it("renames a part", () => {
+    const ctx = setup();
+    ctx.taxonomy.renamePart(ctx.screw, "  M3 x 8 button head screw ");
+    expect(ctx.catalog.getPartDetails(ctx.screw)?.part.name).toBe("M3 x 8 button head screw");
+    expect(() => ctx.taxonomy.renamePart(ctx.screw, " ")).toThrow("Enter a name");
+    expect(() => ctx.taxonomy.renamePart(9999, "Bolt")).toThrow("does not exist");
+  });
+
   it("renames and moves a category but never under itself", () => {
     const ctx = setup();
     const fasteners = ctx.catalog.createCategory("Holders", ctx.hardware);

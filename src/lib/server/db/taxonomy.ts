@@ -200,3 +200,10 @@ export function setPartCategory(db: Database, partId: number, categoryId: number
     [categoryId, partId]
   );
 }
+
+export function setPartName(db: Database, partId: number, name: string): void {
+  db.run(
+    `UPDATE parts SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+    [name, partId]
+  );
+}
