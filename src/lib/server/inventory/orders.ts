@@ -4,6 +4,7 @@ import {
   deleteOrderLineCommitments,
   listOrderLineCommitments,
 } from "#lib/server/db/commitments.ts";
+import { listOrderLinePieceCommitments } from "#lib/server/db/piece-commitments.ts";
 import {
   addToLineTotals,
   deleteOrderLine,
@@ -141,6 +142,10 @@ export function createOrderService(db: Database) {
         delivery: orderDeliveryStatus(lines),
         costs: totalByCurrency(lines.map((line) => line.cost)),
         commitments: listOrderLineCommitments(
+          db,
+          lines.map((line) => line.id)
+        ),
+        pieceCommitments: listOrderLinePieceCommitments(
           db,
           lines.map((line) => line.id)
         ),

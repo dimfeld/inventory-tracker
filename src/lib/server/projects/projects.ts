@@ -39,6 +39,7 @@ import {
   replaceConstraints,
   setBomLineComponent,
   setComponentOrder,
+  setCutsPerSheet,
   ungroupComponentLines,
   updateBomLine,
   updateComponent,
@@ -365,6 +366,23 @@ export function createProjectService(db: Database, options: ProjectServiceOption
         requireLine(projectId, lineId);
         if (componentId !== null) requireComponent(projectId, componentId);
         setBomLineComponent(db, lineId, componentId);
+      });
+    },
+
+    /**
+     * Set how many cut pieces of a 2D cut-size line fit on one stock sheet, as the user says,
+     * or null for one per sheet. Shopping buys sheets by it.
+     */
+    setCutsPerSheet(projectId: number, lineId: number, cutsPerSheet: number | null): void {
+      inTransaction(() => {
+        const line = requireLine(projectId, lineId);
+        if (line.cutWidthMm === null) {
+          throw new InventoryError("Only a row with a cut length and width uses stock sheets");
+        }
+        if (cutsPerSheet !== null && !(Number.isInteger(cutsPerSheet) && cutsPerSheet >= 1)) {
+          throw new InventoryError("Enter a whole number of cut pieces per sheet, 1 or more");
+        }
+        setCutsPerSheet(db, line.id, cutsPerSheet);
       });
     },
 

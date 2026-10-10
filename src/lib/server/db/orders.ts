@@ -256,6 +256,39 @@ export function listLatestPricedPurchases(db: Database, partIds: number[]): Pric
     .map(({ rank: _rank, ...purchase }) => purchase);
 }
 
+/** A priced purchase of one supplier SKU. */
+export interface PricedSkuPurchase extends PricedPurchase {
+  supplierSku: string;
+}
+
+/**
+ * The most recent priced line of a placed or shipped order for each supplier SKU of the given
+ * parts, with the same recency as `listLatestPricedPurchases`.
+ */
+export function listLatestSkuPurchases(db: Database, partIds: number[]): PricedSkuPurchase[] {
+  return db
+    .query<PricedSkuPurchase & { rank: number }, [string]>(
+      `SELECT * FROM (
+         SELECT ol.id AS orderLineId, o.id AS orderId, o.supplier, o.reference,
+           o.placed_on AS placedOn, ol.part_id AS partId, p.base_unit AS baseUnit,
+           ol.purchase_unit AS purchaseUnit, ol.pack_quantity AS packQuantity,
+           ol.unit_price AS unitPrice, ol.currency, ol.supplier_sku AS supplierSku,
+           row_number() OVER (
+             PARTITION BY ol.part_id, o.supplier, ol.supplier_sku
+             ORDER BY o.placed_on DESC, o.id DESC, ol.id DESC
+           ) AS rank
+         FROM order_lines ol
+         JOIN orders o ON o.id = ol.order_id
+         JOIN parts p ON p.id = ol.part_id
+         WHERE o.status IN ('placed', 'shipped') AND ol.unit_price IS NOT NULL
+           AND ol.supplier_sku IS NOT NULL
+           AND ol.part_id IN (SELECT value FROM json_each(?))
+       ) WHERE rank = 1`
+    )
+    .all(JSON.stringify(partIds))
+    .map(({ rank: _rank, ...purchase }) => purchase);
+}
+
 /** Other orders from the same supplier with the same reference, ignoring case. */
 export function listOrdersWithReference(
   db: Database,

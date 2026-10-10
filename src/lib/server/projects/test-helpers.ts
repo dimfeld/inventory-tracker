@@ -69,6 +69,7 @@ export function stockAndCommitments(db: Database) {
     reservations: db.query("SELECT * FROM reservations ORDER BY id").all(),
     pieceReservations: db.query("SELECT * FROM piece_reservations ORDER BY id").all(),
     commitments: db.query("SELECT * FROM incoming_commitments ORDER BY id").all(),
+    pieceCommitments: db.query("SELECT * FROM incoming_piece_commitments ORDER BY id").all(),
     orderLines: db
       .query(
         `SELECT id, part_id, quantity, received_quantity, damaged_quantity, cancelled_quantity

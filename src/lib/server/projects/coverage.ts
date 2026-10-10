@@ -4,6 +4,10 @@ import {
   listLinePieceReservations,
   type PieceReservationDetail,
 } from "#lib/server/db/piece-reservations.ts";
+import {
+  listLinePieceCommitments,
+  type PieceCommitmentDetail,
+} from "#lib/server/db/piece-commitments.ts";
 import { listChoices, type BomLine } from "#lib/server/db/projects.ts";
 import { listLineReservations, listLineStock } from "#lib/server/db/reservations.ts";
 import { assertUnit, UNITS, type Unit } from "#lib/units.ts";
@@ -19,7 +23,8 @@ export interface LineReservation {
  * Stock and incoming supply of one part allocated to one BOM line. Quantities are in
  * `baseUnit`. `ordered` is outstanding order supply committed to the line; it is not stock.
  * For a part tracked as pieces, `reserved` counts the reserved cut pieces in
- * `pieceReservations`, and picked and used count pieces.
+ * `pieceReservations`, `ordered` counts the cut pieces of incoming stock in `pieceCommitments`,
+ * and picked and used count pieces.
  */
 export interface PartAllocation {
   partId: number;
@@ -32,6 +37,7 @@ export interface PartAllocation {
   reservations: LineReservation[];
   pieceReservations: PieceReservationDetail[];
   commitments: CommitmentDetail[];
+  pieceCommitments: PieceCommitmentDetail[];
 }
 
 /**
@@ -74,6 +80,7 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
         reservations: [],
         pieceReservations: [],
         commitments: [],
+        pieceCommitments: [],
       };
       parts.set(part.partId, allocation);
     }
@@ -105,6 +112,11 @@ export function loadAllocations(db: Database, lineIds: number[]): Map<number, Pa
     const allocation = entry(commitment.bomLineId, commitment);
     allocation.ordered += commitment.quantity;
     allocation.commitments.push(commitment);
+  }
+  for (const commitment of listLinePieceCommitments(db, lineIds)) {
+    const allocation = entry(commitment.bomLineId, commitment);
+    allocation.ordered += 1;
+    allocation.pieceCommitments.push(commitment);
   }
   return new Map([...result].map(([lineId, parts]) => [lineId, [...parts.values()]]));
 }

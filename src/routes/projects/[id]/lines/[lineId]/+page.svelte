@@ -48,6 +48,14 @@
     return null;
   });
 
+  const sheetFeedback = $derived.by(() => {
+    if (form?.action !== 'cutsPerSheet') return null;
+    if ('success' in form) return { ok: true, text: form.success };
+    if ('message' in form) return { ok: false, text: form.message };
+    if ('errors' in form) return { ok: false, text: Object.values(form.errors ?? {}).join('. ') };
+    return null;
+  });
+
   const incomingFeedback = $derived.by(() => {
     if (form?.action !== 'incoming') return null;
     if ('success' in form) return { ok: true, text: form.success };
@@ -58,6 +66,7 @@
 
   const coverage = $derived(data.stock.coverage);
   const lineCommitments = $derived(coverage.parts.flatMap((p) => p.commitments));
+  const linePieceCommitments = $derived(coverage.parts.flatMap((p) => p.pieceCommitments));
   const allocationOf = (partId: number) => coverage.parts.find((p) => p.partId === partId);
   const issuesOf = (f: { fields: { allIssues(): { message: string }[] | undefined } }) =>
     f.fields.allIssues()?.map((issue) => issue.message).join('. ');
@@ -329,6 +338,26 @@
 
 <dl class="card mb-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
   <dt class="text-gray-600">Quantity</dt><dd>{formatLineQuantity(line)}</dd>
+  {#if line.cutWidthMm !== null}
+    <dt class="text-gray-600">Cuts per sheet</dt>
+    <dd>
+      <form method="POST" action="?/cutsPerSheet" use:enhance class="flex flex-wrap items-center gap-1">
+        <input
+          name="cuts_per_sheet"
+          inputmode="numeric"
+          value={line.cutsPerSheet ?? ''}
+          placeholder="1"
+          aria-label="Cut pieces that fit on one stock sheet"
+          class="input-sm w-16"
+        />
+        <button class="btn-secondary">Save</button>
+        <span class="text-xs text-gray-600">
+          How many cut pieces fit on one stock sheet. Shopping buys sheets by it.
+        </span>
+      </form>
+      {#if sheetFeedback}<p class={sheetFeedback.ok ? 'msg-ok' : 'msg-error'}>{sheetFeedback.text}</p>{/if}
+    </dd>
+  {/if}
   <dt class="text-gray-600">Component</dt><dd>{data.component?.name ?? 'Ungrouped'}</dd>
   <dt class="text-gray-600">Reference designators</dt><dd>{line.referenceDesignators ?? '—'}</dd>
   {#if line.partId !== null}
@@ -514,7 +543,8 @@
   <h2 class="section-title mb-1">Incoming supply</h2>
   <p class="mb-2 text-sm text-gray-600">
     An order covers this row only after you commit part of it here. When the stock arrives, the
-    committed quantity becomes a reservation.
+    committed quantity becomes a reservation. Cut pieces share an incoming stock piece while
+    they and their kerf fit, and become piece reservations on the new pieces.
   </p>
   {#if incomingFeedback}<p class="mb-2 {incomingFeedback.ok ? 'msg-ok' : 'msg-error'}">{incomingFeedback.text}</p>{/if}
   {#if lineCommitments.length > 0}
@@ -552,6 +582,34 @@
       </tbody>
     </table>
   {/if}
+  {#if linePieceCommitments.length > 0}
+    <table class="data-table stack-table mb-3">
+      <thead>
+        <tr><th>Order</th><th>Part</th><th>Expected</th><th>Incoming piece</th><th class="text-right">Cut piece</th><th></th></tr>
+      </thead>
+      <tbody>
+        {#each linePieceCommitments as commitment (commitment.id)}
+          <tr>
+            <td>
+              <a href="/orders/{commitment.orderId}" class="link font-medium sm:font-normal">
+                {commitment.supplier} {commitment.reference ?? ''}
+              </a>
+            </td>
+            <td data-label="Part">{commitment.partName}</td>
+            <td data-label="Expected">{commitment.expectedOn ?? '—'}</td>
+            <td data-label="Incoming piece">#{commitment.stickIndex + 1}</td>
+            <td data-label="Cut piece" class="text-right">{formatSize(commitment, commitment.displayUnit)}</td>
+            <td class="pt-2 sm:pt-1.5">
+              <form method="POST" action="?/releaseIncomingPiece" use:enhance>
+                <input type="hidden" name="commitment_id" value={commitment.id} />
+                <button class="btn-secondary">Release</button>
+              </form>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
   {#if data.incoming.length === 0}
     <p class="text-sm text-gray-600">No placed or shipped order has outstanding supply of an approved part.</p>
   {:else}
@@ -571,10 +629,18 @@
               </a>
               <span class="text-gray-500">{option.status}</span>
             </td>
-            <td data-label="Part">{option.partName}</td>
+            <td data-label="Part">
+              {option.partName}
+              {#if option.stockSize}
+                <span class="text-gray-500">({formatSize(option.stockSize, line.pieceDisplayUnit)} each)</span>
+              {/if}
+            </td>
             <td data-label="Expected">{option.expectedOn ?? '—'}</td>
             <td data-label="Outstanding" class="text-right">{formatQuantity(option.outstanding, option.baseUnit)}</td>
-            <td data-label="Uncommitted" class="text-right">{formatQuantity(option.uncommitted, option.baseUnit)}</td>
+            <td data-label="Uncommitted" class="text-right">
+              {formatQuantity(option.uncommitted, option.baseUnit)}
+              {#if option.stockSize}<div class="text-xs text-gray-500">cut pieces that fit</div>{/if}
+            </td>
             <td class="pt-2 sm:pt-1.5">
               {#if option.uncommitted > 0 && coverage.neededNotOrdered > 0}
                 <form method="POST" action="?/assignIncoming" use:enhance class="flex items-end gap-1">

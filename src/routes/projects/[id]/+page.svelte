@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { formatSize } from '#lib/pieces.ts';
   import { describeConstraint, formatLineQuantity, PROJECT_STATUSES } from '#lib/projects.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
@@ -134,11 +135,12 @@
   {/if}
   {#if coverage.excess > 0}<div class="text-red-700">Excess {fmt(coverage.excess)}</div>{/if}
   {#each coverage.parts as part (part.partId)}
-    {#if part.reservations.length + part.commitments.length > 0}
+    {#if part.reservations.length + part.commitments.length + part.pieceCommitments.length > 0}
       <div class="text-xs text-gray-600">
         {part.partName}: {[
           ...part.reservations.map((r) => `${formatQuantity(r.quantity, part.baseUnit)} at ${r.locationName}`),
           ...part.commitments.map((c) => `${formatQuantity(c.quantity, part.baseUnit)} ordered from ${c.supplier}`),
+          ...part.pieceCommitments.map((c) => `${formatSize(c, c.displayUnit)} ordered from ${c.supplier}`),
         ].join(', ')}
       </div>
     {/if}

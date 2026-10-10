@@ -394,7 +394,10 @@ describe("receipt hooks", () => {
     const ctx = setup();
     const received: ReceivedStock[] = [];
     const recording = createReceiptService(ctx.db, {
-      hooks: { onLineReceived: (_db, stock) => void received.push(stock) },
+      hooks: {
+        onLineReceived: (_db, stock) => void received.push(stock),
+        onPiecesReceived() {},
+      },
     });
     recording.receive({
       operationId: opId(),
@@ -420,6 +423,7 @@ describe("receipt hooks", () => {
         onLineReceived() {
           throw new InventoryError("rejected");
         },
+        onPiecesReceived() {},
       },
     });
     expect(() =>

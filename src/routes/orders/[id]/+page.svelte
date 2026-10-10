@@ -5,6 +5,7 @@
   import OrderLineFields from '#lib/components/OrderLineFields.svelte';
   import { formatMoney } from '#lib/money.ts';
   import { DELIVERY_LABELS, ORDER_DELIVERY_LABELS, describePackConversion } from '#lib/orders.ts';
+  import { formatSize } from '#lib/pieces.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -28,6 +29,9 @@
   /** Lines that can be selected to mark delivered or to receive. */
   const selectable = (line: Line) => line.outstanding > 0;
   const commitmentsByLine = $derived(Map.groupBy(data.commitments, (c) => c.orderLineId));
+  const pieceCommitmentsByLine = $derived(
+    Map.groupBy(data.pieceCommitments, (c) => c.orderLineId)
+  );
 
   function feedback(action: string) {
     if (form?.action !== action) return null;
@@ -184,6 +188,14 @@
               {#each commitmentsByLine.get(line.id) ?? [] as commitment (commitment.id)}
                 <div class="text-xs">
                   Committed {formatQuantity(commitment.quantity, commitment.baseUnit)} to
+                  <a href="/projects/{commitment.projectId}/lines/{commitment.bomLineId}" class="link">
+                    {commitment.projectName} · {commitment.lineDescription}
+                  </a>
+                </div>
+              {/each}
+              {#each pieceCommitmentsByLine.get(line.id) ?? [] as commitment (commitment.id)}
+                <div class="text-xs">
+                  Piece #{commitment.stickIndex + 1}: {formatSize(commitment, commitment.displayUnit)} committed to
                   <a href="/projects/{commitment.projectId}/lines/{commitment.bomLineId}" class="link">
                     {commitment.projectName} · {commitment.lineDescription}
                   </a>

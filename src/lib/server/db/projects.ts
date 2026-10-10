@@ -60,6 +60,11 @@ export type BomLine = BomLineFields & {
   categoryName: string | null;
   /** The unit that the cut size is shown in: the exact part's display unit, else mm. */
   pieceDisplayUnit: PieceDisplayUnit;
+  /**
+   * How many 2D cut pieces fit on one stock sheet, as the user says. Null means one per sheet.
+   * Shopping uses it; it is set apart from the line form.
+   */
+  cutsPerSheet: number | null;
 };
 
 export interface BomConstraintValue {
@@ -195,7 +200,7 @@ const LINE_COLUMNS = `l.id, l.project_id AS projectId, l.component_id AS compone
   l.quantity, l.unit, l.part_id AS partId, p.name AS partName, l.category_id AS categoryId,
   c.name AS categoryName, l.manufacturer, l.part_number AS partNumber,
   l.reference_designators AS referenceDesignators, l.notes, l.cut_length_mm AS cutLengthMm,
-  l.cut_width_mm AS cutWidthMm,
+  l.cut_width_mm AS cutWidthMm, l.cuts_per_sheet AS cutsPerSheet,
   CASE WHEN p.tracking_mode = 'pieces' THEN p.piece_display_unit ELSE 'mm' END AS pieceDisplayUnit`;
 
 const LINE_FROM = `bom_lines l
@@ -239,6 +244,14 @@ export function updateBomLine(db: Database, id: number, fields: BomLineFields): 
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = $id`
   ).run({ ...fields, id });
+}
+
+export function setCutsPerSheet(db: Database, id: number, cutsPerSheet: number | null): void {
+  db.run(
+    `UPDATE bom_lines SET cuts_per_sheet = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     WHERE id = ?`,
+    [cutsPerSheet, id]
+  );
 }
 
 export function setBomLineComponent(db: Database, id: number, componentId: number | null): void {

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { OPEN_PROJECT_STATUSES } from "#lib/projects.ts";
+import { getPart, type Part } from "#lib/server/db/catalog.ts";
 import { committedByOrderLine } from "#lib/server/db/commitments.ts";
 import { listIncomingLines } from "#lib/server/db/orders.ts";
 import {
@@ -13,6 +14,7 @@ import {
 } from "#lib/server/db/projects.ts";
 import { listStorageStock } from "#lib/server/db/reservations.ts";
 import { absoluteQuantity, lineCoverage, loadAllocations } from "./coverage";
+import { createPieceSupply, type PieceNeed, type ShoppingCutPlan } from "./piece-shopping";
 import type { ComponentFilter } from "./projects";
 
 /** Which open projects and rows the list covers. */
@@ -36,6 +38,10 @@ export interface ShoppingRequirement {
 /**
  * How an item's need is covered, in the item's `unit`. The parts add up to the need:
  * need = reserved + freeStock + committed + freeOrdered + toBuy.
+ *
+ * For a part tracked as pieces, the quantities count cut pieces (or whole pieces), except
+ * `toBuy`: it is the number of stock pieces to buy in the item's `cutPlan`, which holds the
+ * cut pieces that no stock or order covers.
  */
 export interface ShoppingCoverage {
   /** Stock picked or reserved for the requirements. */
@@ -66,6 +72,8 @@ export interface ShoppingItem {
    * and `toBuy` is the need that the requirements' own stock and commitments do not cover.
    */
   coverage: ShoppingCoverage;
+  /** For a part tracked as pieces: the stock pieces to buy and the cuts to make from each. */
+  cutPlan: ShoppingCutPlan | null;
 }
 
 export interface ShoppingProject {
@@ -143,6 +151,14 @@ export function createShoppingService(db: Database) {
       // Parts whose free supply may cover each resolved item: the resolved part first, then
       // the other parts approved for its rows.
       const supplyParts = new Map<string, number[]>();
+      // Cut pieces that no reservation or commitment covers, of items of parts tracked as
+      // pieces.
+      const pieceNeeds = new Map<string, PieceNeed[]>();
+      const parts = new Map<number, Part>();
+      const partOf = (id: number) => {
+        if (!parts.has(id)) parts.set(id, getPart(db, id)!);
+        return parts.get(id)!;
+      };
 
       for (const project of projects) {
         const componentNames = new Map(project.components.map((c) => [c.id, c.name]));
@@ -178,6 +194,7 @@ export function createShoppingService(db: Database) {
               choices: part ? [] : lineChoices.map((c) => c.partName),
               requirements: [],
               coverage: { reserved: 0, freeStock: 0, committed: 0, freeOrdered: 0, toBuy: 0 },
+              cutPlan: null,
             };
             items.set(key, item);
           }
@@ -189,6 +206,14 @@ export function createShoppingService(db: Database) {
               if (!ids.includes(choice.partId)) ids.push(choice.partId);
             }
             supplyParts.set(key, ids);
+            if (partOf(part.id).trackingMode === "pieces" && coverage.neededNotOrdered > 0) {
+              const needs = pieceNeeds.get(key) ?? [];
+              const count =
+                absoluteQuantity(coverage.neededNotOrdered, coverage.unit) /
+                absoluteQuantity(1, "pcs");
+              needs.push({ line, count: Math.floor(count) });
+              pieceNeeds.set(key, needs);
+            }
           }
           item.quantity += remaining;
           item.coverage.reserved += reserved;
@@ -220,8 +245,25 @@ export function createShoppingService(db: Database) {
           ];
         })
       );
+      const pieceSupply = createPieceSupply(db);
       for (const item of items.values()) {
         if (item.partId === null) continue;
+        if (partOf(item.partId).trackingMode === "pieces") {
+          // Free pieces count by the cuts they fit, not as whole pieces.
+          const pieceParts = supplyParts
+            .get(item.key)!
+            .filter((id) => partOf(id).trackingMode === "pieces");
+          const result = pieceSupply.cover(
+            partOf(item.partId),
+            pieceParts,
+            pieceNeeds.get(item.key) ?? []
+          );
+          item.coverage.freeStock = result.freeStock;
+          item.coverage.freeOrdered = result.freeOrdered;
+          item.coverage.toBuy = result.plan.pieces.length + result.plan.unplaced.length;
+          item.cutPlan = result.plan;
+          continue;
+        }
         const size = absoluteQuantity(1, item.unit);
         let open = item.coverage.toBuy * size;
         let fromStock = 0;

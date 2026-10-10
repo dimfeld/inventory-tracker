@@ -17,6 +17,7 @@ import {
   type Receipt,
   type ReceiptLine,
 } from "#lib/server/db/orders.ts";
+import type { StockPiece } from "#lib/server/db/pieces.ts";
 import { formatQuantity } from "#lib/units.ts";
 import { fitOrderLineCommitments } from "./commitments";
 import { InventoryError, NotFoundError } from "./errors";
@@ -90,6 +91,13 @@ export interface ReceivedStock {
   assignments: CommitmentAssignment[] | null;
 }
 
+/** New pieces that a receipt line of a part tracked as pieces made, in receipt order. */
+export interface ReceivedPieces {
+  receiptLineId: number;
+  orderLineId: number;
+  pieces: StockPiece[];
+}
+
 /**
  * Extension point for rules that run when received stock enters storage.
  *
@@ -97,16 +105,19 @@ export interface ReceivedStock {
  * line with accepted stock, after it records the stock movement and updates the order line's
  * totals. An implementation can write through `db` in the same transaction, for example to turn
  * incoming project commitments on the order line into storage reservations at the destination.
+ * For a part tracked as pieces, `onPiecesReceived` runs instead, with the new pieces.
  * Throwing an InventoryError rejects the receipt and rolls back every write. After the hook,
  * the service reduces commitments that no longer fit the line's outstanding supply.
  */
 export interface ReceiptHooks {
   onLineReceived(db: Database, stock: ReceivedStock): void;
+  onPiecesReceived(db: Database, received: ReceivedPieces): void;
 }
 
 /** Hooks for an inventory without incoming commitments. */
 export const noReceiptHooks: ReceiptHooks = {
   onLineReceived() {},
+  onPiecesReceived() {},
 };
 
 /** An order line of a part tracked as pieces, as the receipt form needs it. */
@@ -272,9 +283,8 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
         recordReceiptDelivery(db, line.id, input.receivedOn);
         const pieceSize = pieceSizes.get(line.id);
         if (pieceSize) {
-          // One new piece per accepted unit. Commitments to pieces parts cannot be made yet,
-          // so the commitment hook does not run; fitting below releases any that remain.
-          insertIncomingPieces(
+          // One new piece per accepted unit.
+          const pieces = insertIncomingPieces(
             db,
             getPart(db, line.partId)!,
             Array.from({ length: lineInput.acceptedQuantity }, () => pieceSize),
@@ -287,6 +297,7 @@ export function createReceiptService(db: Database, options: ReceiptServiceOption
               receiptLineId,
             }
           );
+          hooks.onPiecesReceived(db, { receiptLineId, orderLineId: line.id, pieces });
         } else if (lineInput.acceptedQuantity > 0) {
           const movement = insertMovement(db, {
             // Movement operation IDs are unique, so each line gets its own.

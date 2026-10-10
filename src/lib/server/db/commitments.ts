@@ -105,21 +105,27 @@ export function setCommitmentQuantity(db: Database, id: number, quantity: number
   }
 }
 
-/** Remove every commitment of a BOM line. Returns the number removed. */
+/** Remove every commitment of a BOM line, piece commitments too. Returns the number removed. */
 export function deleteLineCommitments(db: Database, lineId: number): number {
-  return db.run("DELETE FROM incoming_commitments WHERE bom_line_id = ?", [lineId]).changes;
+  return (
+    db.run("DELETE FROM incoming_commitments WHERE bom_line_id = ?", [lineId]).changes +
+    db.run("DELETE FROM incoming_piece_commitments WHERE bom_line_id = ?", [lineId]).changes
+  );
 }
 
-/** Remove every commitment of an order line. Returns the number removed. */
+/** Remove every commitment of an order line, piece commitments too. Returns the number removed. */
 export function deleteOrderLineCommitments(db: Database, orderLineId: number): number {
-  return db.run("DELETE FROM incoming_commitments WHERE order_line_id = ?", [orderLineId]).changes;
+  return (
+    db.run("DELETE FROM incoming_commitments WHERE order_line_id = ?", [orderLineId]).changes +
+    db.run("DELETE FROM incoming_piece_commitments WHERE order_line_id = ?", [orderLineId]).changes
+  );
 }
 
-/** Remove every commitment of a project. Returns the number removed. */
+/** Remove every commitment of a project, piece commitments too. Returns the number removed. */
 export function deleteProjectCommitments(db: Database, projectId: number): number {
-  return db.run(
-    `DELETE FROM incoming_commitments
-     WHERE bom_line_id IN (SELECT id FROM bom_lines WHERE project_id = ?)`,
-    [projectId]
-  ).changes;
+  const lines = "bom_line_id IN (SELECT id FROM bom_lines WHERE project_id = ?)";
+  return (
+    db.run(`DELETE FROM incoming_commitments WHERE ${lines}`, [projectId]).changes +
+    db.run(`DELETE FROM incoming_piece_commitments WHERE ${lines}`, [projectId]).changes
+  );
 }

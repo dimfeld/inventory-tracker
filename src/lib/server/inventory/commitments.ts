@@ -2,6 +2,13 @@ import type { Database } from "bun:sqlite";
 import { assignInSequence } from "#lib/commitments.ts";
 import { listOrderLineCommitments, setCommitmentQuantity } from "#lib/server/db/commitments.ts";
 import { getOrderLine } from "#lib/server/db/orders.ts";
+import { cutsFit, fitsWithin } from "#lib/pieces.ts";
+import {
+  deletePieceCommitments,
+  listOrderLinePieceCommitments,
+  shiftPieceCommitments,
+} from "#lib/server/db/piece-commitments.ts";
+import { insertPieceReservation } from "#lib/server/db/piece-reservations.ts";
 import { addReservation } from "#lib/server/db/reservations.ts";
 import { formatQuantity } from "#lib/units.ts";
 import { InventoryError } from "./errors";
@@ -25,7 +32,15 @@ export function fitOrderLineCommitments(db: Database, orderLineId: number): numb
     excess -= release;
     reduced += 1;
   }
-  return reduced;
+  // Piece commitments on incoming stock pieces that are no longer outstanding.
+  const lost = listOrderLinePieceCommitments(db, [orderLineId]).filter(
+    (c) => c.stickIndex >= outstanding
+  );
+  deletePieceCommitments(
+    db,
+    lost.map((c) => c.id)
+  );
+  return reduced + lost.length;
 }
 
 /**
@@ -34,6 +49,11 @@ export function fitOrderLineCommitments(db: Database, orderLineId: number): numb
  * the receipt. Each assigned quantity leaves the commitment and becomes a reservation for the
  * same BOM line at the receiving location. Unassigned commitments stay on the outstanding
  * supply.
+ *
+ * New pieces of a part tracked as pieces take the piece commitments of the lowest incoming
+ * sticks: the nth new piece gets the commitments of stick n, as piece reservations of the same
+ * size. A commitment that does not fit its piece, because the piece arrived in another size,
+ * is released. The other sticks move down by the number of new pieces.
  */
 export const commitmentReceipts: ReceiptHooks = {
   onLineReceived(db, stock) {
@@ -75,5 +95,38 @@ export const commitmentReceipts: ReceiptHooks = {
           `cannot assign ${formatQuantity(assigned, commitments[0].baseUnit)} to projects`
       );
     }
+  },
+
+  onPiecesReceived(db, received) {
+    const commitments = listOrderLinePieceCommitments(db, [received.orderLineId]);
+    const arrived = commitments.filter((c) => c.stickIndex < received.pieces.length);
+    received.pieces.forEach((piece, index) => {
+      const lengths: number[] = [];
+      for (const commitment of arrived.filter((c) => c.stickIndex === index)) {
+        const fits =
+          piece.widthMm === null
+            ? commitment.widthMm === null &&
+              cutsFit(piece, commitment.kerfMm, [...lengths, commitment.lengthMm])
+            : commitment.widthMm !== null &&
+              lengths.length === 0 &&
+              fitsWithin(
+                { lengthMm: commitment.lengthMm, widthMm: commitment.widthMm },
+                { lengthMm: piece.lengthMm, widthMm: piece.widthMm }
+              );
+        if (!fits) continue;
+        lengths.push(commitment.lengthMm);
+        insertPieceReservation(db, {
+          bomLineId: commitment.bomLineId,
+          pieceId: piece.id,
+          lengthMm: commitment.lengthMm,
+          widthMm: commitment.widthMm,
+        });
+      }
+    });
+    deletePieceCommitments(
+      db,
+      arrived.map((c) => c.id)
+    );
+    shiftPieceCommitments(db, received.orderLineId, received.pieces.length);
   },
 };

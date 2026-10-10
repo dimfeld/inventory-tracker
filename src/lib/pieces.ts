@@ -258,6 +258,18 @@ export interface CutSuggestion<K> {
 }
 
 /**
+ * Record a cut placed on a piece space: the whole length of an unreserved piece leaves nothing
+ * free; any other cut uses its length and one kerf.
+ */
+export function takeCut(space: PieceSpace, lengthMm: number): void {
+  space.freeLengthMm =
+    space.unreserved && isWholeLength(space, lengthMm)
+      ? 0
+      : Math.max(roundMm(space.freeLengthMm - lengthMm - space.kerfMm), 0);
+  space.unreserved = false;
+}
+
+/**
  * Place cuts on 1D pieces by first-fit decreasing: longest cut first, and for each cut the
  * piece with the smallest free length that fits it, so offcuts are used before full stock
  * lengths. The pieces are not changed.
@@ -285,11 +297,7 @@ export function suggestCuts<K>(pieces: PieceSpace[], cuts: CutRequest<K>[]): Cut
       result.unplaced.push(cut);
       continue;
     }
-    best.freeLengthMm =
-      best.unreserved && isWholeLength(best, cut.lengthMm)
-        ? 0
-        : Math.max(roundMm(best.freeLengthMm - cut.lengthMm - best.kerfMm), 0);
-    best.unreserved = false;
+    takeCut(best, cut.lengthMm);
     result.assignments.push({ key: cut.key, lengthMm: cut.lengthMm, pieceId: best.id });
   }
   return result;

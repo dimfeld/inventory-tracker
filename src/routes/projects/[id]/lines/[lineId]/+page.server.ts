@@ -79,6 +79,39 @@ export const actions: Actions = {
     });
   },
 
+  releaseIncomingPiece: async ({ request, params }) => {
+    const commitmentId = parseId(text(await request.formData(), "commitment_id"));
+    if (commitmentId === null || Number.isNaN(commitmentId)) {
+      return fail(400, { action: "incoming", message: "Choose a commitment" });
+    }
+    return runAction("incoming", () => {
+      commitments().releasePiece({
+        projectId: Number(params.id),
+        lineId: Number(params.lineId),
+        commitmentId,
+      });
+      return { action: "incoming", success: "Commitment released." };
+    });
+  },
+
+  cutsPerSheet: async ({ request, params }) => {
+    const value = text(await request.formData(), "cuts_per_sheet");
+    if (value !== "" && !/^\d+$/.test(value)) {
+      return fail(400, {
+        action: "cutsPerSheet",
+        message: "Enter a whole number, or leave it empty",
+      });
+    }
+    return runAction("cutsPerSheet", () => {
+      projects().setCutsPerSheet(
+        Number(params.id),
+        Number(params.lineId),
+        value === "" ? null : Number(value)
+      );
+      return { action: "cutsPerSheet", success: "Cuts per sheet saved." };
+    });
+  },
+
   approve: async ({ request, params }) => {
     const parsed = parseChoiceForm(await request.formData());
     if (!parsed.success) return fail(400, { action: "approve", errors: parsed.errors });

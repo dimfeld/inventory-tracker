@@ -63,8 +63,14 @@
                   <div class="text-gray-600">
                     {source.unitPrice} {source.currency} per {source.purchaseUnit} of
                     {formatQuantity(source.packQuantity, source.baseUnit)} → {formatMoney(source.baseUnitPrice)}
-                    per {source.baseUnit}
+                    per {row.stockPieces === null ? source.baseUnit : 'stock piece'}
                   </div>
+                  {#if row.stockPieces !== null}
+                    <div class="text-gray-600">
+                      Share of {row.stockPieces} stock {row.stockPieces === 1 ? 'piece' : 'pieces'}, by cut
+                      length plus kerf
+                    </div>
+                  {/if}
                 {:else}
                   <span class="text-amber-700">{row.unknownReason}</span>
                 {/if}

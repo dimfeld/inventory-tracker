@@ -114,7 +114,8 @@ export type ConversionService = ReturnType<typeof createConversionService>;
  *
  * Storage reservations become reservations of whole pieces for the same lines, and picked
  * stock becomes pieces that are still picked for their lines. Incoming commitments block a
- * conversion, because they count bulk quantities and piece commitments come in a later version.
+ * conversion, because they count bulk quantities and a piece commitment needs a cut size on an
+ * incoming stock piece. After the conversion, the incoming pieces can be committed again.
  */
 export function createConversionService(db: Database) {
   function requirePart(id: number): Part {
@@ -208,8 +209,8 @@ export function createConversionService(db: Database) {
     for (const holder of listCommitmentHolders(db, [...names.keys()])) {
       blockers.push(
         `${names.get(holder.partId)} has incoming supply committed to ` +
-          `${holder.projectNames.join(", ")}. Release the commitments before conversion; ` +
-          "piece commitments come in a later version."
+          `${holder.projectNames.join(", ")}. Release the commitments before conversion, ` +
+          "then commit the incoming pieces again after it."
       );
     }
 

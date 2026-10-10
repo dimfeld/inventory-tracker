@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { formatMoney } from '#lib/money.ts';
+  import { formatLength, formatSize } from '#lib/pieces.ts';
   import { formatQuantity } from '#lib/units.ts';
   import type { PageProps } from './$types';
 
@@ -29,6 +31,35 @@
   {#each parts as [label, quantity] (label)}
     <div class="text-gray-600">{label} {fmt(Number(quantity))}</div>
   {/each}
+{/snippet}
+
+{#snippet cutPlan(plan: NonNullable<(typeof data.items)[number]['cutPlan']>)}
+  {@const size = (s: { lengthMm: number; widthMm: number | null }) => formatSize(s, plan.displayUnit)}
+  <div class="mt-1 text-xs text-gray-700">
+    <div class="text-gray-500">
+      Cut plan{plan.kerfMm > 0 ? `, kerf ${formatLength(plan.kerfMm, plan.displayUnit)} per cut` : ''}:
+    </div>
+    <ol class="list-decimal space-y-0.5 pl-5">
+      {#each plan.pieces as piece, index (index)}
+        <li>
+          <span class="font-medium">{size(piece)}</span>
+          <span class="text-gray-500">
+            ({piece.supplier} {piece.sku}{piece.price ? `, ${formatMoney(piece.price)}` : ''})
+          </span>
+          → {piece.cuts.map((cut) => `${size(cut)} ${cut.lineDescription}`).join(', ')}
+          {#if piece.wasteMm !== null && piece.wasteMm > 0}
+            <span class="text-gray-500">· {formatLength(piece.wasteMm, plan.displayUnit)} left over</span>
+          {/if}
+        </li>
+      {/each}
+    </ol>
+    {#if plan.unplaced.length > 0}
+      <p class="text-amber-700">
+        No known stock size fits {plan.unplaced.map((cut) => `${size(cut)} ${cut.lineDescription}`).join(', ')}.
+        Add a supplier SKU with a stock size to the part.
+      </p>
+    {/if}
+  </div>
 {/snippet}
 
 {#snippet breakdown(item: (typeof data.items)[number])}
@@ -107,9 +138,13 @@
       <tbody>
         {#each resolved as item (item.key)}
           <tr>
-            <td><a href="/parts/{item.partId}" class="link font-medium sm:font-normal">{item.label}</a></td>
+            <td>
+              <a href="/parts/{item.partId}" class="link font-medium sm:font-normal">{item.label}</a>
+              {#if item.cutPlan}{@render cutPlan(item.cutPlan)}{/if}
+            </td>
             <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
               {formatQuantity(item.coverage.toBuy, item.unit)}
+              {#if item.cutPlan}<div class="text-xs font-normal text-gray-600">stock pieces</div>{/if}
             </td>
             <td data-label="Covered by" class="whitespace-nowrap"><div>{@render coveredBy(item)}</div></td>
             <td data-label="For"><div>{@render breakdown(item)}</div></td>
