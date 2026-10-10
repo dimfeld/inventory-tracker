@@ -35,7 +35,8 @@ type Operation =
   | { op: "deleteAttribute"; key: string }
   | { op: "setApplicability"; key: string; category: CategoryRef; required: boolean | null }
   | { op: "replaceValue"; key: string; from: string; to: string }
-  | { op: "setPartValues"; key: string; values: Record<string, string | null> };
+  | { op: "setPartValues"; key: string; values: Record<string, string | null> }
+  | { op: "mergeParts"; sourceIds: number[]; destinationId: number };
 
 function argValue(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -60,11 +61,42 @@ function categoryId(ref: CategoryRef): number {
 
 function report() {
   const parts = db
-    .query<{ id: number; name: string; categoryId: number | null; archived: number }, []>(
-      `SELECT id, name, category_id AS categoryId, archived_at IS NOT NULL AS archived
+    .query<
+      {
+        id: number;
+        name: string;
+        categoryId: number | null;
+        archived: number;
+        baseUnit: string;
+        trackingMode: string;
+        manufacturer: string | null;
+        partNumber: string | null;
+        notes: string | null;
+      },
+      []
+    >(
+      `SELECT id, name, category_id AS categoryId, archived_at IS NOT NULL AS archived,
+         base_unit AS baseUnit, tracking_mode AS trackingMode, manufacturer,
+         part_number AS partNumber, notes
        FROM parts ORDER BY id`
     )
     .all();
+  const aliases = Map.groupBy(
+    db
+      .query<{ partId: number; alias: string }, []>(
+        "SELECT part_id AS partId, alias FROM part_aliases ORDER BY alias"
+      )
+      .all(),
+    (row) => row.partId
+  );
+  const skus = Map.groupBy(
+    db
+      .query<{ partId: number; supplier: string; sku: string }, []>(
+        "SELECT part_id AS partId, supplier, sku FROM supplier_parts ORDER BY supplier, sku"
+      )
+      .all(),
+    (row) => row.partId
+  );
   const paths = new Map(categoryOptions(catalog.listCategories()).map((c) => [c.id, c.path]));
   const values = Map.groupBy(
     db
@@ -89,6 +121,13 @@ function report() {
       name: part.name,
       category: part.categoryId === null ? null : (paths.get(part.categoryId) ?? null),
       archived: part.archived === 1,
+      baseUnit: part.baseUnit,
+      trackingMode: part.trackingMode,
+      manufacturer: part.manufacturer,
+      partNumber: part.partNumber,
+      notes: part.notes,
+      aliases: (aliases.get(part.id) ?? []).map((a) => a.alias),
+      supplierSkus: (skus.get(part.id) ?? []).map((s) => `${s.supplier}: ${s.sku}`),
       attributes: Object.fromEntries((values.get(part.id) ?? []).map((v) => [v.key, v.rawValue])),
     })),
   };
@@ -152,6 +191,13 @@ function run(operation: Operation): string {
         taxonomy.setPartValue(Number(partId), operation.key, value);
       }
       return `set ${operation.key} on ${entries.length} part(s)`;
+    }
+    case "mergeParts": {
+      const destination = catalog.getPartDetails(operation.destinationId)?.part.name;
+      for (const sourceId of operation.sourceIds) {
+        catalog.mergePart(sourceId, operation.destinationId);
+      }
+      return `merged ${operation.sourceIds.length} part(s) into ${destination}`;
     }
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: audit-catalog
-description: Audit the categories and attributes of the PROD inventory database. Finds parts without a category or in the wrong category, missing or useful new categories and attributes, attribute values that are not consistent or not readable, and values that can be filled in from part names. Asks the user which changes to make, then applies them with a backup. Use when the user asks to audit, clean up, standardize, or extend categories, attributes, or attribute values.
+description: Audit the categories and attributes of the PROD inventory database. Finds parts without a category or in the wrong category, missing or useful new categories and attributes, attribute values that are not consistent or not readable, values that can be filled in from part names, and duplicate parts that should be merged. Asks the user which changes to make, then applies them with a backup. Use when the user asks to audit, clean up, standardize, or extend categories, attributes, or attribute values, or to find and merge duplicate parts.
 ---
 
 # Audit the catalog taxonomy
@@ -43,7 +43,9 @@ Use your scratchpad directory for `$SCRATCH`. The report has:
 - `attributes`: each definition (key, label, value type, normalization rule, unit), its
   categories, and its distinct values with `readsAs` (the typed reading; `null` means the rule
   cannot read the value) and part counts.
-- `parts`: ID, name, category path, archived flag, and attribute values (raw text by key).
+- `parts`: ID, name, category path, archived flag, base unit, tracking mode (`bulk` or
+  `pieces`), manufacturer, part number, notes, aliases, supplier SKUs (`Supplier: SKU`), and
+  attribute values (raw text by key).
 
 To see one attribute's values in detail: `catalog.ts values KEY`.
 
@@ -80,10 +82,33 @@ for the plan):
 - Values that are in the wrong attribute (for example, a cutting length stored as `length`).
 - Missing values that the part name states clearly.
 
+**Parts to merge**
+
+- Two or more parts that are the same physical item: the same manufacturer part number,
+  supplier SKU, or alias, or names that differ only in spelling, word order, or format (for
+  example `M3x8 screw` and `M3 x 8 screw`), with no attribute value that conflicts.
+- Be strict. Parts that differ in a size, thread, length, color, material, grade, or value are
+  different parts, even with very similar names. If one attribute value or one word in the name
+  could make them different, list the pair as an open question and do not propose the merge.
+- Archived parts count too: an archived duplicate of an active part can be merged into it.
+- For each group, choose the part to keep (the destination). Prefer the part with the
+  clearest name, the most complete attributes, a category, and supplier SKUs.
+- Merge limits (the service refuses the merge otherwise):
+  - Both parts must have the same base unit.
+  - Neither part can be tracked as pieces. Show such groups as open questions; the user can
+    combine them in the app.
+- A merge moves stock, movements, orders, BOM rows, reservations, aliases, and supplier SKUs
+  to the destination. **It deletes the attributes and tags of the source part.** Before the
+  merge, copy each source attribute value that the destination does not have with
+  `setPartValues`. If a source value conflicts with the destination value, do not merge.
+- The source part's name is lost. If it is a useful search term, add it as an alias in the app
+  after the merge, and tell the user.
+
 ### 3. Ask the user
 
 Present the proposals in groups (categories, new attributes, value standardization, missing
-values), with a short reason and the affected parts, by name, for each. Then use AskUserQuestion, with
+values, parts to merge), with a short reason and the affected parts, by name, for each. For a merge, name the part to keep and the parts
+that merge into it. Then use AskUserQuestion, with
 `multiSelect: true` where the user can choose several proposals. If there are too many
 proposals for one question, ask group by group. Accept free-text changes from the user's
 "Other" answers. If the user approves nothing, stop.
@@ -146,7 +171,8 @@ category created earlier in the same plan can be used by its path in later opera
     "op": "setPartValues",
     "key": "shank_diameter",
     "values": { "65": "3.175 mm", "70": "6.35 mm" }
-  }
+  },
+  { "op": "mergeParts", "sourceIds": [112, 140], "destinationId": 57 }
 ]
 ```
 
@@ -156,6 +182,10 @@ category created earlier in the same plan can be used by its path in later opera
 - `updateAttribute` changes only the given fields. A new type, rule, or unit types all stored
   values again. It is refused if BOM rows constrain the attribute.
 - `replaceValue` matches the exact raw text, so it changes one spelling at a time.
+- `mergeParts` merges each source part into the destination part and deletes the source
+  parts. It cannot be undone except from the backup. Put it after the `setPartValues`
+  operations that copy source values to the destination, and do not refer to a source part in
+  a later operation.
 
 ## Attribute types and rules
 
