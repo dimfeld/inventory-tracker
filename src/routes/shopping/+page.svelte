@@ -138,7 +138,14 @@
             </td>
             <td data-label="To buy" class="text-right text-lg font-semibold whitespace-nowrap text-red-700">
               {formatQuantity(item.coverage.toBuy, item.unit)}
-              {#if item.cutPlan}<div class="text-xs font-normal text-gray-600">stock pieces</div>{/if}
+              {#if item.cutPlan}
+                <div class="text-xs font-normal text-gray-600">stock pieces</div>
+                {#each item.cutPlan.cutsToBuy as cut (`${cut.lengthMm}x${cut.widthMm}`)}
+                  <div class="text-sm font-normal text-gray-800">
+                    {cut.count} × {formatSize(cut, item.cutPlan.displayUnit)}
+                  </div>
+                {/each}
+              {/if}
             </td>
             <td data-label="Covered by" class="whitespace-nowrap"><div>{@render coveredBy(item)}</div></td>
             <td data-label="For"><div>{@render breakdown(item)}</div></td>

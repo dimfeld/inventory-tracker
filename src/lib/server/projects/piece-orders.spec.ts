@@ -121,6 +121,12 @@ describe("shopping for cut-size rows", () => {
       { sku: "E-1000", cuts: ["Post 600", "Brace 300"], wasteMm: 94 },
     ]);
     expect(item.cutPlan!.unplaced).toEqual([]);
+    // The cuts still to buy, by size; the brace on the free offcut is not one of them.
+    expect(item.cutPlan!.cutsToBuy).toEqual([
+      { lengthMm: 1500, widthMm: null, count: 1 },
+      { lengthMm: 600, widthMm: null, count: 1 },
+      { lengthMm: 300, widthMm: null, count: 2 },
+    ]);
   });
 
   it("chooses the cheapest stock length when prices are known, and lists cuts that fit none", () => {
@@ -201,6 +207,7 @@ describe("shopping for whole pieces", () => {
       pieces: [],
       unplaced: [],
       unsizedWhole: [{ lineDescription: "Base" }, { lineDescription: "Base" }],
+      cutsToBuy: [],
     });
   });
 });

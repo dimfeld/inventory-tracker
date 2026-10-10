@@ -56,6 +56,11 @@ export interface ShoppingCutPlan {
    * they are not `unplaced`. Their size is 0.
    */
   unsizedWhole: ShoppingCut[];
+  /**
+   * The cut sizes that the stock to buy must give, with how many of each, largest first.
+   * Whole pieces are not cuts, so they are not listed.
+   */
+  cutsToBuy: { lengthMm: number; widthMm: number | null; count: number }[];
 }
 
 /** Cut pieces of one requirement that its reservations and commitments do not cover. */
@@ -222,7 +227,19 @@ export function createPieceSupply(db: Database) {
         pieces: [],
         unplaced: [],
         unsizedWhole: [],
+        cutsToBuy: [],
       };
+      const bySize = Map.groupBy(
+        afterOrders.filter((c) => !c.whole),
+        (c) => `${c.lengthMm}x${c.widthMm}`
+      );
+      plan.cutsToBuy = [...bySize.values()]
+        .map((group) => ({
+          lengthMm: group[0].lengthMm,
+          widthMm: group[0].widthMm,
+          count: group.length,
+        }))
+        .toSorted((a, b) => b.lengthMm - a.lengthMm || (b.widthMm ?? 0) - (a.widthMm ?? 0));
       const addPieces = (planned: StockPlan<StockSku, Cut>) => {
         for (const piece of planned.pieces) {
           plan.pieces.push({
